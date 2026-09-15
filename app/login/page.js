@@ -27,7 +27,9 @@ function LoginInner(){
   const [busy, setBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
   const [googleRendered, setGoogleRendered] = useState(false);
+  const [googleHelpOpen, setGoogleHelpOpen] = useState(false);
   const googleBtnContainerRef = useRef(null);
+  const emailInputRef = useRef(null);
 
   const [form, setForm] = useState({ name:'', email:'', password:'' });
   const [fieldErrors, setFieldErrors] = useState({ name: '', email: '', password: '' });
@@ -99,16 +101,13 @@ function LoginInner(){
 
   const handleManualGoogleClick = () => {
     if (!clientId) {
-      toast.info(
-        'Google Sign-In is configured on the app! To connect your Google project, please set your NEXT_PUBLIC_GOOGLE_CLIENT_ID in the .env file.',
-        { duration: 6000 }
-      );
+      setGoogleHelpOpen(true);
       return;
     }
     if (window.google?.accounts?.id) {
       window.google.accounts.id.prompt((notification) => {
         if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-          toast.info('Please click the Google button above to select your account.');
+          toast.info('Please select your Google account from the popup.');
         }
       });
     } else {
@@ -225,37 +224,37 @@ function LoginInner(){
           <div className="gold-line w-12 mx-auto my-4"/>
           <p className="text-center text-xs sm:text-sm text-neutral-500 mb-6 sm:mb-8">{mode==='login'?'Sign in to continue your journey.':'Create your account in seconds.'}</p>
 
-          {/* Google Sign In / Sign Up Section (active when Google Client ID is configured) */}
-          {Boolean(clientId) && (
-            <div className="mb-6 space-y-3">
-              <div ref={googleBtnContainerRef} className={`w-full flex justify-center ${googleRendered ? 'block' : 'hidden'}`} />
-              
-              {!googleRendered && (
-                <button
-                  type="button"
-                  onClick={handleManualGoogleClick}
-                  disabled={googleBusy || busy}
-                  className="w-full py-3 px-4 border border-[#E8E8E8] rounded-full text-xs sm:text-sm font-medium text-neutral-800 hover:bg-[#FAF6EF] hover:border-[#9C6B30]/40 transition flex items-center justify-center gap-3 shadow-xs cursor-pointer disabled:opacity-60"
-                >
-                  {googleBusy ? (
-                    <Loader2 size={16} className="animate-spin text-[#9C6B30]" />
-                  ) : (
-                    <GoogleIcon className="w-5 h-5 shrink-0" />
-                  )}
-                  <span>{mode === 'login' ? 'Continue with Google' : 'Create account with Google'}</span>
-                </button>
-              )}
-
-              <div className="relative my-4 text-center">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-[#E8E8E8]" />
-                </div>
-                <span className="relative bg-white px-3 text-[10px] sm:text-[11px] tracking-widest uppercase text-neutral-400">
-                  or use Gmail / Email address
+          {/* Google / Gmail Sign In Section */}
+          <div className="mb-6 space-y-3">
+            <div ref={googleBtnContainerRef} className={`w-full flex justify-center ${googleRendered ? 'block' : 'hidden'}`} />
+            
+            {!googleRendered && (
+              <button
+                type="button"
+                onClick={handleManualGoogleClick}
+                disabled={googleBusy || busy}
+                className="w-full py-3.5 px-4 border border-[#E8E8E8] rounded-full text-xs sm:text-sm font-medium text-neutral-800 hover:bg-[#FAF6EF] hover:border-[#9C6B30]/50 transition-all flex items-center justify-center gap-3 shadow-xs cursor-pointer disabled:opacity-60 bg-white"
+              >
+                {googleBusy ? (
+                  <Loader2 size={16} className="animate-spin text-[#9C6B30]" />
+                ) : (
+                  <GoogleIcon className="w-5 h-5 shrink-0" />
+                )}
+                <span className="tracking-wide">
+                  {mode === 'login' ? 'Continue with Google / Gmail' : 'Sign up with Google / Gmail'}
                 </span>
+              </button>
+            )}
+
+            <div className="relative my-4 text-center">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-[#E8E8E8]" />
               </div>
+              <span className="relative bg-white px-3 text-[10px] sm:text-[11px] tracking-widest uppercase text-neutral-400 font-medium">
+                or sign in with password
+              </span>
             </div>
-          )}
+          </div>
 
           <form onSubmit={submit} className="space-y-4" noValidate>
             {mode==='register' && (
@@ -280,6 +279,7 @@ function LoginInner(){
               <div className="relative">
                 <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"/>
                 <input
+                  ref={emailInputRef}
                   type="email"
                   value={form.email}
                   onChange={e => {
@@ -345,6 +345,76 @@ function LoginInner(){
           </div>
         </div>
       </div>
+
+      {/* Google / Gmail Sign In Modal / Guidance */}
+      {googleHelpOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 backdrop-blur-xs z-[80] flex items-center justify-center p-4"
+          onClick={() => setGoogleHelpOpen(false)}
+        >
+          <div 
+            className="bg-white max-w-md w-full rounded-2xl p-6 sm:p-8 border border-neutral-100 luxe-shadow relative animate-in fade-in zoom-in-95 duration-200"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-start mb-4">
+              <div className="flex items-center gap-2.5">
+                <GoogleIcon className="w-6 h-6" />
+                <h3 className="font-display text-xl text-[#1A1A1A] font-light">Sign In with Gmail</h3>
+              </div>
+              <button 
+                onClick={() => setGoogleHelpOpen(false)} 
+                className="text-neutral-400 hover:text-neutral-700 text-lg p-1"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs sm:text-sm text-neutral-600 mb-4 leading-relaxed">
+              You can sign in immediately using your Gmail address and password below, or connect Google One-Tap 1-click popup authentication.
+            </p>
+
+            <div className="bg-[#FAF6EF] p-4 rounded-xl text-xs space-y-2 text-neutral-700 mb-5 border border-[#9C6B30]/20">
+              <p className="font-medium text-[#9C6B30]">To activate 1-Click Google Popup Login:</p>
+              <ol className="list-decimal list-inside space-y-1 text-neutral-600 text-[11px] sm:text-xs">
+                <li>Create an OAuth Client ID in <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" className="text-[#9C6B30] underline font-medium">Google Cloud Console</a></li>
+                <li>Add your domain (<code className="bg-white px-1 py-0.5 rounded border border-neutral-200">https://mikumantra.vercel.app</code>) under Authorized JavaScript Origins</li>
+                <li>Add <code className="bg-white px-1 py-0.5 rounded border border-neutral-200">NEXT_PUBLIC_GOOGLE_CLIENT_ID</code> in your Vercel &amp; .env environment settings</li>
+              </ol>
+            </div>
+
+            <div className="flex flex-col gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setGoogleHelpOpen(false);
+                  if (emailInputRef.current) {
+                    if (!form.email) {
+                      setForm(prev => ({ ...prev, email: '@gmail.com' }));
+                    }
+                    setTimeout(() => {
+                      emailInputRef.current?.focus();
+                      if (emailInputRef.current?.setSelectionRange) {
+                        emailInputRef.current.setSelectionRange(0, 0);
+                      }
+                    }, 50);
+                  }
+                }}
+                className="w-full py-3 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase rounded-full hover:bg-[#9C6B30] transition font-medium cursor-pointer"
+              >
+                Sign In with Gmail &amp; Password Below
+              </button>
+              <button
+                type="button"
+                onClick={() => setGoogleHelpOpen(false)}
+                className="w-full py-2 text-xs text-neutral-400 hover:text-neutral-600 transition cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
