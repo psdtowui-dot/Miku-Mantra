@@ -5,7 +5,7 @@ import Link from 'next/link';
 import Script from 'next/script';
 import { useAuth } from '@/lib/use-auth';
 import { toast } from 'sonner';
-import { Loader2, Mail, Lock, User as UserIcon, ShieldCheck } from 'lucide-react';
+import { Loader2, Mail, Lock, User as UserIcon, ShieldCheck, KeyRound, Eye, EyeOff, X, ArrowLeft, CheckCircle2 } from 'lucide-react';
 
 function GoogleIcon({ className = "w-5 h-5" }) {
   return (
@@ -19,7 +19,7 @@ function GoogleIcon({ className = "w-5 h-5" }) {
 }
 
 function LoginInner(){
-  const { login, register, loginWithGoogle } = useAuth();
+  const { login, register, loginWithGoogle, forgotPassword, resetPassword } = useAuth();
   const router = useRouter();
   const sp = useSearchParams();
   const redirect = sp.get('redirect') || '/account';
@@ -27,15 +27,32 @@ function LoginInner(){
   const [busy, setBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
   const [googleRendered, setGoogleRendered] = useState(false);
-  const [googleHelpOpen, setGoogleHelpOpen] = useState(false);
   const googleBtnContainerRef = useRef(null);
-  const emailInputRef = useRef(null);
 
   const [form, setForm] = useState({ name:'', email:'', password:'' });
   const [fieldErrors, setFieldErrors] = useState({ name: '', email: '', password: '' });
   const [err, setErr] = useState('');
 
-  const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+  // Forgot Password Modal State
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [forgotStep, setForgotStep] = useState('request'); // 'request' | 'verify'
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotCode, setForgotCode] = useState('');
+  const [forgotNewPassword, setForgotNewPassword] = useState('');
+  const [forgotConfirmPassword, setForgotConfirmPassword] = useState('');
+  const [forgotDevCode, setForgotDevCode] = useState('');
+  const [forgotErrors, setForgotErrors] = useState({ email: '', code: '', newPassword: '', confirmPassword: '' });
+  const [forgotBusy, setForgotBusy] = useState(false);
+  const [showForgotNewEye, setShowForgotNewEye] = useState(false);
+  const [showForgotConfEye, setShowForgotConfEye] = useState(false);
+
+  const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '998849094985-1ec0iv6a0ih2ulrru88vv3ngvcbcv68c.apps.googleusercontent.com';
+
+  useEffect(() => {
+    if (redirect && redirect.startsWith('/admin')) {
+      router.replace('/admin/login?redirect=' + encodeURIComponent(redirect));
+    }
+  }, [redirect, router]);
 
   const handleGoogleCredentialResponse = async (response) => {
     if (!response?.credential) return;
@@ -101,13 +118,16 @@ function LoginInner(){
 
   const handleManualGoogleClick = () => {
     if (!clientId) {
-      setGoogleHelpOpen(true);
+      toast.info(
+        'Google Sign-In is configured on the app! To connect your Google project, please set your NEXT_PUBLIC_GOOGLE_CLIENT_ID in the .env file.',
+        { duration: 6000 }
+      );
       return;
     }
     if (window.google?.accounts?.id) {
       window.google.accounts.id.prompt((notification) => {
         if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-          toast.info('Please select your Google account from the popup.');
+          toast.info('Please click the Google button above to select your account.');
         }
       });
     } else {
@@ -172,6 +192,84 @@ function LoginInner(){
     }
   };
 
+  const handleForgotRequest = async (e) => {
+    e.preventDefault();
+    const cleanEmail = (forgotEmail || '').trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!cleanEmail) {
+      setForgotErrors(prev => ({ ...prev, email: 'Please enter your email address' }));
+      return;
+    }
+    if (!emailRegex.test(cleanEmail)) {
+      setForgotErrors(prev => ({ ...prev, email: 'Please enter a valid email address' }));
+      return;
+    }
+    setForgotErrors(prev => ({ ...prev, email: '' }));
+    setForgotBusy(true);
+    try {
+      const res = await forgotPassword(cleanEmail);
+      toast.success(res.message || 'Verification code generated!');
+      if (res.code) {
+        setForgotDevCode(res.code);
+        setForgotCode(res.code);
+      }
+      setForgotStep('verify');
+    } catch (err) {
+      setForgotErrors(prev => ({ ...prev, email: err.message || 'Failed to request reset code' }));
+      toast.error(err.message || 'Failed to request reset code');
+    } finally {
+      setForgotBusy(false);
+    }
+  };
+
+  const handleForgotReset = async (e) => {
+    e.preventDefault();
+    const errs = { email: '', code: '', newPassword: '', confirmPassword: '' };
+    let valid = true;
+
+    if (!forgotCode || forgotCode.trim().length < 6) {
+      errs.code = 'Please enter the 6-digit verification code';
+      valid = false;
+    }
+    if (!forgotNewPassword) {
+      errs.newPassword = 'Must enter a new password';
+      valid = false;
+    } else if (forgotNewPassword.length < 6) {
+      errs.newPassword = 'Password must be at least 6 characters';
+      valid = false;
+    }
+    if (!forgotConfirmPassword) {
+      errs.confirmPassword = 'Must confirm your new password';
+      valid = false;
+    } else if (forgotNewPassword !== forgotConfirmPassword) {
+      errs.confirmPassword = 'Passwords do not match';
+      valid = false;
+    }
+
+    setForgotErrors(errs);
+    if (!valid) return;
+
+    setForgotBusy(true);
+    try {
+      const res = await resetPassword(forgotEmail.trim().toLowerCase(), forgotCode.trim(), forgotNewPassword, forgotConfirmPassword);
+      toast.success(res.message || 'Password reset successfully! Please sign in.');
+      setForm(prev => ({ ...prev, email: forgotEmail.trim(), password: forgotNewPassword }));
+      setShowForgotModal(false);
+      setForgotStep('request');
+      setForgotCode('');
+      setForgotNewPassword('');
+      setForgotConfirmPassword('');
+      setForgotDevCode('');
+    } catch (err) {
+      toast.error(err.message || 'Failed to reset password');
+      if (err.message && err.message.toLowerCase().includes('code')) {
+        setForgotErrors(prev => ({ ...prev, code: err.message }));
+      }
+    } finally {
+      setForgotBusy(false);
+    }
+  };
+
   return (
     <main className="bg-white min-h-screen">
       <Script 
@@ -214,61 +312,80 @@ function LoginInner(){
           </ul>
         </div>
 
-        <div className="border border-[#E8E8E8] rounded-2xl p-4 xs:p-6 sm:p-8 md:p-10 luxe-shadow">
-          <div className="flex gap-1.5 sm:gap-2 mb-6 sm:mb-8 p-1 bg-[#FAF6EF] rounded-full w-fit mx-auto max-w-full overflow-x-auto">
-            <button onClick={()=>{ setMode('login'); setFieldErrors({}); setErr(''); }} className={`px-3.5 sm:px-6 py-2 rounded-full text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase transition shrink-0 ${mode==='login'?'bg-[#1A1A1A] text-white':'text-neutral-500'}`}>Sign In</button>
-            <button onClick={()=>{ setMode('register'); setFieldErrors({}); setErr(''); }} className={`px-3.5 sm:px-6 py-2 rounded-full text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase transition shrink-0 ${mode==='register'?'bg-[#1A1A1A] text-white':'text-neutral-500'}`}>Create Account</button>
+        <div className="border border-[#E8E8E8] rounded-2xl p-6 sm:p-10 luxe-shadow bg-white">
+          <div className="flex gap-2 mb-6 sm:mb-8 p-1 bg-[#FAF6EF] rounded-full w-fit mx-auto max-w-full overflow-x-auto">
+            <button
+              type="button"
+              onClick={() => { setMode('login'); setFieldErrors({}); setErr(''); }}
+              className={`px-5 sm:px-7 py-2 rounded-full text-[11px] tracking-[0.2em] uppercase font-medium transition shrink-0 cursor-pointer ${mode === 'login' ? 'bg-[#1A1A1A] text-white shadow-xs' : 'text-neutral-500 hover:text-neutral-800'}`}
+            >
+              SIGN IN
+            </button>
+            <button
+              type="button"
+              onClick={() => { setMode('register'); setFieldErrors({}); setErr(''); }}
+              className={`px-5 sm:px-7 py-2 rounded-full text-[11px] tracking-[0.2em] uppercase font-medium transition shrink-0 cursor-pointer ${mode === 'register' ? 'bg-[#1A1A1A] text-white shadow-xs' : 'text-neutral-500 hover:text-neutral-800'}`}
+            >
+              CREATE ACCOUNT
+            </button>
           </div>
 
-          <h2 className="font-display text-2xl xs:text-3xl text-center text-[#1A1A1A] font-light break-words">{mode==='login'?'Welcome back':'Join MikuMantra'}</h2>
-          <div className="gold-line w-12 mx-auto my-4"/>
-          <p className="text-center text-xs sm:text-sm text-neutral-500 mb-6 sm:mb-8">{mode==='login'?'Sign in to continue your journey.':'Create your account in seconds.'}</p>
+          <h2 className="font-display text-3xl sm:text-4xl text-center text-[#1A1A1A] font-light break-words">
+            {mode === 'login' ? 'Welcome back' : 'Join MikuMantra'}
+          </h2>
+          <div className="gold-line w-12 mx-auto my-3 sm:my-4" />
+          <p className="text-center text-xs sm:text-sm text-neutral-500 mb-6 sm:mb-8">
+            {mode === 'login' ? 'Sign in to continue your journey.' : 'Create your account in seconds.'}
+          </p>
 
-          {/* Google / Gmail Sign In Section */}
-          <div className="mb-6 space-y-3">
-            <div ref={googleBtnContainerRef} className={`w-full flex justify-center ${googleRendered ? 'block' : 'hidden'}`} />
-            
-            {!googleRendered && (
+          {/* Google Sign In Button */}
+          <div className="mb-5 sm:mb-6">
+            <div className="relative w-full">
               <button
                 type="button"
                 onClick={handleManualGoogleClick}
                 disabled={googleBusy || busy}
-                className="w-full py-3.5 px-4 border border-[#E8E8E8] rounded-full text-xs sm:text-sm font-medium text-neutral-800 hover:bg-[#FAF6EF] hover:border-[#9C6B30]/50 transition-all flex items-center justify-center gap-3 shadow-xs cursor-pointer disabled:opacity-60 bg-white"
+                className="w-full py-3 px-4 border border-[#E8E8E8] rounded-full text-sm font-medium text-neutral-800 hover:bg-[#FAF6EF]/60 hover:border-[#9C6B30]/40 transition flex items-center justify-center gap-3 shadow-2xs cursor-pointer disabled:opacity-60 bg-white"
               >
                 {googleBusy ? (
-                  <Loader2 size={16} className="animate-spin text-[#9C6B30]" />
+                  <Loader2 size={18} className="animate-spin text-[#9C6B30]" />
                 ) : (
                   <GoogleIcon className="w-5 h-5 shrink-0" />
                 )}
-                <span className="tracking-wide">
-                  {mode === 'login' ? 'Continue with Google / Gmail' : 'Sign up with Google / Gmail'}
-                </span>
+                <span>{mode === 'login' ? 'Sign in with Google' : 'Sign up with Google'}</span>
               </button>
-            )}
 
-            <div className="relative my-4 text-center">
+              {/* Overlay Google Identity Services native rendered button for 1-click popup authentication */}
+              <div
+                ref={googleBtnContainerRef}
+                className={`absolute inset-0 w-full h-full overflow-hidden rounded-full flex items-center justify-center opacity-0 cursor-pointer ${googleRendered ? 'pointer-events-auto' : 'pointer-events-none'}`}
+                style={{ transform: 'scale(1.15)' }}
+              />
+            </div>
+
+            <div className="relative my-5 sm:my-6 text-center">
               <div className="absolute inset-0 flex items-center">
                 <div className="w-full border-t border-[#E8E8E8]" />
               </div>
-              <span className="relative bg-white px-3 text-[10px] sm:text-[11px] tracking-widest uppercase text-neutral-400 font-medium">
-                or sign in with password
+              <span className="relative bg-white px-3 sm:px-4 text-[10px] sm:text-[11px] tracking-[0.2em] sm:tracking-[0.25em] uppercase text-neutral-400 font-medium select-none">
+                {mode === 'login' ? 'OR SIGN IN WITH PASSWORD' : 'OR SIGN UP WITH PASSWORD'}
               </span>
             </div>
           </div>
 
           <form onSubmit={submit} className="space-y-4" noValidate>
-            {mode==='register' && (
+            {mode === 'register' && (
               <div>
                 <div className="relative">
-                  <UserIcon size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"/>
+                  <UserIcon size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" />
                   <input
                     value={form.name}
                     onChange={e => {
-                      setForm({...form, name: e.target.value});
-                      if (fieldErrors.name) setFieldErrors(prev => ({...prev, name: ''}));
+                      setForm({ ...form, name: e.target.value });
+                      if (fieldErrors.name) setFieldErrors(prev => ({ ...prev, name: '' }));
                     }}
                     placeholder="Full name"
-                    className={`w-full pl-11 pr-4 py-3.5 border ${fieldErrors.name ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-full text-sm focus:outline-none focus:border-[#9C6B30]`}
+                    className={`w-full pl-11 pr-4 py-3 sm:py-3.5 border ${fieldErrors.name ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-full text-sm text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:border-[#9C6B30] transition`}
                   />
                 </div>
                 {fieldErrors.name && <p className="text-xs text-red-500 mt-1 pl-4">{fieldErrors.name}</p>}
@@ -277,17 +394,16 @@ function LoginInner(){
 
             <div>
               <div className="relative">
-                <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"/>
+                <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" />
                 <input
-                  ref={emailInputRef}
                   type="email"
                   value={form.email}
                   onChange={e => {
-                    setForm({...form, email: e.target.value});
-                    if (fieldErrors.email) setFieldErrors(prev => ({...prev, email: ''}));
+                    setForm({ ...form, email: e.target.value });
+                    if (fieldErrors.email) setFieldErrors(prev => ({ ...prev, email: '' }));
                   }}
                   placeholder="Gmail or Email (e.g. yourname@gmail.com)"
-                  className={`w-full pl-11 pr-4 py-3.5 border ${fieldErrors.email ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-full text-sm focus:outline-none focus:border-[#9C6B30]`}
+                  className={`w-full pl-11 pr-4 py-3 sm:py-3.5 border ${fieldErrors.email ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-full text-sm text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:border-[#9C6B30] transition`}
                 />
               </div>
               {fieldErrors.email && <p className="text-xs text-red-500 mt-1 pl-4">{fieldErrors.email}</p>}
@@ -295,19 +411,38 @@ function LoginInner(){
 
             <div>
               <div className="relative">
-                <Lock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"/>
+                <Lock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" />
                 <input
                   type="password"
                   value={form.password}
                   onChange={e => {
-                    setForm({...form, password: e.target.value});
-                    if (fieldErrors.password) setFieldErrors(prev => ({...prev, password: ''}));
+                    setForm({ ...form, password: e.target.value });
+                    if (fieldErrors.password) setFieldErrors(prev => ({ ...prev, password: '' }));
                   }}
-                  placeholder={mode==='login'?'Password':'Create password (min 6 characters)'}
-                  className={`w-full pl-11 pr-4 py-3.5 border ${fieldErrors.password ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-full text-sm focus:outline-none focus:border-[#9C6B30]`}
+                  placeholder={mode === 'login' ? 'Password' : 'Create password (min 6 characters)'}
+                  className={`w-full pl-11 pr-4 py-3 sm:py-3.5 border ${fieldErrors.password ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-full text-sm text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:border-[#9C6B30] transition`}
                 />
               </div>
-              {fieldErrors.password && <p className="text-xs text-red-500 mt-1 pl-4">{fieldErrors.password}</p>}
+              <div className="flex items-center justify-between mt-1.5 px-2">
+                {fieldErrors.password ? (
+                  <p className="text-xs text-red-500">{fieldErrors.password}</p>
+                ) : <div />}
+                {mode === 'login' && (
+                  <button
+                    type="button"
+                    data-testid="login-forgot-password-link"
+                    onClick={() => {
+                      setForgotEmail(form.email || '');
+                      setForgotStep('request');
+                      setForgotErrors({ email: '', code: '', newPassword: '', confirmPassword: '' });
+                      setShowForgotModal(true);
+                    }}
+                    className="text-xs text-[#9C6B30] hover:underline font-medium cursor-pointer ml-auto"
+                  >
+                    Forgot password?
+                  </button>
+                )}
+              </div>
             </div>
 
             {err && (
@@ -334,84 +469,207 @@ function LoginInner(){
               </div>
             )}
 
-            <button disabled={busy} className="w-full py-3.5 sm:py-4 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase hover:bg-[#9C6B30] transition rounded-full flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer">
-              {busy && <Loader2 size={14} className="animate-spin"/>}
-              {mode==='login'?'Sign In with Gmail / Email':'Create Account with Gmail / Email'}
+            <button
+              type="submit"
+              disabled={busy}
+              className="w-full py-3.5 sm:py-4 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase hover:bg-[#9C6B30] transition rounded-full flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer font-medium"
+            >
+              {busy && <Loader2 size={14} className="animate-spin" />}
+              {mode === 'login' ? 'SIGN IN WITH GMAIL / EMAIL' : 'CREATE ACCOUNT WITH GMAIL / EMAIL'}
             </button>
           </form>
 
-          <div className="text-center mt-6 text-xs text-neutral-500">
-            {mode==='login' ? <>New to MikuMantra? <button onClick={()=>setMode('register')} className="text-[#9C6B30] hover:underline">Create an account</button></> : <>Already a member? <button onClick={()=>setMode('login')} className="text-[#9C6B30] hover:underline">Sign in</button></>}
+          <div className="text-center mt-6 text-xs sm:text-sm text-neutral-500">
+            {mode === 'login' ? (
+              <>
+                New to MikuMantra?{' '}
+                <button
+                  type="button"
+                  onClick={() => { setMode('register'); setFieldErrors({}); setErr(''); }}
+                  className="text-[#9C6B30] hover:underline font-medium cursor-pointer"
+                >
+                  Create an account
+                </button>
+              </>
+            ) : (
+              <>
+                Already a member?{' '}
+                <button
+                  type="button"
+                  onClick={() => { setMode('login'); setFieldErrors({}); setErr(''); }}
+                  className="text-[#9C6B30] hover:underline font-medium cursor-pointer"
+                >
+                  Sign in
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Google / Gmail Sign In Modal / Guidance */}
-      {googleHelpOpen && (
-        <div 
-          className="fixed inset-0 bg-black/50 backdrop-blur-xs z-[80] flex items-center justify-center p-4"
-          onClick={() => setGoogleHelpOpen(false)}
-        >
-          <div 
-            className="bg-white max-w-md w-full rounded-2xl p-6 sm:p-8 border border-neutral-100 luxe-shadow relative animate-in fade-in zoom-in-95 duration-200"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex justify-between items-start mb-4">
-              <div className="flex items-center gap-2.5">
-                <GoogleIcon className="w-6 h-6" />
-                <h3 className="font-display text-xl text-[#1A1A1A] font-light">Sign In with Gmail</h3>
+      {/* Forgot / Reset Password Modal */}
+      {showForgotModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white border border-[#E8E8E8] rounded-2xl w-full max-w-md p-6 sm:p-8 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200 my-auto">
+            <button
+              type="button"
+              onClick={() => setShowForgotModal(false)}
+              className="absolute top-4 right-4 p-1.5 text-neutral-400 hover:text-neutral-800 rounded-full hover:bg-neutral-100 transition"
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+
+            {forgotStep === 'request' ? (
+              <div>
+                <div className="w-11 h-11 rounded-full bg-[#FAF6EF] border border-[#9C6B30]/30 flex items-center justify-center text-[#9C6B30] mb-3">
+                  <KeyRound size={20} />
+                </div>
+                <h3 className="font-display text-2xl text-[#1A1A1A] font-light">Forgot Password</h3>
+                <div className="gold-line w-10 my-2" />
+                <p className="text-xs text-neutral-500 mb-5 leading-relaxed">
+                  Enter your registered Gmail or email address. We'll generate a 6-digit verification code so you can safely reset your password.
+                </p>
+
+                <form onSubmit={handleForgotRequest} className="space-y-4" noValidate>
+                  <div>
+                    <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-medium block mb-1">
+                      Your Email Address
+                    </label>
+                    <div className="relative">
+                      <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" />
+                      <input
+                        type="email"
+                        value={forgotEmail}
+                        onChange={e => {
+                          setForgotEmail(e.target.value);
+                          if (forgotErrors.email) setForgotErrors(prev => ({ ...prev, email: '' }));
+                        }}
+                        placeholder="yourname@gmail.com"
+                        className={`w-full pl-11 pr-4 py-3 border ${forgotErrors.email ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-full text-sm text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:border-[#9C6B30] transition`}
+                      />
+                    </div>
+                    {forgotErrors.email && <p className="text-xs text-red-500 mt-1 pl-4">{forgotErrors.email}</p>}
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={forgotBusy}
+                    className="w-full py-3.5 bg-[#1A1A1A] text-white text-[11px] tracking-[0.2em] uppercase hover:bg-[#9C6B30] transition rounded-full flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer font-medium shadow-sm"
+                  >
+                    {forgotBusy ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={15} />}
+                    Send Verification Code
+                  </button>
+                </form>
               </div>
-              <button 
-                onClick={() => setGoogleHelpOpen(false)} 
-                className="text-neutral-400 hover:text-neutral-700 text-lg p-1"
-                aria-label="Close"
-              >
-                ✕
-              </button>
-            </div>
+            ) : (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setForgotStep('request')}
+                  className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-[#9C6B30] transition mb-3"
+                >
+                  <ArrowLeft size={13} /> Change email
+                </button>
 
-            <p className="text-xs sm:text-sm text-neutral-600 mb-4 leading-relaxed">
-              You can sign in immediately using your Gmail address and password below, or connect Google One-Tap 1-click popup authentication.
-            </p>
+                <h3 className="font-display text-2xl text-[#1A1A1A] font-light">Reset Password</h3>
+                <div className="gold-line w-10 my-2" />
+                <p className="text-xs text-neutral-500 mb-4 leading-relaxed">
+                  Enter the 6-digit code for <strong className="text-neutral-800">{forgotEmail}</strong> and specify your new password.
+                </p>
 
-            <div className="bg-[#FAF6EF] p-4 rounded-xl text-xs space-y-2 text-neutral-700 mb-5 border border-[#9C6B30]/20">
-              <p className="font-medium text-[#9C6B30]">To activate 1-Click Google Popup Login:</p>
-              <ol className="list-decimal list-inside space-y-1 text-neutral-600 text-[11px] sm:text-xs">
-                <li>Create an OAuth Client ID in <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" className="text-[#9C6B30] underline font-medium">Google Cloud Console</a></li>
-                <li>Add your domain (<code className="bg-white px-1 py-0.5 rounded border border-neutral-200">https://mikumantra.vercel.app</code>) under Authorized JavaScript Origins</li>
-                <li>Add <code className="bg-white px-1 py-0.5 rounded border border-neutral-200">NEXT_PUBLIC_GOOGLE_CLIENT_ID</code> in your Vercel &amp; .env environment settings</li>
-              </ol>
-            </div>
+                {forgotDevCode && (
+                  <div className="mb-4 p-3 bg-[#FAF6EF] border border-[#9C6B30]/30 rounded-xl flex items-center justify-between text-xs">
+                    <span className="text-[#9C6B30] font-medium">Your 6-digit code:</span>
+                    <span className="font-mono text-base font-bold tracking-widest text-[#1A1A1A] bg-white px-2.5 py-0.5 rounded-md border border-[#E8E8E8]">
+                      {forgotDevCode}
+                    </span>
+                  </div>
+                )}
 
-            <div className="flex flex-col gap-2.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setGoogleHelpOpen(false);
-                  if (emailInputRef.current) {
-                    if (!form.email) {
-                      setForm(prev => ({ ...prev, email: '@gmail.com' }));
-                    }
-                    setTimeout(() => {
-                      emailInputRef.current?.focus();
-                      if (emailInputRef.current?.setSelectionRange) {
-                        emailInputRef.current.setSelectionRange(0, 0);
-                      }
-                    }, 50);
-                  }
-                }}
-                className="w-full py-3 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase rounded-full hover:bg-[#9C6B30] transition font-medium cursor-pointer"
-              >
-                Sign In with Gmail &amp; Password Below
-              </button>
-              <button
-                type="button"
-                onClick={() => setGoogleHelpOpen(false)}
-                className="w-full py-2 text-xs text-neutral-400 hover:text-neutral-600 transition cursor-pointer"
-              >
-                Close
-              </button>
-            </div>
+                <form onSubmit={handleForgotReset} className="space-y-4" noValidate>
+                  <div>
+                    <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-medium block mb-1">
+                      6-Digit Verification Code
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={6}
+                      value={forgotCode}
+                      onChange={e => {
+                        const digits = e.target.value.replace(/[^0-9]/g, '').slice(0, 6);
+                        setForgotCode(digits);
+                        if (forgotErrors.code) setForgotErrors(prev => ({ ...prev, code: '' }));
+                      }}
+                      placeholder="e.g. 123456"
+                      className={`w-full px-4 py-2.5 text-center font-mono text-lg tracking-widest border ${forgotErrors.code ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-xl text-neutral-800 focus:outline-none focus:border-[#9C6B30] transition`}
+                    />
+                    {forgotErrors.code && <p className="text-xs text-red-500 mt-1">{forgotErrors.code}</p>}
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-medium block mb-1">
+                      New Password
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showForgotNewEye ? 'text' : 'password'}
+                        value={forgotNewPassword}
+                        onChange={e => {
+                          setForgotNewPassword(e.target.value);
+                          if (forgotErrors.newPassword) setForgotErrors(prev => ({ ...prev, newPassword: '' }));
+                        }}
+                        placeholder="At least 6 characters"
+                        className={`w-full pl-4 pr-10 py-2.5 border ${forgotErrors.newPassword ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-xl text-sm text-neutral-800 focus:outline-none focus:border-[#9C6B30] transition`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowForgotNewEye(!showForgotNewEye)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700"
+                      >
+                        {showForgotNewEye ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                    {forgotErrors.newPassword && <p className="text-xs text-red-500 mt-1">{forgotErrors.newPassword}</p>}
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-medium block mb-1">
+                      Confirm New Password
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showForgotConfEye ? 'text' : 'password'}
+                        value={forgotConfirmPassword}
+                        onChange={e => {
+                          setForgotConfirmPassword(e.target.value);
+                          if (forgotErrors.confirmPassword) setForgotErrors(prev => ({ ...prev, confirmPassword: '' }));
+                        }}
+                        placeholder="Repeat new password"
+                        className={`w-full pl-4 pr-10 py-2.5 border ${forgotErrors.confirmPassword ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-xl text-sm text-neutral-800 focus:outline-none focus:border-[#9C6B30] transition`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowForgotConfEye(!showForgotConfEye)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700"
+                      >
+                        {showForgotConfEye ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                    {forgotErrors.confirmPassword && <p className="text-xs text-red-500 mt-1">{forgotErrors.confirmPassword}</p>}
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={forgotBusy}
+                    className="w-full py-3.5 bg-[#1A1A1A] text-white text-[11px] tracking-[0.2em] uppercase hover:bg-[#9C6B30] transition rounded-full flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer font-medium shadow-sm mt-2"
+                  >
+                    {forgotBusy ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                    Reset Password
+                  </button>
+                </form>
+              </div>
+            )}
           </div>
         </div>
       )}

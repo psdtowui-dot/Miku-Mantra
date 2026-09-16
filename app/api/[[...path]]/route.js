@@ -12,6 +12,7 @@ import { buildInvoicePDF } from '@/lib/pdf-invoice'
 import { buildShippingSlipPDF } from '@/lib/pdf-shippingslip'
 import { WAREHOUSE_PINCODE } from '@/lib/constants'
 import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification } from '@/lib/notifications'
+import { sendPasswordResetEmail } from '@/lib/email-service'
 
 
 // Simple in-memory server cache with TTL
@@ -20,7 +21,7 @@ function cacheGet(k) { const e = _cache.get(k); if (!e) return null; if (Date.no
 function cacheSet(k, v, ttlMs = 60000) { _cache.set(k, { v, exp: Date.now() + ttlMs }); }
 function cacheBust(prefix) { for (const k of _cache.keys()) { if (k.startsWith(prefix)) _cache.delete(k); } }
 
-let client, db, seeded = false, connectPromise = null
+let client, db, seeded = false, connectPromise = null, lastEnvMtime = 0, lastSyncedAdmins = ''
 
 const DEFAULT_FOOTER = {
   company: {
@@ -142,7 +143,8 @@ async function recalculateProductRating(db, productId) {
 }
 
 async function connectToMongo() {
-  const mongoUrl = process.env.MONGO_URL || process.env.MONGODB_URI;
+  const directUrl = process.env.MONGO_DIRECT_URL || "mongodb://akashsriv1984_db_user:2M5Edv773XLUmT15@ac-htqrxv1-shard-00-00.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-01.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-02.7szyylz.mongodb.net:27017/userPortal?ssl=true&replicaSet=atlas-1c5jr9-shard-0&authSource=admin&retryWrites=true&w=majority";
+  const mongoUrl = process.env.MONGO_DIRECT_URL || process.env.MONGO_URL || process.env.MONGODB_URI;
   if (!mongoUrl) {
     throw new Error("MONGO_URL environment variable is missing.");
   }
@@ -152,8 +154,18 @@ async function connectToMongo() {
         try {
           dns.setServers(['8.8.8.8', '1.1.1.1']);
         } catch (e) {}
-        client = new MongoClient(mongoUrl);
-        await client.connect();
+        try {
+          client = new MongoClient(mongoUrl);
+          await client.connect();
+        } catch (srvErr) {
+          if (directUrl && mongoUrl !== directUrl) {
+            console.log('MongoDB SRV connection failed, attempting fallback to direct replica set...');
+            client = new MongoClient(directUrl);
+            await client.connect();
+          } else {
+            throw srvErr;
+          }
+        }
         db = client.db(process.env.DB_NAME || 'userPortal');
         if (!seeded) {
           await seedIfEmpty(db);
@@ -164,14 +176,19 @@ async function connectToMongo() {
           }
           seeded = true;
         }
-        return db;
+        const database = db;
+        await syncEnvAdminEmailsWithDatabase(database);
+        return database;
       } catch (err) {
         connectPromise = null; // Reset connection promise so subsequent requests can retry
         throw err;
       }
     })();
   }
-  return connectPromise;
+  const database = await connectPromise;
+  initEnvFileWatcher(database);
+  await syncEnvAdminEmailsWithDatabase(database);
+  return database;
 }
 
 async function seedIfEmpty(db) {
@@ -517,6 +534,154 @@ const SESSION_COOKIE = 'mikumantra_session', SESSION_DAYS = 30
 function hashPassword(password, salt) { const s = salt || crypto.randomBytes(16).toString('hex'); const h = crypto.pbkdf2Sync(password, s, 10000, 64, 'sha512').toString('hex'); return { salt: s, hash: h } }
 function verifyPassword(password, salt, hash) { return crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex') === hash }
 
+// Helpers for admin email resolution from .env and database
+function getEnvAdminEmails() {
+  const emails = new Set();
+
+  const addFromStr = (str) => {
+    if (!str || typeof str !== 'string') return;
+    str.split(',').forEach(item => {
+      const clean = item.trim().toLowerCase().replace(/(^['"]|['"]$)/g, '');
+      if (clean && clean.includes('@')) {
+        emails.add(clean);
+      }
+    });
+  };
+
+  // 1. Read directly from disk files (.env and .env.local) to catch any edits immediately
+  try {
+    const envPaths = [
+      pathModule.join(process.cwd(), '.env'),
+      pathModule.join(process.cwd(), '.env.local')
+    ];
+    for (const p of envPaths) {
+      if (fs.existsSync(p)) {
+        const content = fs.readFileSync(p, 'utf8');
+        const lines = content.split(/\r?\n/);
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed && !trimmed.startsWith('#')) {
+            const m = trimmed.match(/^(?:ADMIN_EMAIL|ADMIN_EMAILS)\s*=\s*(.*)$/i);
+            if (m && m[1]) {
+              addFromStr(m[1]);
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Error reading env files on disk:', e.message);
+  }
+
+  // 2. Read from process.env
+  addFromStr(process.env.ADMIN_EMAIL);
+  addFromStr(process.env.ADMIN_EMAILS);
+
+  // Fallback if empty
+  if (emails.size === 0) {
+    emails.add('admin@mikumantra.com');
+  }
+
+  return Array.from(emails);
+}
+
+let fileWatcherInitialized = false;
+function initEnvFileWatcher(db) {
+  if (fileWatcherInitialized || !db || typeof window !== 'undefined') return;
+  fileWatcherInitialized = true;
+
+  const envFiles = [
+    pathModule.join(process.cwd(), '.env'),
+    pathModule.join(process.cwd(), '.env.local')
+  ];
+
+  let debounceTimer = null;
+  const onFileChange = () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(async () => {
+      try {
+        console.log('[Auto-Sync] Detected change in .env file, syncing admin emails to database...');
+        await syncEnvAdminEmailsWithDatabase(db);
+      } catch (e) {
+        console.error('[Auto-Sync] Watcher sync error:', e);
+      }
+    }, 250);
+  };
+
+  envFiles.forEach(fp => {
+    try {
+      if (fs.existsSync(fp)) {
+        fs.watch(fp, onFileChange);
+      }
+    } catch (e) {}
+  });
+}
+
+async function syncEnvAdminEmailsWithDatabase(db) {
+  if (!db) return;
+  try {
+    const envAdmins = getEnvAdminEmails();
+    if (!envAdmins || envAdmins.length === 0) return;
+
+    // 1. Ensure all active .env admin emails have role: 'admin' and syncedFromEnv: true in DB
+    for (const em of envAdmins) {
+      if (!em) continue;
+      const existing = await db.collection('users').findOne({ email: em });
+      if (!existing) {
+        const { salt, hash } = hashPassword('12341234');
+        await db.collection('users').insertOne({
+          id: uuidv4(),
+          name: 'MikuMantra Admin',
+          email: em,
+          phone: '',
+          role: 'admin',
+          passwordSalt: salt,
+          passwordHash: hash,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          syncedFromEnv: true
+        });
+        console.log(`[Auto-Sync] Automatically created admin in DB from .env: ${em}`);
+      } else if (existing.role !== 'admin' || !existing.syncedFromEnv) {
+        await db.collection('users').updateOne(
+          { id: existing.id },
+          { $set: { role: 'admin', updatedAt: new Date(), syncedFromEnv: true } }
+        );
+        console.log(`[Auto-Sync] Automatically ensured admin in DB from .env: ${em}`);
+      }
+    }
+
+    // 2. If any user was previously synced from .env, but is NO LONGER in .env, automatically revoke their admin role in MongoDB
+    const obsoleteEnvAdmins = await db.collection('users').find({
+      syncedFromEnv: true,
+      email: { $nin: envAdmins }
+    }).toArray();
+
+    for (const obsoleteUser of obsoleteEnvAdmins) {
+      console.log(`[Auto-Sync] Revoking admin role in DB for deleted .env email: ${obsoleteUser.email}`);
+      await db.collection('users').updateOne(
+        { id: obsoleteUser.id },
+        { $set: { role: 'user', syncedFromEnv: false, updatedAt: new Date() } }
+      );
+      // Immediately invalidate any active sessions so admin access is terminated
+      await db.collection('sessions').deleteMany({ userId: obsoleteUser.id });
+    }
+  } catch (err) {
+    console.error('[Auto-Sync] Error syncing .env admin emails to database:', err);
+  }
+}
+
+async function isAuthorizedAdminEmail(db, email) {
+  if (!email) return false;
+  if (db) await syncEnvAdminEmailsWithDatabase(db);
+  const em = email.trim().toLowerCase();
+  const envAdmins = getEnvAdminEmails();
+  if (envAdmins.includes(em)) return true;
+  if (!db) return false;
+  const existingAdmin = await db.collection('users').findOne({ email: em, role: 'admin' });
+  return !!existingAdmin;
+}
+
 async function getCurrentUser(db, request) {
   let token = null;
   if (request && request.headers) {
@@ -534,15 +699,21 @@ async function getCurrentUser(db, request) {
   const u = await db.collection('users').findOne({ id: s.userId });
   if (!u) return null;
 
-  // Self-healing: if logged in as admin email, enforce role is 'admin'
-  const adminEmail = (process.env.ADMIN_EMAIL || 'admin@mikumantra.com').toLowerCase();
-  if (u.email && u.email.toLowerCase() === adminEmail && u.role !== 'admin') {
-    await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'admin' } });
-    u.role = 'admin';
+  // Self-healing & dynamic revocation from .env:
+  const envAdmins = getEnvAdminEmails();
+  if (u.email && envAdmins.includes(u.email.toLowerCase())) {
+    if (u.role !== 'admin' || !u.syncedFromEnv) {
+      await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'admin', syncedFromEnv: true } });
+      u.role = 'admin';
+    }
+  } else if (u.syncedFromEnv && !envAdmins.includes(u.email.toLowerCase())) {
+    // Revoke admin if removed from .env
+    await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'user', syncedFromEnv: false } });
+    u.role = 'user';
   }
 
   const { passwordHash, passwordSalt, _id, ...safe } = u;
-  return safe;
+  return { ...safe, hasPassword: !!passwordHash };
 }
 
 async function requireAdmin(db, request) { const u = await getCurrentUser(db, request); if (!u || u.role !== 'admin') return null; return u }
@@ -847,18 +1018,20 @@ async function handleRoute(request, { params }) {
 
     // ============ AUTH ============
     if (route === '/auth/login' && method === 'POST') {
-      const { email, password } = await request.json()
+      const { email, password, requireAdmin } = await request.json()
       if (!email || !password) return err('Email and password are required.')
       const em = email.trim().toLowerCase()
-      const adminEmail = (process.env.ADMIN_EMAIL || 'admin@mikumantra.com').toLowerCase()
-      if (em === adminEmail) {
-        const uCount = await db.collection('users').countDocuments({ email: adminEmail })
+      const envAdmins = getEnvAdminEmails()
+      const isEnvAdmin = envAdmins.includes(em)
+
+      if (isEnvAdmin) {
+        const uCount = await db.collection('users').countDocuments({ email: em })
         if (uCount === 0) {
           const { salt, hash } = hashPassword('12341234')
           await db.collection('users').insertOne({
             id: uuidv4(),
             name: 'MikuMantra Admin',
-            email: adminEmail,
+            email: em,
             phone: '',
             role: 'admin',
             passwordSalt: salt,
@@ -867,11 +1040,17 @@ async function handleRoute(request, { params }) {
           })
         }
       }
+
       const u = await db.collection('users').findOne({ email: em })
       if (!u || !verifyPassword(password, u.passwordSalt, u.passwordHash)) return err('Invalid email or password.', 401)
 
-      // Self-healing: if logged in as admin email, enforce role is 'admin'
-      if (u.email && u.email.toLowerCase() === adminEmail && u.role !== 'admin') {
+      const isAdmin = await isAuthorizedAdminEmail(db, em)
+      if (requireAdmin && !isAdmin) {
+        return err(`Access Denied: The account "${em}" is not registered as an administrator in the database or system configuration (.env).`, 403)
+      }
+
+      // Self-healing: if logged in as admin email from .env or DB, enforce role is 'admin'
+      if (isAdmin && u.role !== 'admin') {
         await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'admin' } });
         u.role = 'admin';
       }
@@ -879,7 +1058,7 @@ async function handleRoute(request, { params }) {
       const token = uuidv4(); const expiresAt = new Date(Date.now() + SESSION_DAYS * 86400 * 1000)
       await db.collection('sessions').insertOne({ token, userId: u.id, expiresAt, createdAt: new Date() })
       try { const store = await cookies(); store.set(SESSION_COOKIE, token, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: SESSION_DAYS * 86400, secure: false }); } catch (e) {}
-      return ok({ user: { id: u.id, name: u.name, email: u.email, phone: u.phone || '', role: u.role || 'user' }, token })
+      return ok({ user: { id: u.id, name: u.name, email: u.email, phone: u.phone || '', role: u.role || 'user', hasPassword: !!u.passwordHash }, token })
     }
     if (route === '/auth/register' && method === 'POST') {
       const { name, email, password, phone } = await request.json()
@@ -888,8 +1067,8 @@ async function handleRoute(request, { params }) {
       const existing = await db.collection('users').findOne({ email: em })
       if (existing) return err('User with this email already exists.', 409)
 
-      const adminEmail = (process.env.ADMIN_EMAIL || 'admin@mikumantra.com').toLowerCase()
-      const role = em === adminEmail ? 'admin' : 'user'
+      const envAdmins = getEnvAdminEmails()
+      const role = envAdmins.includes(em) ? 'admin' : 'user'
 
       const { salt, hash } = hashPassword(password)
       const userId = uuidv4()
@@ -918,13 +1097,14 @@ async function handleRoute(request, { params }) {
           name: newUser.name,
           email: newUser.email,
           phone: newUser.phone,
-          role: newUser.role
+          role: newUser.role,
+          hasPassword: true
         },
         token
       })
     }
     if (route === '/auth/google' && method === 'POST') {
-      const { credential } = await request.json()
+      const { credential, requireAdmin } = await request.json()
       if (!credential) return err('Google credential is required.', 400)
 
       let payload = null
@@ -949,8 +1129,16 @@ async function handleRoute(request, { params }) {
       }
 
       const em = payload.email.trim().toLowerCase()
-      const adminEmail = (process.env.ADMIN_EMAIL || 'admin@mikumantra.com').toLowerCase()
-      const role = em === adminEmail ? 'admin' : 'user'
+      
+      // Step 1: Verify admin status against .env and MongoDB database
+      const isAdmin = await isAuthorizedAdminEmail(db, em)
+
+      // If logging in specifically for the admin section, strictly verify admin authorization
+      if (requireAdmin && !isAdmin) {
+        return err(`Access Denied: The Google account "${em}" is not registered as an administrator in the database or system configuration (.env).`, 403)
+      }
+
+      const role = isAdmin ? 'admin' : 'user'
       const name = payload.name || em.split('@')[0]
       const avatar = payload.picture || ''
       const googleId = payload.sub
@@ -975,7 +1163,7 @@ async function handleRoute(request, { params }) {
         const updateFields = {}
         if (!u.googleId) updateFields.googleId = googleId
         if (!u.avatar && avatar) updateFields.avatar = avatar
-        if (em === adminEmail && u.role !== 'admin') updateFields.role = 'admin'
+        if (isAdmin && u.role !== 'admin') updateFields.role = 'admin'
         if (Object.keys(updateFields).length > 0) {
           await db.collection('users').updateOne({ id: u.id }, { $set: updateFields })
           u = { ...u, ...updateFields }
@@ -1003,11 +1191,29 @@ async function handleRoute(request, { params }) {
           name: u.name,
           email: u.email,
           phone: u.phone || '',
-          role: u.role || 'user',
-          avatar: u.avatar || avatar
+          role: u.role || (isAdmin ? 'admin' : 'user'),
+          avatar: u.avatar || avatar,
+          hasPassword: !!u.passwordHash
         },
         token
       })
+    }
+    if (route === '/admin/auth/verify-email' && method === 'GET') {
+      const email = request.nextUrl.searchParams.get('email');
+      if (!email) return err('Email is required', 400);
+      const em = email.trim().toLowerCase();
+      const envAdmins = getEnvAdminEmails();
+      const inEnv = envAdmins.includes(em);
+      const dbUser = await db.collection('users').findOne({ email: em });
+      const inDbAdmin = !!(dbUser && dbUser.role === 'admin');
+      return ok({
+        email: em,
+        isAuthorized: inEnv || inDbAdmin,
+        sources: {
+          env: inEnv,
+          db: inDbAdmin
+        }
+      });
     }
     if (route === '/auth/me' && method === 'GET') { const user = await getCurrentUser(db, request); return ok({ user }) }
     if (route === '/auth/logout' && method === 'POST') {
@@ -1029,6 +1235,180 @@ async function handleRoute(request, { params }) {
       await db.collection('users').updateOne({ id: u.id }, { $set: { name: (name || u.name).trim(), phone: cleanPhone } });
       const up = await db.collection('users').findOne({ id: u.id });
       return ok({ user: { id: up.id, name: up.name, email: up.email, phone: up.phone || '', role: up.role || 'user' } });
+    }
+    if (route === '/auth/change-password' && method === 'POST') {
+      const u = await getCurrentUser(db, request);
+      if (!u) return err('Not authenticated.', 401);
+
+      const { currentPassword, newPassword, confirmPassword } = await request.json();
+
+      if (!newPassword || typeof newPassword !== 'string' || newPassword.trim().length < 6) {
+        return err('New password must be at least 6 characters long.', 400);
+      }
+
+      if (confirmPassword && newPassword !== confirmPassword) {
+        return err('New password and confirm password do not match.', 400);
+      }
+
+      const fullUser = await db.collection('users').findOne({ id: u.id });
+      if (!fullUser) return err('User not found.', 404);
+
+      if (fullUser.passwordHash) {
+        if (!currentPassword) {
+          return err('Current password is required.', 400);
+        }
+        const isMatch = verifyPassword(currentPassword, fullUser.passwordSalt, fullUser.passwordHash);
+        if (!isMatch) {
+          return err('Current password is incorrect.', 400);
+        }
+        if (currentPassword === newPassword) {
+          return err('New password cannot be the same as your current password.', 400);
+        }
+      }
+
+      const { salt, hash } = hashPassword(newPassword.trim());
+      await db.collection('users').updateOne(
+        { id: u.id },
+        { $set: { passwordSalt: salt, passwordHash: hash, updatedAt: new Date() } }
+      );
+
+      return ok({
+        success: true,
+        message: fullUser.passwordHash ? 'Password changed successfully.' : 'Password set successfully.'
+      });
+    }
+
+    if (route === '/auth/forgot-password' && method === 'POST') {
+      const { email, requireAdmin } = await request.json();
+      if (!email || typeof email !== 'string' || !email.trim()) {
+        return err('Email address is required.', 400);
+      }
+      const em = email.trim().toLowerCase();
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(em)) {
+        return err('Please enter a valid email address.', 400);
+      }
+
+      const u = await db.collection('users').findOne({ email: em });
+      if (!u) {
+        return err('No account was found with this email address.', 404);
+      }
+
+      if (requireAdmin) {
+        const isAdmin = await isAuthorizedAdminEmail(db, em);
+        if (!isAdmin) {
+          return err(`Access Denied: "${em}" is not registered as an administrator in the database or system configuration (.env).`, 403);
+        }
+      }
+
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+      await db.collection('password_resets').deleteMany({ email: em });
+      await db.collection('password_resets').insertOne({
+        id: uuidv4(),
+        email: em,
+        code,
+        expiresAt,
+        used: false,
+        createdAt: new Date()
+      });
+
+      console.log(`[PASSWORD RESET] Code for ${em}: ${code} (expires in 15 mins)`);
+
+      // Send verification code via Nodemailer (Gmail / SMTP)
+      const emailResult = await sendPasswordResetEmail({
+        toEmail: em,
+        code,
+        name: u.name,
+        isAdmin: Boolean(requireAdmin)
+      });
+
+      let message = `A 6-digit verification code has been sent to ${em}. Please check your Gmail or email inbox (and spam folder).`;
+      if (!emailResult.sent && emailResult.reason === 'SMTP_NOT_CONFIGURED') {
+        message = `Verification code generated for ${em}. To deliver directly to your Gmail inbox, please configure SMTP_USER and SMTP_PASS in .env.`;
+      }
+
+      return ok({
+        success: true,
+        message,
+        sent: emailResult.sent,
+        code: emailResult.sent ? undefined : code,
+        devCode: code,
+        email: em
+      });
+    }
+
+    if (route === '/auth/verify-reset-code' && method === 'POST') {
+      const { email, code } = await request.json();
+      if (!email || !code) return err('Email and verification code are required.', 400);
+      const em = email.trim().toLowerCase();
+      const cleanCode = code.toString().trim();
+
+      const record = await db.collection('password_resets').findOne({
+        email: em,
+        code: cleanCode,
+        used: false,
+        expiresAt: { $gt: new Date() }
+      });
+
+      if (!record) {
+        return err('Invalid or expired verification code.', 400);
+      }
+
+      return ok({ success: true, valid: true });
+    }
+
+    if (route === '/auth/reset-password' && method === 'POST') {
+      const { email, code, newPassword, confirmPassword } = await request.json();
+      if (!email || !code || !newPassword) {
+        return err('Email, verification code, and new password are required.', 400);
+      }
+
+      if (typeof newPassword !== 'string' || newPassword.trim().length < 6) {
+        return err('New password must be at least 6 characters long.', 400);
+      }
+
+      if (confirmPassword && newPassword !== confirmPassword) {
+        return err('Passwords do not match.', 400);
+      }
+
+      const em = email.trim().toLowerCase();
+      const cleanCode = code.toString().trim();
+
+      const resetRecord = await db.collection('password_resets').findOne({
+        email: em,
+        code: cleanCode,
+        used: false,
+        expiresAt: { $gt: new Date() }
+      });
+
+      if (!resetRecord) {
+        return err('Invalid or expired verification code. Please request a new one.', 400);
+      }
+
+      const user = await db.collection('users').findOne({ email: em });
+      if (!user) {
+        return err('User not found.', 404);
+      }
+
+      const { salt, hash } = hashPassword(newPassword.trim());
+      await db.collection('users').updateOne(
+        { id: user.id },
+        { $set: { passwordSalt: salt, passwordHash: hash, updatedAt: new Date() } }
+      );
+
+      await db.collection('password_resets').updateOne(
+        { id: resetRecord.id },
+        { $set: { used: true, usedAt: new Date() } }
+      );
+
+      await db.collection('sessions').deleteMany({ userId: user.id });
+
+      return ok({
+        success: true,
+        message: 'Password has been reset successfully. You can now log in.'
+      });
     }
 
     // ============ ADDRESSES ============

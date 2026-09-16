@@ -321,10 +321,10 @@ function Newsletter() {
 const FALLBACK_HERO = [{ title: 'The Bridal Edit', kicker: 'Wedding Collection', copy: 'Heirloom polki chokers, uncut diamond haars & maang tikkas — handcrafted over 120+ hours.', cta: 'Discover the Edit', href: '/shop?category=wedding', img: 'https://images.unsplash.com/photo-1601121141461-9d6647bca1ed?crop=entropy&cs=srgb&fm=jpg&q=85' }];
 
 export default function HomePage() {
-  const [products, setProducts] = useState(SEED);
-  const [categories, setCategories] = useState(SEED_C);
-  const [collections, setCollections] = useState(SEED_K);
-  const [banners, setBanners] = useState(FALLBACK_HERO);
+  const [products, setProducts] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [collections, setCollections] = useState([]);
+  const [banners, setBanners] = useState([]);
   const [transition, setTransition] = useState('fade');
   const [homepageCMS, setHomepageCMS] = useState({
     homepagePromotions: [],

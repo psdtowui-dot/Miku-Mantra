@@ -2,7 +2,7 @@ const path = require('path');
 
 const nextConfig = {
   distDir: process.env.BUILD_DIR || '.next',
-  output: process.env.OUTPUT_STANDALONE === 'true' ? 'standalone' : undefined,
+  output: 'standalone',
   outputFileTracingRoot: path.join(__dirname, './'),
   images: {
     unoptimized: true,

@@ -5,12 +5,11 @@ import Link from 'next/link';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { useWishlist } from '@/lib/cart-store';
 import { PRODUCTS, formatINR } from '@/lib/products';
-import ProductCard from '@/components/site/product-card';
-import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck } from 'lucide-react';
+import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function AccountPage() {
-  const { user, loading, logout, refresh } = useAuth();
+  const { user, loading, logout, refresh, changePassword } = useAuth();
   const router = useRouter();
   const { ids } = useWishlist();
   const [tab, setTab] = useState('profile');
@@ -23,6 +22,13 @@ export default function AccountPage() {
 
   const [profileErrors, setProfileErrors] = useState({ name: '', phone: '' });
   const [addrErrors, setAddrErrors] = useState({ fullName: '', phone: '', line1: '', city: '', state: '', pincode: '' });
+
+  const [pwdForm, setPwdForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [pwdErrors, setPwdErrors] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [pwdSaving, setPwdSaving] = useState(false);
+  const [showCurrentPwd, setShowCurrentPwd] = useState(false);
+  const [showNewPwd, setShowNewPwd] = useState(false);
+  const [showConfirmPwd, setShowConfirmPwd] = useState(false);
 
   useEffect(() => { if (!loading && !user) router.push('/login?redirect=/account'); }, [loading, user, router]);
   useEffect(() => { if (user) { setProfileForm({ name: user.name || '', phone: user.phone || '' }); loadAddresses(); loadOrders(); } }, [user]);
@@ -110,13 +116,64 @@ export default function AccountPage() {
 
   async function deleteAddress(id) { const r = await authFetch(`/api/addresses/${id}`, { method: 'DELETE' }); if (r.ok) { loadAddresses(); toast.success('Removed'); } }
 
+  const handlePasswordSubmit = async (e) => {
+    e.preventDefault();
+    const errs = { currentPassword: '', newPassword: '', confirmPassword: '' };
+    let valid = true;
+
+    if (user?.hasPassword && !pwdForm.currentPassword) {
+      errs.currentPassword = 'Must enter your current password';
+      valid = false;
+    }
+
+    if (!pwdForm.newPassword) {
+      errs.newPassword = 'Must enter a new password';
+      valid = false;
+    } else if (pwdForm.newPassword.length < 6) {
+      errs.newPassword = 'Password must be at least 6 characters';
+      valid = false;
+    }
+
+    if (!pwdForm.confirmPassword) {
+      errs.confirmPassword = 'Must confirm your new password';
+      valid = false;
+    } else if (pwdForm.newPassword !== pwdForm.confirmPassword) {
+      errs.confirmPassword = 'Passwords do not match';
+      valid = false;
+    }
+
+    setPwdErrors(errs);
+    if (!valid) return;
+
+    setPwdSaving(true);
+    try {
+      const res = await changePassword(pwdForm.currentPassword, pwdForm.newPassword, pwdForm.confirmPassword);
+      toast.success(res.message || 'Password updated successfully!');
+      setPwdForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      setPwdErrors({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      await refresh();
+    } catch (err) {
+      toast.error(err.message || 'Failed to update password');
+      if (err.message && err.message.toLowerCase().includes('current password')) {
+        setPwdErrors(prev => ({ ...prev, currentPassword: err.message }));
+      }
+    } finally {
+      setPwdSaving(false);
+    }
+  };
 
   async function doLogout() { await logout(); toast.success('Signed out'); router.push('/'); }
 
   if (loading || !user) return <div className="h-96 flex items-center justify-center text-neutral-400"><Loader2 className="animate-spin" /></div>;
 
   const wishItems = PRODUCTS.filter(p => ids.includes(p.id));
-  const tabs = [{ k: 'profile', n: 'Profile', i: User }, { k: 'orders', n: 'Orders', i: Package }, { k: 'addresses', n: 'Addresses', i: MapPin }, { k: 'wishlist', n: 'Wishlist', i: Heart }];
+  const tabs = [
+    { k: 'profile', n: 'Profile', i: User },
+    { k: 'security', n: 'Password & Security', i: Lock },
+    { k: 'orders', n: 'Orders', i: Package },
+    { k: 'addresses', n: 'Addresses', i: MapPin },
+    { k: 'wishlist', n: 'Wishlist', i: Heart }
+  ];
 
   return (
     <main className="bg-white min-h-screen">
@@ -194,6 +251,122 @@ export default function AccountPage() {
                   {profileErrors.phone && <p className="text-xs text-red-500 mt-1">{profileErrors.phone}</p>}
                 </div>
                 <button disabled={saving} className="px-6 sm:px-8 py-2.5 sm:py-3 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] disabled:opacity-60 cursor-pointer">{saving ? 'Saving…' : 'Save Changes'}</button>
+              </form>
+            </div>
+          )}
+
+          {tab === 'security' && (
+            <div className="border border-[#E8E8E8] rounded-xl p-4 sm:p-6 md:p-8">
+              <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+                <div className="font-display text-xl xs:text-2xl sm:text-3xl text-[#1A1A1A]">Password & Security</div>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#FAF6EF] text-[#9C6B30] text-[10px] tracking-wider uppercase font-semibold">
+                  <ShieldCheck size={13} />
+                  Secure Credentials
+                </div>
+              </div>
+              <div className="gold-line w-12 mb-6" />
+
+              {!user?.hasPassword && (
+                <div className="mb-6 p-4 rounded-xl bg-[#FAF6EF] border border-[#9C6B30]/20 text-[#1A1A1A] text-xs leading-relaxed">
+                  <div className="font-semibold text-[#9C6B30] mb-1 flex items-center gap-1.5">
+                    <ShieldCheck size={15} /> Google Account Connected
+                  </div>
+                  You currently sign in using Google. You can set a password below to also enable standard email and password sign-in.
+                </div>
+              )}
+
+              <form onSubmit={handlePasswordSubmit} className="space-y-5 max-w-md" noValidate>
+                {user?.hasPassword && (
+                  <div>
+                    <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-medium block mb-1">
+                      Current Password
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showCurrentPwd ? 'text' : 'password'}
+                        value={pwdForm.currentPassword}
+                        onChange={e => {
+                          setPwdForm({ ...pwdForm, currentPassword: e.target.value });
+                          if (pwdErrors.currentPassword) setPwdErrors(prev => ({ ...prev, currentPassword: '' }));
+                        }}
+                        placeholder="••••••••"
+                        className={`w-full pr-10 px-3 sm:px-4 py-2.5 sm:py-3 border ${pwdErrors.currentPassword ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-md text-sm focus:outline-none focus:border-[#9C6B30]`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCurrentPwd(!showCurrentPwd)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700"
+                        tabIndex={-1}
+                      >
+                        {showCurrentPwd ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                    {pwdErrors.currentPassword && <p className="text-xs text-red-500 mt-1">{pwdErrors.currentPassword}</p>}
+                  </div>
+                )}
+
+                <div>
+                  <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-medium block mb-1">
+                    {user?.hasPassword ? 'New Password' : 'Create Password'}
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showNewPwd ? 'text' : 'password'}
+                      value={pwdForm.newPassword}
+                      onChange={e => {
+                        setPwdForm({ ...pwdForm, newPassword: e.target.value });
+                        if (pwdErrors.newPassword) setPwdErrors(prev => ({ ...prev, newPassword: '' }));
+                      }}
+                      placeholder="At least 6 characters"
+                      className={`w-full pr-10 px-3 sm:px-4 py-2.5 sm:py-3 border ${pwdErrors.newPassword ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-md text-sm focus:outline-none focus:border-[#9C6B30]`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPwd(!showNewPwd)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700"
+                      tabIndex={-1}
+                    >
+                      {showNewPwd ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                  {pwdErrors.newPassword && <p className="text-xs text-red-500 mt-1">{pwdErrors.newPassword}</p>}
+                </div>
+
+                <div>
+                  <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-medium block mb-1">
+                    Confirm New Password
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showConfirmPwd ? 'text' : 'password'}
+                      value={pwdForm.confirmPassword}
+                      onChange={e => {
+                        setPwdForm({ ...pwdForm, confirmPassword: e.target.value });
+                        if (pwdErrors.confirmPassword) setPwdErrors(prev => ({ ...prev, confirmPassword: '' }));
+                      }}
+                      placeholder="Repeat new password"
+                      className={`w-full pr-10 px-3 sm:px-4 py-2.5 sm:py-3 border ${pwdErrors.confirmPassword ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-md text-sm focus:outline-none focus:border-[#9C6B30]`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPwd(!showConfirmPwd)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700"
+                      tabIndex={-1}
+                    >
+                      {showConfirmPwd ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                  {pwdErrors.confirmPassword && <p className="text-xs text-red-500 mt-1">{pwdErrors.confirmPassword}</p>}
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={pwdSaving}
+                  className="px-6 sm:px-8 py-2.5 sm:py-3 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] disabled:opacity-60 cursor-pointer flex items-center gap-2 transition"
+                >
+                  {pwdSaving ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
+                  {user?.hasPassword ? (pwdSaving ? 'Updating…' : 'Update Password') : (pwdSaving ? 'Setting…' : 'Set Password')}
+                </button>
               </form>
             </div>
           )}

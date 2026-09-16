@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/use-auth';
 import { useCart, useWishlist } from '@/lib/cart-store';
 import { PRODUCTS } from '@/lib/products';
 import { motion, AnimatePresence } from 'framer-motion';
+import AuthModal from '@/components/site/auth-modal';
 
 export default function Navbar({ initialData }) {
   const pathname = usePathname();
@@ -514,56 +515,13 @@ export default function Navbar({ initialData }) {
         )}
       </AnimatePresence>
 
-      {/* Auth Prompt Modal */}
-      <AnimatePresence>
-        {authPromptOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/35 backdrop-blur-xs z-[70] flex items-center justify-center p-4"
-            onClick={() => setAuthPromptOpen(false)}
-          >
-            <motion.div
-              initial={{ scale: 0.95, y: 10 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.95, y: 10 }}
-              className="bg-white max-w-sm w-full rounded-2xl p-6 md:p-8 border border-neutral-100 luxe-shadow text-center"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="text-[10px] tracking-[0.35em] uppercase text-[#9C6B30] mb-2">MikuMantra Circle</div>
-              <h3 className="font-display text-2xl font-light text-[#1A1A1A]">Account Required</h3>
-              <div className="gold-line w-12 mx-auto my-4" />
-              <p className="text-neutral-600 text-sm leading-relaxed mb-6">
-                {authPromptMsg}
-              </p>
+      {/* Auth Prompt Modal with exact same design & options */}
+      <AuthModal
+        isOpen={authPromptOpen}
+        onClose={() => setAuthPromptOpen(false)}
+        initialMode="login"
+      />
 
-              <div className="space-y-3">
-                <Link
-                  href={`/login?redirect=${encodeURIComponent(pathname)}`}
-                  onClick={() => setAuthPromptOpen(false)}
-                  className="block w-full py-3 bg-[#1A1A1A] text-white text-[10px] tracking-[0.25em] uppercase hover:bg-[#9C6B30] transition rounded-full font-medium"
-                >
-                  Sign In
-                </Link>
-                <Link
-                  href={`/login?mode=register&redirect=${encodeURIComponent(pathname)}`}
-                  onClick={() => setAuthPromptOpen(false)}
-                  className="block w-full py-3 border border-neutral-300 text-neutral-800 text-[10px] tracking-[0.25em] uppercase hover:border-[#9C6B30] hover:text-[#9C6B30] transition rounded-full font-medium"
-                >
-                  Create Account
-                </Link>
-                <button
-                  onClick={() => setAuthPromptOpen(false)}
-                  className="block w-full py-2 text-xs text-neutral-400 hover:text-neutral-600 transition"
-                >
-                  Close
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
