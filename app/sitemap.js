@@ -14,7 +14,8 @@ async function getSitemapData() {
     };
   }
 
-  const mongoUrl = process.env.MONGO_URL || process.env.MONGODB_URI;
+  const directUrl = process.env.MONGO_DIRECT_URL || "mongodb://akashsriv1984_db_user:2M5Edv773XLUmT15@ac-htqrxv1-shard-00-00.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-01.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-02.7szyylz.mongodb.net:27017/userPortal?ssl=true&replicaSet=atlas-1c5jr9-shard-0&authSource=admin&retryWrites=true&w=majority";
+  const mongoUrl = process.env.MONGO_DIRECT_URL || process.env.MONGO_URL || process.env.MONGODB_URI || directUrl;
   if (!mongoUrl) {
     return {
       products: SEED_PRODUCTS,
@@ -28,12 +29,25 @@ async function getSitemapData() {
     try {
       dns.setServers(['8.8.8.8', '1.1.1.1']);
     } catch (e) {}
-    client = new MongoClient(mongoUrl, {
-      connectTimeoutMS: 5000,
-      socketTimeoutMS: 5000,
-      serverSelectionTimeoutMS: 5000,
-    });
-    await client.connect();
+    try {
+      client = new MongoClient(mongoUrl, {
+        connectTimeoutMS: 5000,
+        socketTimeoutMS: 5000,
+        serverSelectionTimeoutMS: 5000,
+      });
+      await client.connect();
+    } catch (srvErr) {
+      if (directUrl && mongoUrl !== directUrl) {
+        client = new MongoClient(directUrl, {
+          connectTimeoutMS: 5000,
+          socketTimeoutMS: 5000,
+          serverSelectionTimeoutMS: 5000,
+        });
+        await client.connect();
+      } else {
+        throw srvErr;
+      }
+    }
     const db = client.db(process.env.DB_NAME || 'userPortal');
 
     const products = await db.collection('products').find({}).toArray();
