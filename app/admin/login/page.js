@@ -447,8 +447,11 @@ function AdminLoginInner() {
 
             {forgotStep === 'request' ? (
               <div>
-                <div className="w-11 h-11 rounded-xl bg-[#D4AF37]/15 border border-[#D4AF37]/30 flex items-center justify-center text-[#D4AF37] mb-3">
-                  <KeyRound size={20} />
+                <div className="flex items-center justify-between mb-3">
+                  <div className="w-11 h-11 rounded-xl bg-[#D4AF37]/15 border border-[#D4AF37]/30 flex items-center justify-center text-[#D4AF37]">
+                    <KeyRound size={20} />
+                  </div>
+                  <img src="/verification-logo.png" alt="MikuMantra" className="h-7 w-auto object-contain rounded" />
                 </div>
                 <h3 className="text-xl font-serif tracking-wide text-white">Admin Password Reset</h3>
                 <p className="text-xs text-neutral-400 mt-1 mb-5 leading-relaxed">
@@ -488,13 +491,16 @@ function AdminLoginInner() {
               </div>
             ) : (
               <div>
-                <button
-                  type="button"
-                  onClick={() => setForgotStep('request')}
-                  className="inline-flex items-center gap-1.5 text-xs text-neutral-400 hover:text-[#D4AF37] transition mb-3"
-                >
-                  <ArrowLeft size={13} /> Change email
-                </button>
+                <div className="flex items-center justify-between mb-3">
+                  <button
+                    type="button"
+                    onClick={() => setForgotStep('request')}
+                    className="inline-flex items-center gap-1.5 text-xs text-neutral-400 hover:text-[#D4AF37] transition"
+                  >
+                    <ArrowLeft size={13} /> Change email
+                  </button>
+                  <img src="/verification-logo.png" alt="MikuMantra" className="h-7 w-auto object-contain rounded" />
+                </div>
 
                 <h3 className="text-xl font-serif tracking-wide text-white">Reset Admin Password</h3>
                 <p className="text-xs text-neutral-400 mt-1 mb-4 leading-relaxed">

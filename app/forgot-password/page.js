@@ -105,7 +105,7 @@ function ForgotPasswordInner() {
     <main className="min-h-screen bg-[#FAF6EF]/30 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
         <Link href="/" className="inline-block mb-4">
-          <img className="w-36 h-auto mx-auto object-contain" src="/logo.png" alt="Logo" />
+          <img className="w-44 h-auto mx-auto object-contain rounded-md" src="/verification-logo.png" alt="MikuMantra" />
         </Link>
         <div className="text-[11px] tracking-[0.3em] uppercase text-[#9C6B30] mb-1">
           {isAdmin ? 'Administrator Security' : 'Customer Account Recovery'}

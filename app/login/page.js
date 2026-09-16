@@ -522,8 +522,11 @@ function LoginInner(){
 
             {forgotStep === 'request' ? (
               <div>
-                <div className="w-11 h-11 rounded-full bg-[#FAF6EF] border border-[#9C6B30]/30 flex items-center justify-center text-[#9C6B30] mb-3">
-                  <KeyRound size={20} />
+                <div className="flex items-center justify-between mb-3">
+                  <div className="w-11 h-11 rounded-full bg-[#FAF6EF] border border-[#9C6B30]/30 flex items-center justify-center text-[#9C6B30]">
+                    <KeyRound size={20} />
+                  </div>
+                  <img src="/verification-logo.png" alt="MikuMantra" className="h-8 w-auto object-contain rounded" />
                 </div>
                 <h3 className="font-display text-2xl text-[#1A1A1A] font-light">Forgot Password</h3>
                 <div className="gold-line w-10 my-2" />
@@ -564,13 +567,16 @@ function LoginInner(){
               </div>
             ) : (
               <div>
-                <button
-                  type="button"
-                  onClick={() => setForgotStep('request')}
-                  className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-[#9C6B30] transition mb-3"
-                >
-                  <ArrowLeft size={13} /> Change email
-                </button>
+                <div className="flex items-center justify-between mb-3">
+                  <button
+                    type="button"
+                    onClick={() => setForgotStep('request')}
+                    className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-[#9C6B30] transition"
+                  >
+                    <ArrowLeft size={13} /> Change email
+                  </button>
+                  <img src="/verification-logo.png" alt="MikuMantra" className="h-7 w-auto object-contain rounded" />
+                </div>
 
                 <h3 className="font-display text-2xl text-[#1A1A1A] font-light">Reset Password</h3>
                 <div className="gold-line w-10 my-2" />
