@@ -131,6 +131,7 @@ export default async function RootLayout({ children }) {
         </Providers>
         <AIChatMount />
         <Toaster position="top-center" richColors />
+        <Script src="https://accounts.google.com/gsi/client" strategy="afterInteractive" />
         <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="lazyOnload" />
       </body>
     </html>

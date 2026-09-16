@@ -84,8 +84,11 @@ function AdminLoginInner() {
   useEffect(() => {
     if (!clientId || typeof window === 'undefined') return;
 
+    let cancelled = false;
+
     const setupGoogle = () => {
-      if (window.google?.accounts?.id && googleBtnContainerRef.current) {
+      if (cancelled || !googleBtnContainerRef.current) return;
+      if (window.google?.accounts?.id) {
         try {
           window.google.accounts.id.initialize({
             client_id: clientId,
@@ -112,17 +115,37 @@ function AdminLoginInner() {
       }
     };
 
+    // Ensure Google script is present
+    if (!window.google && !document.getElementById('google-gsi-client')) {
+      const script = document.createElement('script');
+      script.id = 'google-gsi-client';
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      script.onload = () => {
+        if (!cancelled) setupGoogle();
+      };
+      document.head.appendChild(script);
+    }
+
     if (window.google?.accounts?.id) {
       setupGoogle();
     } else {
       const t = setInterval(() => {
         if (window.google?.accounts?.id) {
           clearInterval(t);
-          setupGoogle();
+          if (!cancelled) setupGoogle();
         }
-      }, 300);
-      return () => clearInterval(t);
+      }, 200);
+      return () => {
+        cancelled = true;
+        clearInterval(t);
+      };
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, [clientId]);
 
   const handleManualGoogleClick = () => {
@@ -130,13 +153,75 @@ function AdminLoginInner() {
       toast.error('Google Client ID is missing. Please check .env configuration.');
       return;
     }
+
+    setGoogleBusy(true);
+    setErr('');
+
+    // Primary click method: Google OAuth2 popup token client
+    if (window.google?.accounts?.oauth2) {
+      try {
+        const tokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: 'email profile openid',
+          callback: async (resp) => {
+            if (resp?.error) {
+              console.error('Google OAuth popup error:', resp);
+              setGoogleBusy(false);
+              if (resp.error === 'access_denied') {
+                toast.info('Google sign-in was cancelled.');
+              } else {
+                toast.error(`Google sign-in error: ${resp.error}`);
+              }
+              return;
+            }
+            if (resp?.access_token) {
+              try {
+                const u = await loginWithGoogle({ accessToken: resp.access_token }, { requireAdmin: true });
+                if (u && u.role === 'admin') {
+                  toast.success(`Welcome back, Administrator ${u.name || ''}!`);
+                  router.push(redirect);
+                } else {
+                  throw new Error('This account is not authorized for administrator access.');
+                }
+              } catch (ex) {
+                console.error('Admin Google sign-in verification failed:', ex);
+                setErr(ex.message || 'Administrator verification failed.');
+                toast.error(ex.message || 'Administrator verification failed.');
+              } finally {
+                setGoogleBusy(false);
+              }
+            } else {
+              setGoogleBusy(false);
+            }
+          },
+          error_callback: (err) => {
+            console.error('Google token client error:', err);
+            setGoogleBusy(false);
+            if (err?.type === 'popup_failed_to_open') {
+              toast.error('Google sign-in popup was blocked by your browser. Please allow popups.');
+            } else {
+              toast.error('Google Sign-In popup could not open. Please verify authorized origins in Google Cloud Console.');
+            }
+          }
+        });
+
+        tokenClient.requestAccessToken({ prompt: 'select_account' });
+        return;
+      } catch (e) {
+        console.warn('OAuth2 token client init failed, falling back:', e);
+      }
+    }
+
+    // Fallback: One Tap prompt
     if (window.google?.accounts?.id) {
       window.google.accounts.id.prompt((notification) => {
+        setGoogleBusy(false);
         if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
           toast.info('Please click the Google button to authenticate as Admin.');
         }
       });
     } else {
+      setGoogleBusy(false);
       toast.error('Google Authentication service is loading. Please try again in a few seconds.');
     }
   };
@@ -315,29 +400,27 @@ function AdminLoginInner() {
 
           {/* Google Sign In Section */}
           <div className="space-y-4">
-            <div className="relative w-full">
-              <button
-                type="button"
-                onClick={handleManualGoogleClick}
-                disabled={googleBusy || busy}
-                className="w-full py-3.5 px-4 bg-[#1E1E22] hover:bg-[#25252A] text-white border border-[#D4AF37]/40 hover:border-[#D4AF37] rounded-full text-xs tracking-wider uppercase font-medium transition flex items-center justify-center gap-3 shadow-lg cursor-pointer disabled:opacity-50"
-              >
-                {googleBusy ? (
-                  <Loader2 size={18} className="animate-spin text-[#D4AF37]" />
-                ) : (
-                  <GoogleIcon className="w-5 h-5 shrink-0" />
-                )}
-                <span>Sign in with Gmail as Admin</span>
-              </button>
-
-              {/* Native Google Identity rendered button overlay */}
+            <div className="w-full flex flex-col items-center justify-center min-h-[44px]">
               <div
                 ref={googleBtnContainerRef}
-                className={`absolute inset-0 w-full h-full overflow-hidden rounded-full flex items-center justify-center opacity-0 cursor-pointer ${
-                  googleRendered ? 'pointer-events-auto' : 'pointer-events-none'
-                }`}
-                style={{ transform: 'scale(1.1)' }}
+                className={`w-full flex justify-center ${googleRendered && !googleBusy ? 'block' : 'hidden'}`}
               />
+
+              {(!googleRendered || googleBusy) && (
+                <button
+                  type="button"
+                  onClick={handleManualGoogleClick}
+                  disabled={googleBusy || busy}
+                  className="w-full py-3.5 px-4 bg-[#1E1E22] hover:bg-[#25252A] text-white border border-[#D4AF37]/40 hover:border-[#D4AF37] rounded-full text-xs tracking-wider uppercase font-medium transition flex items-center justify-center gap-3 shadow-lg cursor-pointer disabled:opacity-50"
+                >
+                  {googleBusy ? (
+                    <Loader2 size={18} className="animate-spin text-[#D4AF37]" />
+                  ) : (
+                    <GoogleIcon className="w-5 h-5 shrink-0" />
+                  )}
+                  <span>Sign in with Gmail as Admin</span>
+                </button>
+              )}
             </div>
 
             <div className="flex items-center gap-1.5 px-3 py-2 bg-black/40 rounded-lg border border-white/5 text-[11px] text-neutral-400">

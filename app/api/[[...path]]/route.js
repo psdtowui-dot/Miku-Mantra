@@ -1104,26 +1104,41 @@ async function handleRoute(request, { params }) {
       })
     }
     if (route === '/auth/google' && method === 'POST') {
-      const { credential, requireAdmin } = await request.json()
-      if (!credential) return err('Google credential is required.', 400)
+      const { credential, accessToken, requireAdmin } = await request.json()
+      if (!credential && !accessToken) return err('Google credential or access token is required.', 400)
 
       let payload = null
-      try {
-        const verifyRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`)
-        if (!verifyRes.ok) {
-          const errData = await verifyRes.json().catch(() => ({}))
-          return err(errData.error_description || 'Invalid Google credential.', 401)
+      if (credential) {
+        try {
+          const verifyRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`)
+          if (!verifyRes.ok) {
+            const errData = await verifyRes.json().catch(() => ({}))
+            return err(errData.error_description || 'Invalid Google credential.', 401)
+          }
+          payload = await verifyRes.json()
+        } catch (e) {
+          return err('Failed to verify Google account. Please try again.', 500)
         }
-        payload = await verifyRes.json()
-      } catch (e) {
-        return err('Failed to verify Google account. Please try again.', 500)
+      } else if (accessToken) {
+        try {
+          const userinfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+            headers: { Authorization: `Bearer ${accessToken}` }
+          })
+          if (!userinfoRes.ok) {
+            const errData = await userinfoRes.json().catch(() => ({}))
+            return err(errData.error_description || 'Invalid Google access token.', 401)
+          }
+          payload = await userinfoRes.json()
+        } catch (e) {
+          return err('Failed to verify Google access token. Please try again.', 500)
+        }
       }
 
       if (!payload || !payload.email) {
         return err('Google account did not provide an email address.', 400)
       }
 
-      const expectedClientId = process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
+      const expectedClientId = process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '998849094985-1ec0iv6a0ih2ulrru88vv3ngvcbcv68c.apps.googleusercontent.com'
       if (expectedClientId && payload.aud && payload.aud !== expectedClientId) {
         return err('Invalid Google client audience.', 401)
       }
@@ -1181,7 +1196,7 @@ async function handleRoute(request, { params }) {
           sameSite: 'lax',
           path: '/',
           maxAge: SESSION_DAYS * 86400,
-          secure: false
+          secure: process.env.NODE_ENV === 'production' || request.url.startsWith('https')
         })
       } catch (e) {}
 

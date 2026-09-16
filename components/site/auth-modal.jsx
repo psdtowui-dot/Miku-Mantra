@@ -61,8 +61,11 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onSu
   useEffect(() => {
     if (!isOpen || typeof window === 'undefined') return;
 
+    let cancelled = false;
+
     const setupGoogle = () => {
-      if (window.google?.accounts?.id && googleBtnContainerRef.current) {
+      if (cancelled || !googleBtnContainerRef.current) return;
+      if (window.google?.accounts?.id) {
         try {
           window.google.accounts.id.initialize({
             client_id: clientId,
@@ -89,17 +92,37 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onSu
       }
     };
 
+    // Ensure Google script is present
+    if (!window.google && !document.getElementById('google-gsi-client')) {
+      const script = document.createElement('script');
+      script.id = 'google-gsi-client';
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      script.onload = () => {
+        if (!cancelled) setupGoogle();
+      };
+      document.head.appendChild(script);
+    }
+
     if (window.google?.accounts?.id) {
       setupGoogle();
     } else {
       const t = setInterval(() => {
         if (window.google?.accounts?.id) {
           clearInterval(t);
-          setupGoogle();
+          if (!cancelled) setupGoogle();
         }
-      }, 300);
-      return () => clearInterval(t);
+      }, 200);
+      return () => {
+        cancelled = true;
+        clearInterval(t);
+      };
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen, mode, clientId]);
 
   const handleManualGoogleClick = () => {
@@ -107,13 +130,71 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onSu
       toast.info('Google Sign-In is configured on the app! Please set NEXT_PUBLIC_GOOGLE_CLIENT_ID in the .env file.');
       return;
     }
+
+    setGoogleBusy(true);
+    setErr('');
+
+    // Primary click method: Google OAuth2 popup token client
+    if (window.google?.accounts?.oauth2) {
+      try {
+        const tokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: 'email profile openid',
+          callback: async (resp) => {
+            if (resp?.error) {
+              console.error('Google OAuth popup error:', resp);
+              setGoogleBusy(false);
+              if (resp.error === 'access_denied') {
+                toast.info('Google sign-in was cancelled.');
+              } else {
+                toast.error(`Google sign-in error: ${resp.error}`);
+              }
+              return;
+            }
+            if (resp?.access_token) {
+              try {
+                const u = await loginWithGoogle({ accessToken: resp.access_token });
+                toast.success(`Welcome, ${u.name || 'valued customer'}!`);
+                if (onSuccess) onSuccess(u);
+                if (onClose) onClose();
+              } catch (ex) {
+                setErr(ex.message || 'Google sign-in failed');
+                toast.error(ex.message || 'Google sign-in failed');
+              } finally {
+                setGoogleBusy(false);
+              }
+            } else {
+              setGoogleBusy(false);
+            }
+          },
+          error_callback: (err) => {
+            console.error('Google token client error:', err);
+            setGoogleBusy(false);
+            if (err?.type === 'popup_failed_to_open') {
+              toast.error('Google sign-in popup was blocked by your browser. Please allow popups.');
+            } else {
+              toast.error('Google Sign-In popup could not open. Please verify authorized origins in Google Cloud Console.');
+            }
+          }
+        });
+
+        tokenClient.requestAccessToken({ prompt: 'select_account' });
+        return;
+      } catch (e) {
+        console.warn('OAuth2 token client init failed, falling back:', e);
+      }
+    }
+
+    // Fallback: One Tap prompt
     if (window.google?.accounts?.id) {
       window.google.accounts.id.prompt((notification) => {
+        setGoogleBusy(false);
         if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
           toast.info('Please select your Google account.');
         }
       });
     } else {
+      setGoogleBusy(false);
       toast.error('Google Identity service is loading. Please try again in a moment.');
     }
   };
@@ -187,8 +268,6 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onSu
           className="fixed inset-0 bg-black/45 backdrop-blur-xs z-[80] flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
           onClick={onClose}
         >
-          <Script src="https://accounts.google.com/gsi/client" strategy="afterInteractive" />
-
           <motion.div
             initial={{ scale: 0.96, y: 15, opacity: 0 }}
             animate={{ scale: 1, y: 0, opacity: 1 }}
@@ -234,26 +313,27 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onSu
 
             {/* Google Sign In Button */}
             <div className="mb-5">
-              <div className="relative w-full">
-                <button
-                  type="button"
-                  onClick={handleManualGoogleClick}
-                  disabled={googleBusy || busy}
-                  className="w-full py-3 px-4 border border-[#E8E8E8] rounded-full text-sm font-medium text-neutral-800 hover:bg-[#FAF6EF]/60 hover:border-[#9C6B30]/40 transition flex items-center justify-center gap-3 shadow-2xs cursor-pointer disabled:opacity-60 bg-white"
-                >
-                  {googleBusy ? (
-                    <Loader2 size={18} className="animate-spin text-[#9C6B30]" />
-                  ) : (
-                    <GoogleIcon className="w-5 h-5 shrink-0" />
-                  )}
-                  <span>{mode === 'login' ? 'Sign in with Google' : 'Sign up with Google'}</span>
-                </button>
-
+              <div className="w-full flex flex-col items-center justify-center min-h-[44px]">
                 <div
                   ref={googleBtnContainerRef}
-                  className={`absolute inset-0 w-full h-full overflow-hidden rounded-full flex items-center justify-center opacity-0 cursor-pointer ${googleRendered ? 'pointer-events-auto' : 'pointer-events-none'}`}
-                  style={{ transform: 'scale(1.15)' }}
+                  className={`w-full flex justify-center ${googleRendered && !googleBusy ? 'block' : 'hidden'}`}
                 />
+
+                {(!googleRendered || googleBusy) && (
+                  <button
+                    type="button"
+                    onClick={handleManualGoogleClick}
+                    disabled={googleBusy || busy}
+                    className="w-full py-3 px-4 border border-[#E8E8E8] rounded-full text-sm font-medium text-neutral-800 hover:bg-[#FAF6EF]/60 hover:border-[#9C6B30]/40 transition flex items-center justify-center gap-3 shadow-2xs cursor-pointer disabled:opacity-60 bg-white"
+                  >
+                    {googleBusy ? (
+                      <Loader2 size={18} className="animate-spin text-[#9C6B30]" />
+                    ) : (
+                      <GoogleIcon className="w-5 h-5 shrink-0" />
+                    )}
+                    <span>{mode === 'login' ? 'Sign in with Google' : 'Sign up with Google'}</span>
+                  </button>
+                )}
               </div>
 
               <div className="relative my-5 text-center">
