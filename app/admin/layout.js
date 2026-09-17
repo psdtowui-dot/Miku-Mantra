@@ -3,30 +3,51 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/lib/use-auth';
-import { LayoutDashboard, Package, FolderTree, Sparkles, ShoppingCart, Users, Ticket, MessageSquare, Image as ImageIcon, LogOut, Loader2, Menu, X, History, Settings, ChevronDown, ChevronRight, Layout, SlidersHorizontal, Globe, RotateCcw, ShieldCheck, KeyRound, Eye, EyeOff } from 'lucide-react';
+import {
+  LayoutDashboard, Package, FolderTree, Sparkles, ShoppingCart, Users,
+  Ticket, MessageSquare, Image as ImageIcon, LogOut, Loader2, Menu, X,
+  History, Settings, ChevronDown, ChevronRight, Layout, SlidersHorizontal,
+  Globe, RotateCcw, ShieldCheck, KeyRound, Eye, EyeOff, Shield, UserCheck,
+  Lock, ScrollText
+} from 'lucide-react';
 import { toast } from 'sonner';
 
 const NAV = [
-  { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/admin/products', label: 'Products', icon: Package },
-  { href: '/admin/categories', label: 'Categories', icon: FolderTree },
-  { href: '/admin/collections', label: 'Collections', icon: Sparkles },
-  { href: '/admin/orders', label: 'Orders', icon: ShoppingCart },
-  { href: '/admin/returns', label: 'Return Requests', icon: RotateCcw },
-  { href: '/admin/delivered-history', label: 'Delivered History', icon: History },
-  { href: '/admin/customers', label: 'Customers', icon: Users },
-  { href: '/admin/coupons', label: 'Coupons', icon: Ticket },
-  { href: '/admin/reviews', label: 'Reviews', icon: MessageSquare },
+  { href: '/admin', label: 'Dashboard', icon: LayoutDashboard, permission: 'dashboard.view' },
+  { href: '/admin/products', label: 'Products', icon: Package, permission: 'products.view' },
+  { href: '/admin/categories', label: 'Categories', icon: FolderTree, permission: 'products.view' },
+  { href: '/admin/collections', label: 'Collections', icon: Sparkles, permission: 'products.view' },
+  { href: '/admin/orders', label: 'Orders', icon: ShoppingCart, permission: 'orders.view' },
+  { href: '/admin/returns', label: 'Return Requests', icon: RotateCcw, permission: 'orders.view' },
+  { href: '/admin/delivered-history', label: 'Delivered History', icon: History, permission: 'orders.view' },
+  { href: '/admin/customers', label: 'Customers', icon: Users, permission: 'customers.view' },
+  { href: '/admin/coupons', label: 'Coupons', icon: Ticket, permission: 'products.view' },
+  { href: '/admin/reviews', label: 'Reviews', icon: MessageSquare, permission: 'products.view' },
+];
+
+const ADMIN_MGMT_NAV = [
+  { href: '/admin/admins', label: 'Admins', icon: Shield, permission: 'admins.view' },
+  { href: '/admin/roles', label: 'Roles', icon: UserCheck, permission: 'roles.view' },
+  { href: '/admin/permissions', label: 'Permissions', icon: Lock, permission: 'admins.permissions' },
+  { href: '/admin/activity-logs', label: 'Activity Logs', icon: ScrollText, permission: 'activity_logs.view' },
 ];
 
 const UI_NAV = [
-  { href: '/admin/site-settings', label: 'Site & SEO Settings', icon: Globe },
-  { href: '/admin/homepage', label: 'Promote & Assurance', icon: ShieldCheck },
-  { href: '/admin/banners', label: 'Banners', icon: ImageIcon },
-  { href: '/admin/header', label: 'Header', icon: Menu },
-  { href: '/admin/footer', label: 'Footer', icon: Settings },
-  { href: '/admin/product-filter', label: 'Product Filter', icon: SlidersHorizontal },
+  { href: '/admin/site-settings', label: 'Site & SEO Settings', icon: Globe, permission: 'settings.view' },
+  { href: '/admin/homepage', label: 'Promote & Assurance', icon: ShieldCheck, permission: 'settings.view' },
+  { href: '/admin/banners', label: 'Banners', icon: ImageIcon, permission: 'settings.view' },
+  { href: '/admin/header', label: 'Header', icon: Menu, permission: 'settings.view' },
+  { href: '/admin/footer', label: 'Footer', icon: Settings, permission: 'settings.view' },
+  { href: '/admin/product-filter', label: 'Product Filter', icon: SlidersHorizontal, permission: 'settings.view' },
 ];
+
+function canAccess(user, permissionKey) {
+  if (!user) return false;
+  if (!permissionKey) return true;
+  if (user.roleKey === 'SUPER_ADMIN') return true;
+  if (!user.permissions || user.permissions.includes('*')) return true;
+  return user.permissions.includes(permissionKey);
+}
 
 export default function AdminLayout({ children }) {
   const { user, loading, logout, changePassword, refresh } = useAuth();
@@ -34,6 +55,7 @@ export default function AdminLayout({ children }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [uiExpanded, setUiExpanded] = useState(false);
+  const [adminExpanded, setAdminExpanded] = useState(true);
 
   // Admin password change modal state
   const [showPwdModal, setShowPwdModal] = useState(false);
@@ -60,6 +82,9 @@ export default function AdminLayout({ children }) {
   useEffect(() => {
     if (pathname && (pathname.startsWith('/admin/site-settings') || pathname.startsWith('/admin/homepage') || pathname.startsWith('/admin/banners') || pathname.startsWith('/admin/header') || pathname.startsWith('/admin/footer') || pathname.startsWith('/admin/product-filter'))) {
       setUiExpanded(true);
+    }
+    if (pathname && (pathname.startsWith('/admin/admins') || pathname.startsWith('/admin/roles') || pathname.startsWith('/admin/permissions') || pathname.startsWith('/admin/activity-logs'))) {
+      setAdminExpanded(true);
     }
   }, [pathname]);
 
@@ -139,54 +164,122 @@ export default function AdminLayout({ children }) {
           </button>
         </div>
         <nav className="flex-1 py-4 overflow-y-auto dark-scrollbar space-y-1">
-          {NAV.map(n => {
-            const Active = pathname === n.href || (n.href !== '/admin' && pathname?.startsWith(n.href)); return (
-              <Link key={n.href} href={n.href} onClick={() => setOpen(false)} className={`flex items-center gap-3 px-5 xs:px-6 py-3 text-xs sm:text-sm transition ${Active ? 'bg-white/10 text-[#D4AF37] border-l-2 border-[#D4AF37]' : 'text-white/70 hover:bg-white/5'}`}><n.icon size={16} className="shrink-0" /><span className="truncate">{n.label}</span></Link>
-            )
+          {NAV.filter(n => canAccess(user, n.permission)).map(n => {
+            const Active = pathname === n.href || (n.href !== '/admin' && pathname?.startsWith(n.href));
+            return (
+              <Link
+                key={n.href}
+                href={n.href}
+                onClick={() => setOpen(false)}
+                className={`flex items-center gap-3 px-5 xs:px-6 py-3 text-xs sm:text-sm transition ${
+                  Active ? 'bg-white/10 text-[#D4AF37] border-l-2 border-[#D4AF37]' : 'text-white/70 hover:bg-white/5'
+                }`}
+              >
+                <n.icon size={16} className="shrink-0" />
+                <span className="truncate">{n.label}</span>
+              </Link>
+            );
           })}
 
-          <div>
-            <button
-              onClick={() => setUiExpanded(!uiExpanded)}
-              className={`w-full flex items-center justify-between px-5 xs:px-6 py-3 text-xs sm:text-sm transition ${pathname?.startsWith('/admin/banners') || pathname?.startsWith('/admin/header') || pathname?.startsWith('/admin/footer') || pathname?.startsWith('/admin/product-filter')
-                ? 'text-[#D4AF37] hover:bg-white/5'
-                : 'text-white/70 hover:bg-white/5'
+          {/* ADMIN MANAGEMENT SECTION */}
+          {ADMIN_MGMT_NAV.some(n => canAccess(user, n.permission)) && (
+            <div className="pt-2">
+              <div className="mx-5 xs:mx-6 my-2 border-t border-white/10" />
+              <button
+                onClick={() => setAdminExpanded(!adminExpanded)}
+                className={`w-full flex items-center justify-between px-5 xs:px-6 py-2.5 text-xs sm:text-sm transition ${
+                  pathname?.startsWith('/admin/admins') || pathname?.startsWith('/admin/roles') || pathname?.startsWith('/admin/permissions') || pathname?.startsWith('/admin/activity-logs')
+                    ? 'text-[#D4AF37] hover:bg-white/5 font-medium'
+                    : 'text-white/70 hover:bg-white/5'
                 }`}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <Layout size={16} className="shrink-0" />
-                <span>UI</span>
-              </div>
-              {uiExpanded ? <ChevronDown size={14} className="opacity-70 shrink-0" /> : <ChevronRight size={14} className="opacity-70 shrink-0" />}
-            </button>
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <Shield size={16} className="shrink-0 text-[#D4AF37]" />
+                  <span className="tracking-wide">Admin Management</span>
+                </div>
+                {adminExpanded ? <ChevronDown size={14} className="opacity-70 shrink-0" /> : <ChevronRight size={14} className="opacity-70 shrink-0" />}
+              </button>
 
-            {uiExpanded && (
-              <div className="bg-black/20 py-1 transition-all">
-                {UI_NAV.map((n, idx) => {
-                  const Active = pathname === n.href;
-                  const isLast = idx === UI_NAV.length - 1;
-                  return (
-                    <Link
-                      key={n.href}
-                      href={n.href}
-                      onClick={() => setOpen(false)}
-                      className={`flex items-center pl-8 xs:pl-10 pr-4 xs:pr-6 py-2 text-xs sm:text-sm transition ${Active
-                        ? 'text-[#D4AF37] font-medium bg-white/5 border-l-2 border-[#D4AF37] pl-[30px] xs:pl-[38px]'
-                        : 'text-white/60 hover:text-white hover:bg-white/[0.02]'
+              {adminExpanded && (
+                <div className="bg-black/20 py-1 transition-all">
+                  {ADMIN_MGMT_NAV.filter(n => canAccess(user, n.permission)).map((n, idx, arr) => {
+                    const Active = pathname === n.href || pathname?.startsWith(n.href);
+                    const isLast = idx === arr.length - 1;
+                    return (
+                      <Link
+                        key={n.href}
+                        href={n.href}
+                        onClick={() => setOpen(false)}
+                        className={`flex items-center pl-8 xs:pl-10 pr-4 xs:pr-6 py-2 text-xs sm:text-sm transition ${
+                          Active
+                            ? 'text-[#D4AF37] font-medium bg-white/5 border-l-2 border-[#D4AF37] pl-[30px] xs:pl-[38px]'
+                            : 'text-white/60 hover:text-white hover:bg-white/[0.02]'
                         }`}
-                    >
-                      <span className="text-white/30 font-mono mr-1.5 text-xs shrink-0">{isLast ? '└──' : '├──'}</span>
-                      <n.icon size={14} className="mr-2 shrink-0" />
-                      <span className="truncate">{n.label}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+                      >
+                        <span className="text-white/30 font-mono mr-1.5 text-xs shrink-0">{isLast ? '└──' : '├──'}</span>
+                        <n.icon size={14} className="mr-2 shrink-0" />
+                        <span className="truncate">{n.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* UI SETTINGS SECTION */}
+          {UI_NAV.some(n => canAccess(user, n.permission)) && (
+            <div className="pt-2">
+              <div className="mx-5 xs:mx-6 my-2 border-t border-white/10" />
+              <button
+                onClick={() => setUiExpanded(!uiExpanded)}
+                className={`w-full flex items-center justify-between px-5 xs:px-6 py-2.5 text-xs sm:text-sm transition ${
+                  pathname?.startsWith('/admin/banners') || pathname?.startsWith('/admin/header') || pathname?.startsWith('/admin/footer') || pathname?.startsWith('/admin/product-filter') || pathname?.startsWith('/admin/site-settings') || pathname?.startsWith('/admin/homepage')
+                    ? 'text-[#D4AF37] hover:bg-white/5 font-medium'
+                    : 'text-white/70 hover:bg-white/5'
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <Layout size={16} className="shrink-0" />
+                  <span>UI & Settings</span>
+                </div>
+                {uiExpanded ? <ChevronDown size={14} className="opacity-70 shrink-0" /> : <ChevronRight size={14} className="opacity-70 shrink-0" />}
+              </button>
+
+              {uiExpanded && (
+                <div className="bg-black/20 py-1 transition-all">
+                  {UI_NAV.filter(n => canAccess(user, n.permission)).map((n, idx) => {
+                    const Active = pathname === n.href;
+                    const isLast = idx === UI_NAV.length - 1;
+                    return (
+                      <Link
+                        key={n.href}
+                        href={n.href}
+                        onClick={() => setOpen(false)}
+                        className={`flex items-center pl-8 xs:pl-10 pr-4 xs:pr-6 py-2 text-xs sm:text-sm transition ${
+                          Active
+                            ? 'text-[#D4AF37] font-medium bg-white/5 border-l-2 border-[#D4AF37] pl-[30px] xs:pl-[38px]'
+                            : 'text-white/60 hover:text-white hover:bg-white/[0.02]'
+                        }`}
+                      >
+                        <span className="text-white/30 font-mono mr-1.5 text-xs shrink-0">{isLast ? '└──' : '├──'}</span>
+                        <n.icon size={14} className="mr-2 shrink-0" />
+                        <span className="truncate">{n.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </nav>
         <div className="p-4 border-t border-white/10 space-y-2">
-          <div className="text-xs text-white/60 truncate font-mono">{user.email}</div>
+          <div className="flex items-center justify-between gap-1">
+            <div className="text-xs text-white/80 truncate font-mono" title={user.email}>{user.email}</div>
+            <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-semibold bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/30 font-mono">
+              {user.roleKey || (user.role === 'admin' ? 'Super Admin' : user.role)}
+            </span>
+          </div>
           <button
             type="button"
             onClick={() => {

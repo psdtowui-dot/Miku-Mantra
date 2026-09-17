@@ -13,6 +13,7 @@ import { buildShippingSlipPDF } from '@/lib/pdf-shippingslip'
 import { WAREHOUSE_PINCODE } from '@/lib/constants'
 import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification } from '@/lib/notifications'
 import { sendPasswordResetEmail } from '@/lib/email-service'
+import { seedRbacIfEmpty, resolveUserPermissions, hasPermission, logAdminActivity, validatePrivilegeEscalation, PERMISSIONS, DEFAULT_ROLES } from '@/lib/rbac'
 
 
 // Simple in-memory server cache with TTL
@@ -178,6 +179,7 @@ async function connectToMongo() {
         }
         const database = db;
         await syncEnvAdminEmailsWithDatabase(database);
+        await seedRbacIfEmpty(database);
         return database;
       } catch (err) {
         connectPromise = null; // Reset connection promise so subsequent requests can retry
@@ -188,6 +190,7 @@ async function connectToMongo() {
   const database = await connectPromise;
   initEnvFileWatcher(database);
   await syncEnvAdminEmailsWithDatabase(database);
+  await seedRbacIfEmpty(database);
   return database;
 }
 
@@ -635,6 +638,9 @@ async function syncEnvAdminEmailsWithDatabase(db) {
           email: em,
           phone: '',
           role: 'admin',
+          roleKey: 'SUPER_ADMIN',
+          roleId: 'role_super_admin',
+          status: 'active',
           passwordSalt: salt,
           passwordHash: hash,
           createdAt: new Date(),
@@ -642,10 +648,10 @@ async function syncEnvAdminEmailsWithDatabase(db) {
           syncedFromEnv: true
         });
         console.log(`[Auto-Sync] Automatically created admin in DB from .env: ${em}`);
-      } else if (existing.role !== 'admin' || !existing.syncedFromEnv) {
+      } else if (existing.role !== 'admin' || !existing.syncedFromEnv || !existing.roleKey) {
         await db.collection('users').updateOne(
           { id: existing.id },
-          { $set: { role: 'admin', updatedAt: new Date(), syncedFromEnv: true } }
+          { $set: { role: 'admin', roleKey: existing.roleKey || 'SUPER_ADMIN', roleId: existing.roleId || 'role_super_admin', status: existing.status || 'active', updatedAt: new Date(), syncedFromEnv: true } }
         );
         console.log(`[Auto-Sync] Automatically ensured admin in DB from .env: ${em}`);
       }
@@ -702,9 +708,11 @@ async function getCurrentUser(db, request) {
   // Self-healing & dynamic revocation from .env:
   const envAdmins = getEnvAdminEmails();
   if (u.email && envAdmins.includes(u.email.toLowerCase())) {
-    if (u.role !== 'admin' || !u.syncedFromEnv) {
-      await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'admin', syncedFromEnv: true } });
+    if (u.role !== 'admin' || !u.syncedFromEnv || !u.roleKey) {
+      await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'admin', roleKey: u.roleKey || 'SUPER_ADMIN', roleId: u.roleId || 'role_super_admin', syncedFromEnv: true, status: u.status || 'active' } });
       u.role = 'admin';
+      u.roleKey = u.roleKey || 'SUPER_ADMIN';
+      u.status = u.status || 'active';
     }
   } else if (u.syncedFromEnv && !envAdmins.includes(u.email.toLowerCase())) {
     // Revoke admin if removed from .env
@@ -713,10 +721,25 @@ async function getCurrentUser(db, request) {
   }
 
   const { passwordHash, passwordSalt, _id, ...safe } = u;
-  return { ...safe, hasPassword: !!passwordHash };
+  const roleKey = u.roleKey || (u.role === 'admin' ? 'SUPER_ADMIN' : 'USER');
+  const status = u.status || 'active';
+  const permissions = u.role === 'admin' ? await resolveUserPermissions(db, { ...u, roleKey }) : [];
+
+  return {
+    ...safe,
+    roleKey,
+    status,
+    permissions,
+    hasPassword: !!passwordHash
+  };
 }
 
-async function requireAdmin(db, request) { const u = await getCurrentUser(db, request); if (!u || u.role !== 'admin') return null; return u }
+async function requireAdmin(db, request) {
+  const u = await getCurrentUser(db, request);
+  if (!u || u.role !== 'admin') return null;
+  if (u.status === 'disabled') return null;
+  return u;
+}
 function clean(doc) { if (!doc) return doc; const { _id, passwordHash, passwordSalt, ...r } = doc; return r }
 function ok(data) { return handleCORS(NextResponse.json(data)) }
 function err(msg, code = 400) { return handleCORS(NextResponse.json({ error: msg }, { status: code })) }
@@ -1049,16 +1072,26 @@ async function handleRoute(request, { params }) {
         return err(`Access Denied: The account "${em}" is not registered as an administrator in the database or system configuration (.env).`, 403)
       }
 
+      if (u.status === 'disabled') {
+        return err('This account has been disabled. Please contact a Super Administrator.', 403)
+      }
+
       // Self-healing: if logged in as admin email from .env or DB, enforce role is 'admin'
       if (isAdmin && u.role !== 'admin') {
         await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'admin' } });
         u.role = 'admin';
       }
 
+      await db.collection('users').updateOne({ id: u.id }, { $set: { lastLoginAt: new Date() } });
+
+      const roleKey = u.roleKey || (u.role === 'admin' ? 'SUPER_ADMIN' : 'USER');
+      const status = u.status || 'active';
+      const permissions = u.role === 'admin' ? await resolveUserPermissions(db, { ...u, roleKey }) : [];
+
       const token = uuidv4(); const expiresAt = new Date(Date.now() + SESSION_DAYS * 86400 * 1000)
       await db.collection('sessions').insertOne({ token, userId: u.id, expiresAt, createdAt: new Date() })
       try { const store = await cookies(); store.set(SESSION_COOKIE, token, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: SESSION_DAYS * 86400, secure: false }); } catch (e) {}
-      return ok({ user: { id: u.id, name: u.name, email: u.email, phone: u.phone || '', role: u.role || 'user', hasPassword: !!u.passwordHash }, token })
+      return ok({ user: { id: u.id, name: u.name, email: u.email, phone: u.phone || '', role: u.role || 'user', roleKey, status, permissions, hasPassword: !!u.passwordHash }, token })
     }
     if (route === '/auth/register' && method === 'POST') {
       const { name, email, password, phone } = await request.json()
@@ -1175,6 +1208,9 @@ async function handleRoute(request, { params }) {
         await db.collection('users').insertOne(newUser)
         u = newUser
       } else {
+        if (u.status === 'disabled') {
+          return err('This account has been disabled. Please contact a Super Administrator.', 403);
+        }
         const updateFields = {}
         if (!u.googleId) updateFields.googleId = googleId
         if (!u.avatar && avatar) updateFields.avatar = avatar
@@ -1184,6 +1220,12 @@ async function handleRoute(request, { params }) {
           u = { ...u, ...updateFields }
         }
       }
+
+      await db.collection('users').updateOne({ id: u.id }, { $set: { lastLoginAt: new Date() } });
+
+      const roleKey = u.roleKey || (u.role === 'admin' ? 'SUPER_ADMIN' : 'USER');
+      const status = u.status || 'active';
+      const permissions = u.role === 'admin' ? await resolveUserPermissions(db, { ...u, roleKey }) : [];
 
       const token = uuidv4()
       const expiresAt = new Date(Date.now() + SESSION_DAYS * 86400 * 1000)
@@ -1207,6 +1249,9 @@ async function handleRoute(request, { params }) {
           email: u.email,
           phone: u.phone || '',
           role: u.role || (isAdmin ? 'admin' : 'user'),
+          roleKey,
+          status,
+          permissions,
           avatar: u.avatar || avatar,
           hasPassword: !!u.passwordHash
         },
@@ -2569,6 +2614,495 @@ async function handleRoute(request, { params }) {
       // On writes, bust caches
       if (method !== 'GET' && method !== 'OPTIONS') { cacheBust('products:'); _cache.delete('cats'); _cache.delete('cols'); _cache.delete('bans'); _cache.delete('footer'); _cache.delete('product_filters'); _cache.delete('site_settings'); }
 
+      // ============ RBAC: ADMIN MANAGEMENT ============
+      if (sub === 'admins' && method === 'GET') {
+        if (!hasPermission(admin, 'admins.view')) return err('Permission denied: admins.view required', 403);
+        const search = q.get('search') || q.get('q') || '';
+        const roleFilter = q.get('role') || '';
+        const statusFilter = q.get('status') || '';
+        const page = Math.max(1, parseInt(q.get('page') || '1'));
+        const limit = Math.max(1, Math.min(100, parseInt(q.get('limit') || '10')));
+
+        const query = { role: 'admin' };
+        if (roleFilter && roleFilter !== 'ALL') {
+          query.roleKey = roleFilter;
+        }
+        if (statusFilter && statusFilter !== 'ALL') {
+          if (statusFilter === 'active') {
+            query.$or = [{ status: 'active' }, { status: { $exists: false } }];
+          } else {
+            query.status = statusFilter;
+          }
+        }
+        if (search.trim()) {
+          const escaped = search.trim().replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
+          const reg = { $regex: escaped, $options: 'i' };
+          const searchCondition = [{ name: reg }, { email: reg }, { phone: reg }];
+          if (query.$or) {
+            query.$and = [{ $or: query.$or }, { $or: searchCondition }];
+            delete query.$or;
+          } else {
+            query.$or = searchCondition;
+          }
+        }
+
+        const total = await db.collection('users').countDocuments(query);
+        const list = await db.collection('users')
+          .find(query)
+          .sort({ createdAt: -1 })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .toArray();
+
+        // Fetch all roles to map role details
+        const roles = await db.collection('roles').find({}).toArray();
+        const roleMap = new Map(roles.map(r => [r.key, r]));
+
+        const enriched = list.map(u => {
+          const roleDoc = roleMap.get(u.roleKey) || DEFAULT_ROLES.find(r => r.key === u.roleKey) || { name: u.roleKey || 'Admin', key: u.roleKey || 'ADMIN' };
+          return {
+            ...clean(u),
+            roleKey: u.roleKey || 'SUPER_ADMIN',
+            roleName: roleDoc.name || u.roleKey,
+            status: u.status || 'active',
+            lastLoginAt: u.lastLoginAt || null
+          };
+        });
+
+        return ok({
+          admins: enriched,
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit) || 1
+        });
+      }
+
+      if (sub === 'admins' && method === 'POST') {
+        if (!hasPermission(admin, 'admins.create')) return err('Permission denied: admins.create required', 403);
+        const body = await request.json().catch(() => ({}));
+        const { name, email, password, confirmPassword, role = 'ADMIN', status = 'active', phone = '' } = body;
+
+        if (!name || !name.trim()) return err('Name is required', 400);
+        if (!email || !email.trim() || !email.includes('@')) return err('A valid email address is required', 400);
+        if (!password || password.length < 6) return err('Password must be at least 6 characters', 400);
+        if (password !== confirmPassword) return err('Passwords do not match', 400);
+
+        const em = email.trim().toLowerCase();
+        const existing = await db.collection('users').findOne({ email: em });
+        if (existing) return err(`An account with email "${em}" already exists.`, 409);
+
+        // Role verification
+        const targetRole = await db.collection('roles').findOne({ key: role }) ||
+                           await db.collection('roles').findOne({ id: role }) ||
+                           DEFAULT_ROLES.find(r => r.key === role) ||
+                           DEFAULT_ROLES[1];
+
+        // Privilege escalation verification
+        const escalationErr = await validatePrivilegeEscalation(db, admin, null, targetRole.key, status);
+        if (escalationErr) return err(escalationErr, 403);
+
+        const { salt, hash } = hashPassword(password);
+        const newAdmin = {
+          id: uuidv4(),
+          name: name.trim(),
+          email: em,
+          phone: phone.trim(),
+          role: 'admin',
+          roleKey: targetRole.key,
+          roleId: targetRole.id,
+          status: status || 'active',
+          passwordSalt: salt,
+          passwordHash: hash,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          lastLoginAt: null
+        };
+
+        await db.collection('users').insertOne(newAdmin);
+
+        await logAdminActivity(db, {
+          admin,
+          action: 'ADMIN_CREATED',
+          module: 'ADMINS',
+          targetId: newAdmin.id,
+          targetName: newAdmin.email,
+          metadata: { name: newAdmin.name, email: newAdmin.email, role: targetRole.key, status: newAdmin.status },
+          request
+        });
+
+        return ok({ admin: clean(newAdmin), message: `Admin ${newAdmin.name} created successfully.` });
+      }
+
+      if (sub.startsWith('admins/')) {
+        const parts = sub.split('/');
+        const targetId = parts[1];
+
+        if (parts.length === 2 && method === 'GET') {
+          if (!hasPermission(admin, 'admins.view')) return err('Permission denied: admins.view required', 403);
+          const target = await db.collection('users').findOne({ id: targetId, role: 'admin' });
+          if (!target) return err('Admin not found', 404);
+
+          const roleDoc = await db.collection('roles').findOne({ key: target.roleKey }) ||
+                          DEFAULT_ROLES.find(r => r.key === target.roleKey);
+          const permissions = await resolveUserPermissions(db, target);
+
+          return ok({
+            admin: {
+              ...clean(target),
+              roleName: roleDoc?.name || target.roleKey,
+              roleDescription: roleDoc?.description || '',
+              permissions,
+              status: target.status || 'active'
+            }
+          });
+        }
+
+        if (parts.length === 2 && method === 'PUT') {
+          if (!hasPermission(admin, 'admins.edit')) return err('Permission denied: admins.edit required', 403);
+          const target = await db.collection('users').findOne({ id: targetId, role: 'admin' });
+          if (!target) return err('Admin not found', 404);
+
+          const body = await request.json().catch(() => ({}));
+          const { name, phone, role, status, password, confirmPassword } = body;
+
+          // If status is changing, enforce admins.disable permission
+          if (status !== undefined && status !== target.status) {
+            if (!hasPermission(admin, 'admins.disable')) {
+              return err('Permission denied: admins.disable required to toggle administrator status', 403);
+            }
+          }
+
+          let newRoleKey = target.roleKey;
+          let newRoleId = target.roleId;
+          if (role) {
+            const roleDoc = await db.collection('roles').findOne({ key: role }) ||
+                            await db.collection('roles').findOne({ id: role }) ||
+                            DEFAULT_ROLES.find(r => r.key === role);
+            if (roleDoc) {
+              newRoleKey = roleDoc.key;
+              newRoleId = roleDoc.id;
+            }
+          }
+
+          const escalationErr = await validatePrivilegeEscalation(db, admin, targetId, newRoleKey, status);
+          if (escalationErr) return err(escalationErr, 403);
+
+          const updateDoc = { updatedAt: new Date() };
+          if (name && name.trim()) updateDoc.name = name.trim();
+          if (phone !== undefined) updateDoc.phone = phone.trim();
+          if (role) {
+            updateDoc.roleKey = newRoleKey;
+            updateDoc.roleId = newRoleId;
+          }
+          if (status) {
+            updateDoc.status = status;
+          }
+
+          if (password) {
+            if (password.length < 6) return err('Password must be at least 6 characters', 400);
+            if (password !== confirmPassword) return err('Passwords do not match', 400);
+            const { salt, hash } = hashPassword(password);
+            updateDoc.passwordSalt = salt;
+            updateDoc.passwordHash = hash;
+          }
+
+          await db.collection('users').updateOne({ id: targetId }, { $set: updateDoc });
+
+          // If disabled, revoke active sessions immediately
+          if (status === 'disabled') {
+            await db.collection('sessions').deleteMany({ userId: targetId });
+            await logAdminActivity(db, {
+              admin,
+              action: 'ADMIN_DISABLED',
+              module: 'ADMINS',
+              targetId: target.id,
+              targetName: target.email,
+              metadata: { previousStatus: target.status, newStatus: 'disabled' },
+              request
+            });
+          } else if (status === 'active' && target.status === 'disabled') {
+            await logAdminActivity(db, {
+              admin,
+              action: 'ADMIN_ENABLED',
+              module: 'ADMINS',
+              targetId: target.id,
+              targetName: target.email,
+              metadata: { previousStatus: target.status, newStatus: 'active' },
+              request
+            });
+          }
+
+          await logAdminActivity(db, {
+            admin,
+            action: 'ADMIN_UPDATED',
+            module: 'ADMINS',
+            targetId: target.id,
+            targetName: target.email,
+            metadata: { updatedFields: Object.keys(updateDoc).filter(k => !['passwordSalt', 'passwordHash', 'updatedAt'].includes(k)) },
+            request
+          });
+
+          const updated = await db.collection('users').findOne({ id: targetId });
+          return ok({ admin: clean(updated), message: 'Admin updated successfully' });
+        }
+
+        if (parts.length === 2 && method === 'DELETE') {
+          if (!hasPermission(admin, 'admins.delete')) return err('Permission denied: admins.delete required', 403);
+          const target = await db.collection('users').findOne({ id: targetId, role: 'admin' });
+          if (!target) return err('Admin not found', 404);
+
+          if (target.id === admin.id) {
+            return err('Administrators cannot delete their own account', 400);
+          }
+
+          if (target.roleKey === 'SUPER_ADMIN' && admin.roleKey !== 'SUPER_ADMIN') {
+            return err('Only a Super Administrator can delete another Super Administrator', 403);
+          }
+
+          if (target.roleKey === 'SUPER_ADMIN') {
+            const activeSuperAdminCount = await db.collection('users').countDocuments({
+              role: 'admin',
+              roleKey: 'SUPER_ADMIN',
+              status: { $ne: 'disabled' }
+            });
+            if (activeSuperAdminCount <= 1) {
+              return err('Cannot delete the last remaining active Super Administrator', 400);
+            }
+          }
+
+          await db.collection('sessions').deleteMany({ userId: target.id });
+          await db.collection('users').deleteOne({ id: target.id });
+
+          await logAdminActivity(db, {
+            admin,
+            action: 'ADMIN_DELETED',
+            module: 'ADMINS',
+            targetId: target.id,
+            targetName: target.email,
+            metadata: { deletedAdminEmail: target.email, role: target.roleKey },
+            request
+          });
+
+          return ok({ ok: true, message: `Admin ${target.name} (${target.email}) deleted successfully.` });
+        }
+      }
+
+      // ============ RBAC: ROLE MANAGEMENT ============
+      if (sub === 'roles' && method === 'GET') {
+        if (!hasPermission(admin, 'roles.view') && !hasPermission(admin, 'admins.create') && !hasPermission(admin, 'admins.edit')) {
+          return err('Permission denied: roles.view required', 403);
+        }
+        await seedRbacIfEmpty(db);
+        const roles = await db.collection('roles').find({}).sort({ isSystem: -1, name: 1 }).toArray();
+
+        // Enforce user counts per role
+        const userCounts = await db.collection('users').aggregate([
+          { $match: { role: 'admin' } },
+          { $group: { _id: '$roleKey', count: { $sum: 1 } } }
+        ]).toArray();
+        const countMap = new Map(userCounts.map(c => [c._id, c.count]));
+
+        const enrichedRoles = roles.map(r => ({
+          ...clean(r),
+          adminCount: countMap.get(r.key) || 0
+        }));
+
+        return ok({ roles: enrichedRoles });
+      }
+
+      if (sub === 'roles' && method === 'POST') {
+        if (!hasPermission(admin, 'roles.create')) return err('Permission denied: roles.create required', 403);
+        const body = await request.json().catch(() => ({}));
+        const { name, key, description = '', permissions = [] } = body;
+
+        if (!name || !name.trim()) return err('Role name is required', 400);
+        const rawKey = key || name;
+        const normalizedKey = rawKey.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+        if (!normalizedKey) return err('Valid role key identifier is required', 400);
+
+        const existingRole = await db.collection('roles').findOne({ key: normalizedKey });
+        if (existingRole) return err(`A role with identifier "${normalizedKey}" already exists.`, 409);
+
+        // Privilege escalation safeguard: non-super admin cannot grant permissions they do not hold
+        if (admin.roleKey !== 'SUPER_ADMIN') {
+          const callerPerms = admin.permissions || [];
+          const invalidPerms = permissions.filter(p => !callerPerms.includes(p) && p !== '*');
+          if (invalidPerms.length > 0) {
+            return err(`Cannot assign permissions you do not possess: ${invalidPerms.join(', ')}`, 403);
+          }
+        }
+
+        const newRole = {
+          id: uuidv4(),
+          name: name.trim(),
+          key: normalizedKey,
+          description: description.trim(),
+          permissions: Array.isArray(permissions) ? permissions : [],
+          isSystem: false,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+
+        await db.collection('roles').insertOne(newRole);
+
+        await logAdminActivity(db, {
+          admin,
+          action: 'ROLE_CREATED',
+          module: 'ROLES',
+          targetId: newRole.id,
+          targetName: newRole.name,
+          metadata: { name: newRole.name, key: newRole.key, permissionCount: newRole.permissions.length },
+          request
+        });
+
+        return ok({ role: clean(newRole), message: `Role "${newRole.name}" created successfully.` });
+      }
+
+      if (sub.startsWith('roles/')) {
+        const parts = sub.split('/');
+        const roleId = parts[1];
+
+        if (parts.length === 2 && method === 'GET') {
+          if (!hasPermission(admin, 'roles.view')) return err('Permission denied: roles.view required', 403);
+          const role = await db.collection('roles').findOne({ id: roleId });
+          if (!role) return err('Role not found', 404);
+          return ok({ role: clean(role) });
+        }
+
+        if (parts.length === 2 && method === 'PUT') {
+          if (!hasPermission(admin, 'roles.edit')) return err('Permission denied: roles.edit required', 403);
+          const role = await db.collection('roles').findOne({ id: roleId });
+          if (!role) return err('Role not found', 404);
+
+          const body = await request.json().catch(() => ({}));
+          const { name, description, permissions } = body;
+
+          const updateDoc = { updatedAt: new Date() };
+          if (name && name.trim()) updateDoc.name = name.trim();
+          if (description !== undefined) updateDoc.description = description.trim();
+
+          if (Array.isArray(permissions)) {
+            // Super Admin role must always retain full wildcard access
+            if (role.key === 'SUPER_ADMIN') {
+              updateDoc.permissions = ['*'];
+            } else {
+              // Non-super admin escalation check
+              if (admin.roleKey !== 'SUPER_ADMIN') {
+                const callerPerms = admin.permissions || [];
+                const invalidPerms = permissions.filter(p => !callerPerms.includes(p) && p !== '*');
+                if (invalidPerms.length > 0) {
+                  return err(`Cannot assign permissions you do not possess: ${invalidPerms.join(', ')}`, 403);
+                }
+              }
+              updateDoc.permissions = permissions;
+            }
+          }
+
+          await db.collection('roles').updateOne({ id: roleId }, { $set: updateDoc });
+
+          await logAdminActivity(db, {
+            admin,
+            action: 'ROLE_UPDATED',
+            module: 'ROLES',
+            targetId: role.id,
+            targetName: role.name,
+            metadata: { updatedFields: Object.keys(updateDoc).filter(k => k !== 'updatedAt') },
+            request
+          });
+
+          const updated = await db.collection('roles').findOne({ id: roleId });
+          return ok({ role: clean(updated), message: `Role "${updated.name}" updated successfully.` });
+        }
+
+        if (parts.length === 2 && method === 'DELETE') {
+          if (!hasPermission(admin, 'roles.delete')) return err('Permission denied: roles.delete required', 403);
+          const role = await db.collection('roles').findOne({ id: roleId });
+          if (!role) return err('Role not found', 404);
+
+          if (role.isSystem) {
+            return err('System built-in roles cannot be deleted', 400);
+          }
+
+          const assignedCount = await db.collection('users').countDocuments({ role: 'admin', roleKey: role.key });
+          if (assignedCount > 0) {
+            return err(`Cannot delete role "${role.name}": It is currently assigned to ${assignedCount} administrator(s).`, 400);
+          }
+
+          await db.collection('roles').deleteOne({ id: role.id });
+
+          await logAdminActivity(db, {
+            admin,
+            action: 'ROLE_DELETED',
+            module: 'ROLES',
+            targetId: role.id,
+            targetName: role.name,
+            metadata: { key: role.key },
+            request
+          });
+
+          return ok({ ok: true, message: `Role "${role.name}" deleted successfully.` });
+        }
+      }
+
+      // ============ RBAC: PERMISSION MATRIX ============
+      if (sub === 'permissions' && method === 'GET') {
+        if (!hasPermission(admin, 'roles.view') && !hasPermission(admin, 'admins.permissions') && !hasPermission(admin, 'admins.view')) {
+          return err('Permission denied: permissions view required', 403);
+        }
+        await seedRbacIfEmpty(db);
+        const roles = await db.collection('roles').find({}).sort({ isSystem: -1, name: 1 }).toArray();
+        return ok({
+          permissions: PERMISSIONS,
+          roles: roles.map(clean)
+        });
+      }
+
+      // ============ RBAC: ACTIVITY LOGS ============
+      if (sub === 'activity-logs' && method === 'GET') {
+        if (!hasPermission(admin, 'activity_logs.view')) return err('Permission denied: activity_logs.view required', 403);
+        const search = q.get('search') || q.get('q') || '';
+        const actionFilter = q.get('action') || '';
+        const moduleFilter = q.get('module') || '';
+        const page = Math.max(1, parseInt(q.get('page') || '1'));
+        const limit = Math.max(1, Math.min(100, parseInt(q.get('limit') || '20')));
+
+        const query = {};
+        if (actionFilter && actionFilter !== 'ALL') {
+          query.action = actionFilter;
+        }
+        if (moduleFilter && moduleFilter !== 'ALL') {
+          query.module = moduleFilter;
+        }
+        if (search.trim()) {
+          const escaped = search.trim().replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
+          const reg = { $regex: escaped, $options: 'i' };
+          query.$or = [
+            { adminName: reg },
+            { adminEmail: reg },
+            { targetName: reg },
+            { action: reg },
+            { module: reg }
+          ];
+        }
+
+        const total = await db.collection('admin_activity_logs').countDocuments(query);
+        const list = await db.collection('admin_activity_logs')
+          .find(query)
+          .sort({ createdAt: -1 })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .toArray();
+
+        return ok({
+          logs: list.map(clean),
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit) || 1
+        });
+      }
+
       if (sub === 'settings/customer-reviews' || sub === 'reviews/toggle') {
         if (method === 'GET') {
           let settings = await db.collection('site_settings').findOne({ id: 'default' });
@@ -2950,10 +3484,12 @@ async function handleRoute(request, { params }) {
 
       // Products CRUD
       if (sub === 'products' && method === 'GET') {
+        if (!hasPermission(admin, 'products.view')) return err('Permission denied: products.view required', 403);
         const list = await db.collection('products').find({}).sort({ createdAt: -1 }).toArray();
         return ok({ products: list.map(clean) });
       }
       if (sub === 'products' && method === 'POST') {
+        if (!hasPermission(admin, 'products.create')) return err('Permission denied: products.create required', 403);
         const b = await request.json();
         const name = (b.name || '').trim();
         const category = (b.category || '').trim();
@@ -2993,6 +3529,7 @@ async function handleRoute(request, { params }) {
         return ok({ product: clean(p) });
       }
       if (sub.startsWith('products/') && method === 'PUT') {
+        if (!hasPermission(admin, 'products.edit')) return err('Permission denied: products.edit required', 403);
         const id = sub.split('/')[1];
         const b = await request.json();
         const updateData = { ...b, updatedAt: new Date() };
@@ -3024,6 +3561,7 @@ async function handleRoute(request, { params }) {
         return ok({ product: clean(up) });
       }
       if (sub.startsWith('products/') && method === 'DELETE') {
+        if (!hasPermission(admin, 'products.delete')) return err('Permission denied: products.delete required', 403);
         const id = sub.split('/')[1];
         await db.collection('products').deleteOne({ id });
         cacheBust('products:');
@@ -3104,6 +3642,7 @@ async function handleRoute(request, { params }) {
 
       // Orders admin
       if (sub === 'orders' && method === 'GET') {
+        if (!hasPermission(admin, 'orders.view')) return err('Permission denied: orders.view required', 403);
         const search = q.get('search')?.trim();
         let query = {};
         
@@ -3144,6 +3683,7 @@ async function handleRoute(request, { params }) {
         return ok({ orders: enriched.map(clean) })
       }
       if (sub === 'delivered-orders' && method === 'GET') {
+        if (!hasPermission(admin, 'orders.view')) return err('Permission denied: orders.view required', 403);
         const search = q.get('search')?.trim();
         let query = { status: 'delivered' };
         
@@ -3188,6 +3728,7 @@ async function handleRoute(request, { params }) {
         return ok({ orders: enriched.map(clean) })
       }
       if (sub.startsWith('orders/') && method === 'PUT') {
+        if (!hasPermission(admin, 'orders.update')) return err('Permission denied: orders.update required', 403);
         const id = sub.split('/')[1];
         const b = await request.json();
 
@@ -3234,6 +3775,7 @@ async function handleRoute(request, { params }) {
 
       // Customers
       if (sub === 'customers' && method === 'GET') {
+        if (!hasPermission(admin, 'customers.view')) return err('Permission denied: customers.view required', 403);
         const search = q.get('search')?.trim();
         let query = {};
         
@@ -3544,6 +4086,7 @@ async function handleRoute(request, { params }) {
 
         // Initiate / Retry Refund
         if (action === 'refund') {
+          if (!hasPermission(admin, 'payments.refund')) return err('Permission denied: payments.refund required', 403);
           if (!['APPROVED', 'PROCESSING', 'REFUND_INITIATED'].includes(rDoc.returnStatus)) {
             return err(`Refund cannot be initiated for return with status "${rDoc.returnStatus}". Return must be approved first.`, 400);
           }
