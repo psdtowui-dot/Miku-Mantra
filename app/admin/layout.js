@@ -56,6 +56,11 @@ export default function AdminLayout({ children }) {
   const [open, setOpen] = useState(false);
   const [uiExpanded, setUiExpanded] = useState(false);
   const [adminExpanded, setAdminExpanded] = useState(true);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Admin password change modal state
   const [showPwdModal, setShowPwdModal] = useState(false);
@@ -139,7 +144,13 @@ export default function AdminLayout({ children }) {
     return <>{children}</>;
   }
 
-  if (loading || !user || user.role !== 'admin') return <div className="h-screen flex items-center justify-center bg-[#0F0F10]"><Loader2 className="animate-spin text-[#D4AF37]" /></div>
+  if (!mounted || loading || !user || user.role !== 'admin') {
+    return (
+      <div className="h-screen flex items-center justify-center bg-[#0F0F10]">
+        <Loader2 className="animate-spin text-[#D4AF37]" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F7F5F0] flex">
