@@ -37,24 +37,29 @@ export default function AdminProducts() {
   const [collections, setCollections] = useState([]);
 
   const load = async () => {
-    setLoading(true);
     try {
-      const r = await fetch('/api/admin/products', { credentials: 'include', cache: 'no-store' });
-      const d = await r.json();
-      setList(d.products || []);
+      const r = await fetch('/api/admin/products', { credentials: 'include' });
+      if (r.ok) {
+        const d = await r.json();
+        setList(d.products || []);
+      }
     } catch (err) {
       console.error(err);
-    } finally {
-      setLoading(false);
     }
   };
 
-  const loadRefs = async () => {
+  const loadAll = async () => {
+    setLoading(true);
     try {
-      const [catsRes, colsRes] = await Promise.all([
-        fetch('/api/admin/categories', { credentials: 'include', cache: 'no-store' }),
-        fetch('/api/admin/collections', { credentials: 'include', cache: 'no-store' })
+      const [prodRes, catsRes, colsRes] = await Promise.all([
+        fetch('/api/admin/products', { credentials: 'include' }),
+        fetch('/api/admin/categories', { credentials: 'include' }),
+        fetch('/api/admin/collections', { credentials: 'include' })
       ]);
+      if (prodRes.ok) {
+        const d = await prodRes.json();
+        setList(d.products || []);
+      }
       if (catsRes.ok) {
         const d = await catsRes.json();
         setCategories(d.categories || []);
@@ -64,13 +69,14 @@ export default function AdminProducts() {
         setCollections(d.collections || []);
       }
     } catch (err) {
-      console.error('Failed to load references:', err);
+      console.error('Failed to load admin products data:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    load();
-    loadRefs();
+    loadAll();
   }, []);
 
   const openNew = () => {

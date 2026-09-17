@@ -14,13 +14,17 @@ import { WAREHOUSE_PINCODE } from '@/lib/constants'
 import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification } from '@/lib/notifications'
 import { sendPasswordResetEmail } from '@/lib/email-service'
 import { seedRbacIfEmpty, resolveUserPermissions, hasPermission, logAdminActivity, validatePrivilegeEscalation, PERMISSIONS, DEFAULT_ROLES } from '@/lib/rbac'
+import { invalidateSiteDataCache } from '@/lib/db-site-settings'
 
 
 // Simple in-memory server cache with TTL
 const _cache = new Map();
 function cacheGet(k) { const e = _cache.get(k); if (!e) return null; if (Date.now() > e.exp) { _cache.delete(k); return null; } return e.v; }
 function cacheSet(k, v, ttlMs = 60000) { _cache.set(k, { v, exp: Date.now() + ttlMs }); }
-function cacheBust(prefix) { for (const k of _cache.keys()) { if (k.startsWith(prefix)) _cache.delete(k); } }
+function cacheBust(prefix) {
+  for (const k of _cache.keys()) { if (k.startsWith(prefix)) _cache.delete(k); }
+  try { invalidateSiteDataCache(prefix); } catch (e) {}
+}
 
 let client, db, seeded = false, connectPromise = null, lastEnvMtime = 0, lastSyncedAdmins = ''
 
@@ -168,13 +172,37 @@ async function connectToMongo() {
           }
         }
         db = client.db(process.env.DB_NAME || 'userPortal');
+let indexesCreated = false;
+async function ensureIndexes(database) {
+  if (!database || indexesCreated) return;
+  indexesCreated = true;
+  try {
+    await Promise.allSettled([
+      database.collection('sessions').createIndex({ token: 1 }),
+      database.collection('users').createIndex({ id: 1 }),
+      database.collection('users').createIndex({ email: 1 }),
+      database.collection('products').createIndex({ id: 1 }),
+      database.collection('products').createIndex({ slug: 1 }),
+      database.collection('products').createIndex({ category: 1 }),
+      database.collection('products').createIndex({ createdAt: -1 }),
+      database.collection('orders').createIndex({ id: 1 }),
+      database.collection('orders').createIndex({ orderNumber: 1 }),
+      database.collection('orders').createIndex({ placedAt: -1 }),
+      database.collection('orders').createIndex({ status: 1 }),
+      database.collection('reviews').createIndex({ productId: 1, status: 1 }),
+      database.collection('categories').createIndex({ id: 1 }),
+      database.collection('collections').createIndex({ id: 1 }),
+      database.collection('activity_logs').createIndex({ timestamp: -1 }),
+      database.collection('wishlist').createIndex({ userId: 1, productId: 1 }, { unique: true })
+    ]);
+  } catch (e) {
+    console.warn('Index creation notice:', e.message);
+  }
+}
+
         if (!seeded) {
           await seedIfEmpty(db);
-          try {
-            await db.collection('wishlist').createIndex({ userId: 1, productId: 1 }, { unique: true });
-          } catch (e) {
-            console.error('Failed to create wishlist unique index:', e);
-          }
+          await ensureIndexes(db);
           seeded = true;
         }
         const database = db;
@@ -189,8 +217,6 @@ async function connectToMongo() {
   }
   const database = await connectPromise;
   initEnvFileWatcher(database);
-  await syncEnvAdminEmailsWithDatabase(database);
-  await seedRbacIfEmpty(database);
   return database;
 }
 
@@ -688,6 +714,33 @@ async function isAuthorizedAdminEmail(db, email) {
   return !!existingAdmin;
 }
 
+const _userSessionCache = new Map();
+function userSessionCacheGet(token) {
+  if (!token) return null;
+  const entry = _userSessionCache.get(token);
+  if (!entry) return null;
+  if (Date.now() > entry.exp) {
+    _userSessionCache.delete(token);
+    return null;
+  }
+  return entry.user;
+}
+function userSessionCacheSet(token, user, ttlMs = 30000) {
+  if (!token || !user) return;
+  _userSessionCache.set(token, { user, exp: Date.now() + ttlMs });
+}
+function invalidateUserSessionCache(tokenOrUserId) {
+  if (!tokenOrUserId) {
+    _userSessionCache.clear();
+    return;
+  }
+  for (const [tok, entry] of _userSessionCache.entries()) {
+    if (tok === tokenOrUserId || entry.user?.id === tokenOrUserId) {
+      _userSessionCache.delete(tok);
+    }
+  }
+}
+
 async function getCurrentUser(db, request) {
   let token = null;
   if (request && request.headers) {
@@ -700,6 +753,10 @@ async function getCurrentUser(db, request) {
     } catch (e) {}
   }
   if (!token) return null;
+
+  const cachedUser = userSessionCacheGet(token);
+  if (cachedUser) return cachedUser;
+
   const s = await db.collection('sessions').findOne({ token });
   if (!s || new Date(s.expiresAt) < new Date()) return null;
   const u = await db.collection('users').findOne({ id: s.userId });
@@ -725,13 +782,15 @@ async function getCurrentUser(db, request) {
   const status = u.status || 'active';
   const permissions = u.role === 'admin' ? await resolveUserPermissions(db, { ...u, roleKey }) : [];
 
-  return {
+  const finalUser = {
     ...safe,
     roleKey,
     status,
     permissions,
     hasPassword: !!passwordHash
   };
+  userSessionCacheSet(token, finalUser, 30000);
+  return finalUser;
 }
 
 async function requireAdmin(db, request) {
@@ -2612,7 +2671,20 @@ async function handleRoute(request, { params }) {
       if (!admin) return err('Admin access required', 403)
       const sub = route.slice(7) // remove /admin/
       // On writes, bust caches
-      if (method !== 'GET' && method !== 'OPTIONS') { cacheBust('products:'); _cache.delete('cats'); _cache.delete('cols'); _cache.delete('bans'); _cache.delete('footer'); _cache.delete('product_filters'); _cache.delete('site_settings'); }
+      if (method !== 'GET' && method !== 'OPTIONS') {
+        cacheBust('products:');
+        cacheBust('admin_');
+        _cache.delete('cats');
+        _cache.delete('cols');
+        _cache.delete('bans');
+        _cache.delete('footer');
+        _cache.delete('product_filters');
+        _cache.delete('site_settings');
+        _cache.delete('header_config');
+        _cache.delete('admin_dashboard');
+        invalidateUserSessionCache();
+        try { invalidateSiteDataCache(); } catch (e) {}
+      }
 
       // ============ RBAC: ADMIN MANAGEMENT ============
       if (sub === 'admins' && method === 'GET') {
@@ -3387,14 +3459,18 @@ async function handleRoute(request, { params }) {
       }
 
       if (sub === 'dashboard' && method === 'GET') {
-        const [orders, users, products, revenue] = await Promise.all([
+        const cached = cacheGet('admin_dashboard');
+        if (cached) return ok(cached);
+        const [orders, users, products, revenue, totalOrders] = await Promise.all([
           db.collection('orders').find({}).sort({ placedAt: -1 }).limit(10).toArray(),
           db.collection('users').countDocuments(),
           db.collection('products').countDocuments(),
-          db.collection('orders').aggregate([{ $group: { _id: null, total: { $sum: '$amounts.total' } } }]).toArray()
-        ])
-        const totalOrders = await db.collection('orders').countDocuments()
-        return ok({ stats: { totalOrders, totalUsers: users, totalProducts: products, totalRevenue: revenue[0]?.total || 0 }, recentOrders: orders.map(clean) })
+          db.collection('orders').aggregate([{ $group: { _id: null, total: { $sum: '$amounts.total' } } }]).toArray(),
+          db.collection('orders').countDocuments()
+        ]);
+        const r = { stats: { totalOrders, totalUsers: users, totalProducts: products, totalRevenue: revenue[0]?.total || 0 }, recentOrders: orders.map(clean) };
+        cacheSet('admin_dashboard', r, 15000);
+        return ok(r);
       }
 
       // Upload media
@@ -3485,8 +3561,12 @@ async function handleRoute(request, { params }) {
       // Products CRUD
       if (sub === 'products' && method === 'GET') {
         if (!hasPermission(admin, 'products.view')) return err('Permission denied: products.view required', 403);
+        const cached = cacheGet('admin_products');
+        if (cached) return ok(cached);
         const list = await db.collection('products').find({}).sort({ createdAt: -1 }).toArray();
-        return ok({ products: list.map(clean) });
+        const r = { products: list.map(clean) };
+        cacheSet('admin_products', r, 60000);
+        return ok(r);
       }
       if (sub === 'products' && method === 'POST') {
         if (!hasPermission(admin, 'products.create')) return err('Permission denied: products.create required', 403);
@@ -3526,6 +3606,8 @@ async function handleRoute(request, { params }) {
         };
         await db.collection('products').insertOne(p);
         cacheBust('products:');
+        _cache.delete('admin_products');
+        _cache.delete('admin_dashboard');
         return ok({ product: clean(p) });
       }
       if (sub.startsWith('products/') && method === 'PUT') {
@@ -3557,6 +3639,8 @@ async function handleRoute(request, { params }) {
 
         await db.collection('products').updateOne({ id }, { $set: updateData });
         cacheBust('products:');
+        _cache.delete('admin_products');
+        _cache.delete('admin_dashboard');
         const up = await db.collection('products').findOne({ id });
         return ok({ product: clean(up) });
       }
@@ -3565,14 +3649,20 @@ async function handleRoute(request, { params }) {
         const id = sub.split('/')[1];
         await db.collection('products').deleteOne({ id });
         cacheBust('products:');
+        _cache.delete('admin_products');
+        _cache.delete('admin_dashboard');
         return ok({ ok: true });
       }
 
       // Categories, Collections, Banners CRUD (uniform)
       for (const col of ['categories', 'collections', 'banners', 'coupons']) {
         if (sub === col && method === 'GET') {
+          const cached = cacheGet('admin_' + col);
+          if (cached) return ok(cached);
           const list = await db.collection(col).find({}).toArray();
-          return ok({ [col]: list.map(clean) });
+          const r = { [col]: list.map(clean) };
+          cacheSet('admin_' + col, r, 60000);
+          return ok(r);
         }
         if (sub === col && method === 'POST') {
           const b = await request.json();
@@ -3581,17 +3671,20 @@ async function handleRoute(request, { params }) {
           }
           const doc = { id: uuidv4(), createdAt: new Date(), ...b };
           await db.collection(col).insertOne(doc);
+          _cache.delete('admin_' + col);
           return ok({ item: clean(doc) });
         }
         if (sub.startsWith(col + '/') && method === 'PUT') {
           const id = sub.split('/')[1];
           const b = await request.json();
           await db.collection(col).updateOne({ id }, { $set: b });
+          _cache.delete('admin_' + col);
           const up = await db.collection(col).findOne({ id });
           return ok({ item: clean(up) });
         }
         if (sub.startsWith(col + '/') && method === 'DELETE') {
           const id = sub.split('/')[1];
+          _cache.delete('admin_' + col);
 
           // Check category dependencies before deletion
           if (col === 'categories') {

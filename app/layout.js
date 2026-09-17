@@ -8,13 +8,11 @@ import { headers } from 'next/headers'
 import Navbar from '@/components/site/navbar';
 import Footer from '@/components/site/footer';
 
-import { getSiteSettings, getCanonicalBaseUrl, toAbsoluteUrl } from '@/lib/db-site-settings';
+import { getSiteSettings, getHeaderData, getFooterData, getCanonicalBaseUrl, toAbsoluteUrl } from '@/lib/db-site-settings';
 
 export const dynamic = 'force-dynamic';
-export const revalidate = 0;
 
 async function getBaseUrl() {
-  if (process.env.NEXT_PUBLIC_BASE_URL) return process.env.NEXT_PUBLIC_BASE_URL;
   try {
     const headersList = await headers();
     const host = headersList.get('host');
@@ -25,7 +23,10 @@ async function getBaseUrl() {
   } catch (e) {
     // ignore
   }
-  return 'https://jwellary-site-ten.vercel.app';
+  if (process.env.NEXT_PUBLIC_BASE_URL && !process.env.NEXT_PUBLIC_BASE_URL.includes('localhost')) {
+    return process.env.NEXT_PUBLIC_BASE_URL;
+  }
+  return 'http://localhost:3000';
 }
 
 export async function generateMetadata() {
@@ -78,34 +79,12 @@ export async function generateMetadata() {
   };
 }
 
-async function fetchHeaderData() {
-  try {
-    const base = await getBaseUrl();
-    const r = await fetch(`${base}/api/header`, { cache: 'no-store' });
-    if (!r.ok) throw new Error('failed');
-    return await r.json();
-  } catch (err) {
-    console.error('Failed to pre-fetch header:', err);
-    return null;
-  }
-}
-
-async function fetchFooterData() {
-  try {
-    const base = await getBaseUrl();
-    const r = await fetch(`${base}/api/footer`, { cache: 'no-store' });
-    if (!r.ok) throw new Error('failed');
-    return await r.json();
-  } catch (err) {
-    console.error('Failed to pre-fetch footer:', err);
-    return null;
-  }
-}
-
 export default async function RootLayout({ children }) {
-  const headerData = await fetchHeaderData();
-  const footerData = await fetchFooterData();
-  const siteSettingsData = await getSiteSettings();
+  const [headerData, footerData, siteSettingsData] = await Promise.all([
+    getHeaderData(),
+    getFooterData(),
+    getSiteSettings()
+  ]);
   const siteUrl = getCanonicalBaseUrl(siteSettingsData);
   const siteName = siteSettingsData.siteName || footerData?.company?.name || 'MikuMantra Fine Jewellery';
 

@@ -320,28 +320,31 @@ function Newsletter() {
 
 const FALLBACK_HERO = [{ title: 'The Bridal Edit', kicker: 'Wedding Collection', copy: 'Heirloom polki chokers, uncut diamond haars & maang tikkas — handcrafted over 120+ hours.', cta: 'Discover the Edit', href: '/shop?category=wedding', img: 'https://images.unsplash.com/photo-1601121141461-9d6647bca1ed?crop=entropy&cs=srgb&fm=jpg&q=85' }];
 
-export default function HomePage() {
-  const [products, setProducts] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [collections, setCollections] = useState([]);
-  const [banners, setBanners] = useState([]);
-  const [transition, setTransition] = useState('fade');
-  const [homepageCMS, setHomepageCMS] = useState({
+export default function HomePage({ initialData }) {
+  const [products, setProducts] = useState(initialData?.products?.length ? initialData.products : SEED);
+  const [categories, setCategories] = useState(initialData?.categories?.length ? initialData.categories : SEED_C);
+  const [collections, setCollections] = useState(initialData?.collections?.length ? initialData.collections : SEED_K);
+  const [banners, setBanners] = useState(initialData?.banners?.length ? initialData.banners : FALLBACK_HERO);
+  const [transition, setTransition] = useState(initialData?.transition || 'fade');
+  const [homepageCMS, setHomepageCMS] = useState(initialData?.homepageCMS || {
     homepagePromotions: [],
     assuranceSection: { enabled: true, eyebrow: 'Our Promise', title: 'The MikuMantra Assurance', description: 'Six generations of craftsmanship, ten values that never change.' },
     assuranceCards: []
   });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    // If initialData was already passed, we already have server-fresh data. Only fetch if missing.
+    if (initialData && initialData.products?.length) return;
+
     (async () => {
       try {
         const [p, c, k, b, cms] = await Promise.all([
-          fetch('/api/products', { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
-          fetch('/api/categories', { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
-          fetch('/api/collections', { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
-          fetch('/api/banners', { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
-          fetch('/api/homepage-content', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}))
+          fetch('/api/products').then(r => r.json()).catch(() => ({})),
+          fetch('/api/categories').then(r => r.json()).catch(() => ({})),
+          fetch('/api/collections').then(r => r.json()).catch(() => ({})),
+          fetch('/api/banners').then(r => r.json()).catch(() => ({})),
+          fetch('/api/homepage-content').then(r => r.json()).catch(() => ({}))
         ]);
         if (p.products?.length) setProducts(p.products);
         if (c.categories?.length) setCategories(c.categories);
@@ -361,7 +364,7 @@ export default function HomePage() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [initialData]);
 
   if (loading) {
     return (

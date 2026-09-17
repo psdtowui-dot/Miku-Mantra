@@ -12,11 +12,11 @@ function ShopInner() {
   const router = useRouter();
 
   const [all, setAll] = useState(SEED);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
 
   // Dynamic Product Filter Groups from Backend API
   const [filterGroups, setFilterGroups] = useState([]);
-  const [filterLoading, setFilterLoading] = useState(true);
+  const [filterLoading, setFilterLoading] = useState(false);
 
   // Price Range & Sort state
   const [range, setRange] = useState([0, 1000000]);
@@ -40,8 +40,8 @@ function ShopInner() {
     (async () => {
       try {
         const [pRes, filtersRes] = await Promise.all([
-          fetch('/api/products', { cache: 'no-store' }),
-          fetch('/api/product-filters', { cache: 'no-store' })
+          fetch('/api/products'),
+          fetch('/api/product-filters')
         ]);
         if (pRes.ok) {
           const d = await pRes.json();
