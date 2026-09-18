@@ -4,7 +4,7 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/use-auth';
 import { formatINR } from '@/lib/products';
-import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle } from 'lucide-react';
+import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 
@@ -24,14 +24,68 @@ const CANCELLATION_REASONS = [
   'Other'
 ];
 
+const RETURN_REASONS = [
+  'Defective or damaged item',
+  'Wrong item delivered',
+  'Quality issue',
+  'Item not as pictured / described',
+  'Size or fit issue',
+  'Changed my mind',
+  'Other'
+];
+
+function getReturnStatusBadge(status) {
+  switch (status) {
+    case 'REQUESTED':
+      return 'bg-amber-50 text-amber-800 border-amber-200';
+    case 'APPROVED':
+      return 'bg-blue-50 text-blue-800 border-blue-200';
+    case 'PROCESSING':
+      return 'bg-purple-50 text-purple-800 border-purple-200';
+    case 'REFUND_INITIATED':
+      return 'bg-teal-50 text-teal-800 border-teal-200';
+    case 'REFUNDED':
+      return 'bg-emerald-50 text-emerald-800 border-emerald-200';
+    case 'REJECTED':
+      return 'bg-red-50 text-red-800 border-red-200';
+    default:
+      return 'bg-neutral-100 text-neutral-800 border-neutral-200';
+  }
+}
+
+function getReturnStatusLabel(status) {
+  switch (status) {
+    case 'REQUESTED':
+      return 'Return Requested (Under Review)';
+    case 'APPROVED':
+      return 'Return Approved (Refund in Progress)';
+    case 'PROCESSING':
+      return 'Return In Processing';
+    case 'REFUND_INITIATED':
+      return 'Refund Initiated';
+    case 'REFUNDED':
+      return 'Refund Completed';
+    case 'REJECTED':
+      return 'Return Rejected';
+    default:
+      return status;
+  }
+}
+
 function OrderInner() {
   const { id } = useParams();
   const sp = useSearchParams();
   const success = sp.get('success') === '1';
+  const actionParam = sp.get('action');
+
   const [order, setOrder] = useState(null);
+  const [returnRequest, setReturnRequest] = useState(null);
   const [loading, setLoading] = useState(true);
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
+
+  // Live timer ticker for 30-minute return countdown
+  const [nowTime, setNowTime] = useState(Date.now());
 
   // Cancellation Modal State
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -40,6 +94,25 @@ function OrderInner() {
   const [customNote, setCustomNote] = useState('');
   const [cancelling, setCancelling] = useState(false);
   const [modalErr, setModalErr] = useState('');
+
+  // Return Modal State
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [returnStep, setReturnStep] = useState(1);
+  const [returnItems, setReturnItems] = useState({});
+  const [selectedReturnReason, setSelectedReturnReason] = useState('');
+  const [returnComment, setReturnComment] = useState('');
+  const [submittingReturn, setSubmittingReturn] = useState(false);
+  const [returnModalErr, setReturnModalErr] = useState('');
+
+  // 1-second ticker when order is delivered
+  useEffect(() => {
+    if (order?.status === 'delivered') {
+      const interval = setInterval(() => {
+        setNowTime(Date.now());
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [order?.status]);
 
   const openCancelModal = () => {
     setSelectedReason('');
@@ -96,6 +169,134 @@ function OrderInner() {
     }
   };
 
+  // Return Flow Handlers
+  const openReturnModal = () => {
+    if (!order) return;
+    const initialItems = {};
+    (order.items || []).forEach(it => {
+      initialItems[it.id] = { selected: true, qty: it.qty, maxQty: it.qty };
+    });
+    setReturnItems(initialItems);
+    setSelectedReturnReason(RETURN_REASONS[0]);
+    setReturnComment('');
+    setReturnStep(1);
+    setReturnModalErr('');
+    setShowReturnModal(true);
+  };
+
+  const handleItemToggle = (itemId) => {
+    setReturnItems(prev => {
+      const cur = prev[itemId] || { selected: false, qty: 1, maxQty: 1 };
+      return {
+        ...prev,
+        [itemId]: { ...cur, selected: !cur.selected }
+      };
+    });
+  };
+
+  const handleQtyChange = (itemId, change) => {
+    setReturnItems(prev => {
+      const cur = prev[itemId];
+      if (!cur) return prev;
+      const newQty = Math.max(1, Math.min(cur.maxQty, cur.qty + change));
+      return {
+        ...prev,
+        [itemId]: { ...cur, qty: newQty }
+      };
+    });
+  };
+
+  // Live estimated refund calculation matching calculateReturnRefund backend logic
+  const calculateEstimatedRefund = () => {
+    if (!order || !order.items) return 0;
+    const orderSubtotal = Math.max(1, order.amounts?.subtotal || 1);
+    const orderDiscount = Math.max(0, order.amounts?.discount || 0);
+    let total = 0;
+
+    for (const it of order.items) {
+      const entry = returnItems[it.id];
+      if (entry?.selected && entry.qty > 0) {
+        const itemSubtotal = (it.price || 0) * entry.qty;
+        const itemDiscount = Math.round(itemSubtotal * (orderDiscount / orderSubtotal));
+        const net = Math.max(0, itemSubtotal - itemDiscount);
+        const tax = Math.round(net * 0.03);
+        total += (net + tax);
+      }
+    }
+    return total;
+  };
+
+  const handleReturnReviewSubmit = (e) => {
+    e.preventDefault();
+    const selectedList = Object.entries(returnItems)
+      .filter(([_, val]) => val.selected && val.qty > 0);
+
+    if (selectedList.length === 0) {
+      setReturnModalErr('Please select at least one item to return.');
+      return;
+    }
+    if (!selectedReturnReason) {
+      setReturnModalErr('Please select a return reason.');
+      return;
+    }
+    if (selectedReturnReason === 'Other' && !returnComment.trim()) {
+      setReturnModalErr('Please explain your reason for returning.');
+      return;
+    }
+
+    setReturnModalErr('');
+    setReturnStep(2);
+  };
+
+  const handleConfirmReturn = async () => {
+    if (submittingReturn) return;
+    const selectedList = Object.entries(returnItems)
+      .filter(([_, val]) => val.selected && val.qty > 0)
+      .map(([id, val]) => ({ id, returnQty: val.qty }));
+
+    if (selectedList.length === 0) {
+      setReturnModalErr('Please select at least one item to return.');
+      return;
+    }
+
+    setSubmittingReturn(true);
+    setReturnModalErr('');
+
+    try {
+      const r = await fetch('/api/returns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          orderId: order.id,
+          items: selectedList,
+          reason: selectedReturnReason,
+          comment: returnComment.trim()
+        })
+      });
+      const d = await r.json();
+      if (r.ok && d.return) {
+        setReturnRequest(d.return);
+        setShowReturnModal(false);
+        toast.success('Return request submitted successfully. We will review it shortly.');
+        const rOrder = await fetch(`/api/orders/${order.id}`, { credentials: 'include' });
+        const dOrder = await rOrder.json();
+        if (rOrder.ok && dOrder.order) {
+          setOrder(dOrder.order);
+        }
+      } else {
+        setReturnModalErr(d.error || 'Failed to submit return request. Please try again.');
+        toast.error(d.error || 'Return request failed');
+      }
+    } catch (err) {
+      console.error(err);
+      setReturnModalErr('Network error. Please try again.');
+      toast.error('Network error');
+    } finally {
+      setSubmittingReturn(false);
+    }
+  };
+
   useEffect(() => {
     if (!authLoading && !user) {
       router.push(`/login?redirect=/orders/${id}`);
@@ -110,6 +311,7 @@ function OrderInner() {
         const d = await r.json();
         if (r.ok) {
           setOrder(d.order);
+          setReturnRequest(d.returnRequest || null);
         } else {
           if (r.status === 401) {
             router.push(`/login?redirect=/orders/${id}`);
@@ -128,6 +330,36 @@ function OrderInner() {
     const t = setInterval(load, 30000);
     return () => clearInterval(t);
   }, [id, user, router]);
+
+  // Delivery & Return Eligibility Calculations
+  const deliveredTime = (() => {
+    if (!order) return null;
+    if (order.deliveredAt) return new Date(order.deliveredAt).getTime();
+    if (Array.isArray(order.statusHistory)) {
+      const h = order.statusHistory.find(x => x.status === 'delivered');
+      if (h?.at) return new Date(h.at).getTime();
+    }
+    return null;
+  })();
+
+  const isDelivered = order?.status === 'delivered';
+  const RETURN_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
+  const msRemaining = deliveredTime ? Math.max(0, (deliveredTime + RETURN_WINDOW_MS) - nowTime) : 0;
+  const isReturnWindowOpen = isDelivered && deliveredTime && msRemaining > 0;
+  const isReturnWindowExpired = isDelivered && deliveredTime && msRemaining <= 0;
+
+  const hasActiveReturn = !!returnRequest && ['REQUESTED', 'APPROVED', 'PROCESSING', 'REFUND_INITIATED', 'REFUNDED'].includes(returnRequest.returnStatus);
+  const canRequestReturn = isDelivered && isReturnWindowOpen && !hasActiveReturn;
+
+  const minutesLeft = Math.floor(msRemaining / 60000);
+  const secondsLeft = Math.floor((msRemaining % 60000) / 1000);
+
+  // Auto-open return modal if action=return query parameter exists and return is allowed
+  useEffect(() => {
+    if (order && actionParam === 'return' && canRequestReturn && !showReturnModal) {
+      openReturnModal();
+    }
+  }, [order, actionParam, canRequestReturn]);
 
   if (authLoading || loading) return <div className="h-96 flex items-center justify-center"><Loader2 className="animate-spin text-[#9C6B30]" /></div>;
   if (!user) return null;
@@ -165,6 +397,125 @@ function OrderInner() {
               <a href={`/api/orders/${order.id}/invoice`} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 border border-[#1A1A1A] text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full hover:bg-[#1A1A1A] hover:text-white transition"><Download size={12} /> Invoice</a>
             </div>
           </div>
+
+          {/* Active Return Status Banner / Details */}
+          {returnRequest && (
+            <div className="mb-6 p-4 sm:p-6 bg-gradient-to-br from-white to-[#FAF6EF]/40 border border-[#E8E8E8] rounded-xl space-y-4 shadow-xs">
+              <div className="flex flex-wrap items-start justify-between gap-3 pb-3 border-b border-[#E8E8E8]">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <RotateCcw size={17} className="text-[#9C6B30]" />
+                    <h4 className="font-display text-base sm:text-lg text-[#1A1A1A]">Return Request Summary</h4>
+                  </div>
+                  <p className="text-xs text-neutral-500 mt-0.5">Return ID: <span className="font-mono font-medium text-neutral-700">{returnRequest.returnId || returnRequest.id}</span></p>
+                </div>
+                <span className={`inline-block px-3 py-1 text-[10px] font-semibold tracking-wider uppercase rounded-full border ${getReturnStatusBadge(returnRequest.returnStatus)}`}>
+                  {getReturnStatusLabel(returnRequest.returnStatus)}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <span className="text-neutral-400 block text-[10px] uppercase tracking-wider">Requested On</span>
+                  <span className="font-medium text-neutral-800">{new Date(returnRequest.requestedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+                <div>
+                  <span className="text-neutral-400 block text-[10px] uppercase tracking-wider">Refund Amount</span>
+                  <span className="font-semibold text-[#9C6B30] text-sm sm:text-base">{formatINR(returnRequest.refundAmount || 0)}</span>
+                </div>
+                <div>
+                  <span className="text-neutral-400 block text-[10px] uppercase tracking-wider">Refund Status</span>
+                  <span className="font-medium text-neutral-800 uppercase tracking-wider text-[11px]">{returnRequest.refundStatus || 'Pending'}</span>
+                </div>
+                <div>
+                  <span className="text-neutral-400 block text-[10px] uppercase tracking-wider">Reason</span>
+                  <span className="font-medium text-neutral-800 truncate block">{returnRequest.reason}</span>
+                </div>
+              </div>
+
+              {returnRequest.comment && (
+                <div className="p-3 bg-white border border-[#E8E8E8] rounded-lg text-xs text-neutral-700">
+                  <span className="font-medium text-neutral-900">Your Comment:</span> {returnRequest.comment}
+                </div>
+              )}
+
+              {returnRequest.rejectionReason && (
+                <div className="p-3.5 bg-red-50/80 border border-red-200 rounded-lg text-xs text-red-800 space-y-1">
+                  <div className="font-semibold flex items-center gap-1.5 text-red-900">
+                    <AlertTriangle size={14} className="text-red-600" /> Return Rejection Reason
+                  </div>
+                  <p>{returnRequest.rejectionReason}</p>
+                </div>
+              )}
+
+              {returnRequest.gatewayRefundId && (
+                <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-lg text-xs text-emerald-900 flex items-center justify-between flex-wrap gap-2">
+                  <span className="font-medium">Refund Reference ID:</span>
+                  <span className="font-mono text-[11px] font-semibold">{returnRequest.gatewayRefundId}</span>
+                </div>
+              )}
+
+              {Array.isArray(returnRequest.items) && returnRequest.items.length > 0 && (
+                <div className="pt-2 border-t border-[#E8E8E8]">
+                  <span className="text-[10px] uppercase tracking-widest text-neutral-400 font-medium block mb-2">Items Being Returned</span>
+                  <div className="space-y-2">
+                    {returnRequest.items.map((it, idx) => (
+                      <div key={idx} className="flex items-center justify-between text-xs p-2.5 rounded-md bg-neutral-50/80 border border-neutral-200/50">
+                        <div className="flex items-center gap-2.5">
+                          {it.image && <img src={it.image} alt={it.name} className="w-10 h-10 rounded object-cover shrink-0" />}
+                          <div>
+                            <span className="font-medium text-neutral-800 block truncate max-w-[200px] sm:max-w-xs">{it.name}</span>
+                            <span className="text-neutral-500 text-[11px]">Quantity: {it.returnQty || it.qty}</span>
+                          </div>
+                        </div>
+                        <div className="font-semibold text-neutral-900">
+                          {it.itemRefundAmount ? formatINR(it.itemRefundAmount) : formatINR((it.price || 0) * (it.returnQty || it.qty))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 30-Minute Return Window Alert Banner (When Delivered & Eligible) */}
+          {canRequestReturn && (
+            <div className="mb-6 p-4 sm:p-5 bg-gradient-to-r from-amber-50/90 via-[#FAF6EF] to-white border border-amber-200 rounded-xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2 text-amber-900 font-semibold text-sm">
+                    <Clock size={17} className="text-[#9C6B30] animate-pulse" />
+                    <span>30-Minute Return Policy Active</span>
+                  </div>
+                  <p className="text-neutral-600 text-xs mt-1">
+                    Your order was delivered at {new Date(deliveredTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}.
+                    In accordance with store policy, return requests are accepted strictly within 30 minutes of delivery.
+                  </p>
+                  <div className="mt-2.5 inline-flex items-center gap-2 px-3 py-1 bg-amber-100/90 text-amber-900 rounded-md font-mono text-xs font-semibold">
+                    <span className="text-[10px] tracking-wider uppercase text-neutral-600 font-sans">Window Closes In:</span>
+                    <span className="text-[#9C6B30] text-sm">{minutesLeft}m {secondsLeft < 10 ? '0' : ''}{secondsLeft}s</span>
+                  </div>
+                </div>
+                <button
+                  onClick={openReturnModal}
+                  className="self-start sm:self-center px-5 py-2.5 bg-[#1A1A1A] text-white text-[11px] tracking-wider uppercase rounded-md hover:bg-[#9C6B30] transition font-semibold flex items-center gap-2 cursor-pointer shrink-0 shadow-xs"
+                >
+                  <RotateCcw size={14} /> Return Order
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Return Window Expired Notice */}
+          {isReturnWindowExpired && !returnRequest && (
+            <div className="mb-6 p-3.5 sm:p-4 bg-neutral-50 border border-neutral-200 rounded-xl flex items-center gap-3 text-xs text-neutral-600">
+              <Clock size={16} className="text-neutral-400 shrink-0" />
+              <div>
+                <span className="font-medium text-neutral-800">Return Window Closed:</span> Returns are accepted strictly within 30 minutes of delivery. The 30-minute window for this order has now ended.
+              </div>
+            </div>
+          )}
 
           {/* Cancellation Info Banner */}
           {order.status === 'cancelled' && (
@@ -281,6 +632,14 @@ function OrderInner() {
             <a href={`/api/orders/${order.id}/invoice`} target="_blank" rel="noreferrer" className="px-4 sm:px-8 py-2.5 sm:py-3 border border-[#1A1A1A] text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#1A1A1A] hover:text-white transition flex items-center gap-2"><Download size={14} /> Download Invoice</a>
             <Link href="/shop" className="px-4 sm:px-8 py-2.5 sm:py-3 border border-[#1A1A1A] text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#1A1A1A] hover:text-white transition">Continue Shopping</Link>
             <Link href="/account" className="px-4 sm:px-8 py-2.5 sm:py-3 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30]">View All Orders</Link>
+            {canRequestReturn && (
+              <button
+                onClick={openReturnModal}
+                className="px-4 sm:px-8 py-2.5 sm:py-3 border border-[#9C6B30] text-[#9C6B30] text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] hover:text-white transition font-semibold flex items-center gap-2 cursor-pointer"
+              >
+                <RotateCcw size={14} /> Return Order ({minutesLeft}m left)
+              </button>
+            )}
             {isCancellable && (
               <button onClick={openCancelModal} className="px-4 sm:px-8 py-2.5 sm:py-3 border border-black text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-red-500 hover:text-white transition font-semibold cursor-pointer">Cancel Order</button>
             )}
@@ -391,6 +750,238 @@ function OrderInner() {
                       </>
                     ) : (
                       'Confirm Cancellation'
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Return Order Modal */}
+      {showReturnModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto" onClick={() => !submittingReturn && setShowReturnModal(false)}>
+          <div className="bg-white text-[#1A1A1A] w-full max-w-xl rounded-xl border border-neutral-200 overflow-hidden shadow-2xl my-6" onClick={e => e.stopPropagation()}>
+            <div className="bg-[#1A1A1A] text-white p-4 sm:p-5 flex justify-between items-center">
+              <div>
+                <div className="text-[10px] tracking-widest uppercase text-[#9C6B30] font-semibold flex items-center gap-1.5">
+                  <RotateCcw size={12} /> Return Request
+                </div>
+                <h3 className="font-display text-lg sm:text-xl font-light">Return Order #{order.orderNumber}</h3>
+              </div>
+              <button disabled={submittingReturn} onClick={() => setShowReturnModal(false)} className="text-neutral-400 hover:text-white transition p-1 cursor-pointer">
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Policy countdown header inside modal */}
+            <div className="bg-[#FAF6EF] px-4 sm:px-6 py-2.5 border-b border-[#E8E8E8] flex items-center justify-between text-xs text-neutral-600">
+              <span className="flex items-center gap-1.5 font-medium text-amber-900">
+                <Clock size={13} className="text-[#9C6B30]" /> 30-Minute Policy Window
+              </span>
+              <span className="font-mono font-semibold text-[#9C6B30]">
+                {minutesLeft}m {secondsLeft < 10 ? '0' : ''}{secondsLeft}s remaining
+              </span>
+            </div>
+
+            {returnModalErr && (
+              <div className="mx-4 sm:mx-6 mt-4 p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-md flex items-center gap-2">
+                <AlertTriangle size={14} className="shrink-0 text-red-500" />
+                <span>{returnModalErr}</span>
+              </div>
+            )}
+
+            {returnStep === 1 ? (
+              <form onSubmit={handleReturnReviewSubmit} className="p-4 sm:p-6 space-y-5">
+                {/* Items selection */}
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="block font-medium text-xs sm:text-sm text-neutral-800">
+                      Select item(s) to return:
+                    </label>
+                    <span className="text-[11px] text-neutral-500">Choose items & quantities</span>
+                  </div>
+
+                  <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+                    {(order.items || []).map(it => {
+                      const entry = returnItems[it.id] || { selected: false, qty: 1 };
+                      return (
+                        <div
+                          key={it.id}
+                          className={`flex items-center gap-3 p-3 border rounded-lg transition ${entry.selected ? 'border-[#9C6B30] bg-[#FAF6EF]/30' : 'border-[#E8E8E8] bg-white opacity-70'}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={entry.selected}
+                            onChange={() => handleItemToggle(it.id)}
+                            className="w-4 h-4 accent-[#9C6B30] cursor-pointer shrink-0"
+                          />
+                          {it.image && (
+                            <img src={it.image} alt={it.name} className="w-12 h-12 rounded object-cover shrink-0" />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="font-serif-luxe text-xs sm:text-sm text-neutral-900 truncate">{it.name}</div>
+                            <div className="text-[11px] text-neutral-500">{formatINR(it.price)} each · Purchased: {it.qty}</div>
+                          </div>
+
+                          {/* Quantity Selector */}
+                          {entry.selected && (
+                            <div className="flex items-center border border-[#E8E8E8] rounded-md bg-white shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleQtyChange(it.id, -1)}
+                                disabled={entry.qty <= 1}
+                                className="w-7 h-7 flex items-center justify-center text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-30 cursor-pointer"
+                              >
+                                -
+                              </button>
+                              <span className="w-8 text-center text-xs font-semibold">{entry.qty}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleQtyChange(it.id, 1)}
+                                disabled={entry.qty >= it.qty}
+                                className="w-7 h-7 flex items-center justify-center text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-30 cursor-pointer"
+                              >
+                                +
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Live Estimated Refund display */}
+                <div className="p-3.5 bg-[#FAF6EF]/60 border border-[#E8E8E8] rounded-lg flex items-center justify-between text-xs">
+                  <div>
+                    <span className="text-neutral-500 block text-[10px] uppercase tracking-wider">Estimated Refund</span>
+                    <span className="text-[11px] text-neutral-400">Includes applicable taxes & adjusted discounts</span>
+                  </div>
+                  <div className="font-display text-base sm:text-lg font-semibold text-[#9C6B30]">
+                    {formatINR(calculateEstimatedRefund())}
+                  </div>
+                </div>
+
+                {/* Return Reason */}
+                <div>
+                  <label className="block font-medium text-xs sm:text-sm text-neutral-800 mb-2">
+                    Reason for return *
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {RETURN_REASONS.map(r => (
+                      <label key={r} className={`flex items-center gap-2.5 p-2.5 border rounded-lg hover:border-[#9C6B30] cursor-pointer transition text-xs ${selectedReturnReason === r ? 'border-[#9C6B30] bg-[#FAF6EF]/50 font-medium' : 'border-[#E8E8E8]'}`}>
+                        <input
+                          type="radio"
+                          name="returnReason"
+                          value={r}
+                          checked={selectedReturnReason === r}
+                          onChange={() => { setSelectedReturnReason(r); setReturnModalErr(''); }}
+                          className="accent-[#9C6B30]"
+                        />
+                        <span className="text-neutral-700">{r}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Comments / Details */}
+                <div>
+                  <label className="block text-xs font-medium text-neutral-700 mb-1">
+                    Additional Comments {selectedReturnReason === 'Other' ? '*' : '(optional)'}
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={returnComment}
+                    onChange={e => { setReturnComment(e.target.value); setReturnModalErr(''); }}
+                    placeholder="Describe condition of item, package details or notes for return inspection..."
+                    className="w-full p-2.5 border border-[#E8E8E8] rounded-md text-xs sm:text-sm focus:outline-none focus:border-[#9C6B30]"
+                  />
+                </div>
+
+                <div className="pt-3 border-t border-[#E8E8E8] flex gap-3 justify-end items-center">
+                  <button type="button" onClick={() => setShowReturnModal(false)} className="px-4 py-2 text-xs text-neutral-600 hover:text-neutral-900 cursor-pointer">
+                    Cancel
+                  </button>
+                  <button type="submit" className="px-6 py-2.5 bg-[#1A1A1A] text-white text-[11px] tracking-wider uppercase rounded-md hover:bg-[#9C6B30] transition font-semibold cursor-pointer">
+                    Continue to Review
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="p-4 sm:p-6 space-y-4">
+                <div className="p-4 bg-[#FAF6EF]/60 border border-[#E8E8E8] rounded-lg space-y-3 text-xs sm:text-sm">
+                  <div className="font-semibold text-neutral-900 text-sm">Review & Confirm Return</div>
+                  <p className="text-neutral-600 text-xs">
+                    Please confirm the details below. Return requests are accepted within 30 minutes of delivery.
+                  </p>
+
+                  <div className="pt-2 border-t border-[#E8E8E8] space-y-2 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-neutral-500">Order Number:</span>
+                      <span className="font-medium text-neutral-800">{order.orderNumber}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-neutral-500">Estimated Refund:</span>
+                      <span className="font-semibold text-[#9C6B30] text-sm">{formatINR(calculateEstimatedRefund())}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-neutral-500">Selected Reason:</span>
+                      <span className="font-medium text-neutral-800">{selectedReturnReason}</span>
+                    </div>
+                    {returnComment && (
+                      <div className="flex justify-between">
+                        <span className="text-neutral-500">Notes:</span>
+                        <span className="font-medium text-neutral-800 truncate max-w-[200px]">{returnComment}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pt-2 border-t border-[#E8E8E8]">
+                    <span className="text-[10px] uppercase tracking-wider text-neutral-400 block mb-1.5">Items to Return:</span>
+                    <div className="space-y-1 text-xs">
+                      {Object.entries(returnItems).filter(([_, v]) => v.selected && v.qty > 0).map(([itemId, v]) => {
+                        const it = order.items.find(i => i.id === itemId);
+                        return (
+                          <div key={itemId} className="flex justify-between text-neutral-700">
+                            <span className="truncate max-w-[220px] sm:max-w-xs">{it?.name} (x{v.qty})</span>
+                            <span className="font-medium">{formatINR((it?.price || 0) * v.qty)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-amber-50/70 border border-amber-200/60 rounded-lg text-xs text-amber-900 flex items-start gap-2">
+                  <AlertCircle size={15} className="text-[#9C6B30] shrink-0 mt-0.5" />
+                  <div className="text-[11px] leading-relaxed">
+                    By confirming, you agree to hand over the items with original tags and packaging upon pickup. Once approved by our team, your refund will be processed.
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-[#E8E8E8] flex gap-3 justify-end">
+                  <button
+                    type="button"
+                    disabled={submittingReturn}
+                    onClick={() => setReturnStep(1)}
+                    className="px-4 py-2 sm:py-2.5 text-xs text-neutral-600 hover:text-neutral-900 cursor-pointer flex items-center gap-1.5"
+                  >
+                    <ArrowLeft size={13} /> Back
+                  </button>
+                  <button
+                    type="button"
+                    disabled={submittingReturn}
+                    onClick={handleConfirmReturn}
+                    className="px-6 py-2 sm:py-2.5 bg-[#9C6B30] text-white text-[11px] tracking-wider uppercase rounded-md hover:bg-[#835928] transition font-semibold disabled:opacity-60 flex items-center gap-2 cursor-pointer"
+                  >
+                    {submittingReturn ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" /> Submitting…
+                      </>
+                    ) : (
+                      'Confirm & Submit Return'
                     )}
                   </button>
                 </div>

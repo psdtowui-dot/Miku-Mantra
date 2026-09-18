@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { useWishlist } from '@/lib/cart-store';
 import { PRODUCTS, formatINR } from '@/lib/products';
-import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound } from 'lucide-react';
+import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound, RotateCcw, Clock } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function AccountPage() {
@@ -15,6 +15,8 @@ export default function AccountPage() {
   const [tab, setTab] = useState('profile');
   const [addresses, setAddresses] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [returnsList, setReturnsList] = useState([]);
+  const [returnsLoading, setReturnsLoading] = useState(false);
   const [profileForm, setProfileForm] = useState({ name: '', phone: '' });
   const [addrForm, setAddrForm] = useState({ fullName: '', phone: '', line1: '', line2: '', city: '', state: '', pincode: '', isDefault: false });
   const [showAddr, setShowAddr] = useState(false);
@@ -31,10 +33,29 @@ export default function AccountPage() {
   const [showConfirmPwd, setShowConfirmPwd] = useState(false);
 
   useEffect(() => { if (!loading && !user) router.push('/login?redirect=/account'); }, [loading, user, router]);
-  useEffect(() => { if (user) { setProfileForm({ name: user.name || '', phone: user.phone || '' }); loadAddresses(); loadOrders(); } }, [user]);
+  useEffect(() => {
+    if (user) {
+      setProfileForm({ name: user.name || '', phone: user.phone || '' });
+      loadAddresses();
+      loadOrders();
+      loadReturns();
+    }
+  }, [user]);
 
   async function loadAddresses() { const r = await authFetch('/api/addresses'); const d = await r.json(); if (r.ok) setAddresses(d.addresses || []); }
   async function loadOrders() { const r = await authFetch('/api/orders'); const d = await r.json(); if (r.ok) setOrders(d.orders || []); }
+  async function loadReturns() {
+    setReturnsLoading(true);
+    try {
+      const r = await authFetch('/api/returns');
+      const d = await r.json();
+      if (r.ok) setReturnsList(d.returns || []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setReturnsLoading(false);
+    }
+  }
 
   const validateProfile = () => {
     const errs = { name: '', phone: '' };
@@ -171,6 +192,7 @@ export default function AccountPage() {
     { k: 'profile', n: 'Profile', i: User },
     { k: 'security', n: 'Password & Security', i: Lock },
     { k: 'orders', n: 'Orders', i: Package },
+    { k: 'returns', n: 'Returns & Refunds', i: RotateCcw },
     { k: 'addresses', n: 'Addresses', i: MapPin },
     { k: 'wishlist', n: 'Wishlist', i: Heart }
   ];
@@ -378,22 +400,149 @@ export default function AccountPage() {
               {orders.length === 0 ? (
                 <div className="text-center py-12 sm:py-16"><div className="w-14 h-14 sm:w-16 sm:h-16 mx-auto rounded-full bg-[#FAF6EF] flex items-center justify-center text-[#9C6B30] mb-4"><Package size={24} /></div><div className="font-serif-luxe text-base sm:text-lg text-neutral-500">No orders yet.</div><Link href="/shop" className="inline-block mt-4 text-[#9C6B30] border-b border-[#9C6B30] pb-1 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase">Start shopping</Link></div>
               ) : (
-                <div className="space-y-4">{orders.map(o => (
-                  <Link key={o.id} href={`/orders/${o.id}`} className="block border border-[#E8E8E8] rounded-lg p-4 sm:p-5 hover:border-[#9C6B30] transition">
-                    <div className="flex justify-between items-start flex-wrap gap-2">
-                      <div>
-                        <div className="text-[10px] tracking-widest uppercase text-neutral-400">Order</div>
-                        <div className="font-serif-luxe text-base sm:text-lg text-[#1A1A1A]">{o.orderNumber}</div>
-                        <div className="text-xs text-neutral-500 mt-1">{new Date(o.placedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })} · {o.items.length} item(s)</div>
+                <div className="space-y-4">{orders.map(o => {
+                  const delivAt = o.deliveredAt ? new Date(o.deliveredAt).getTime() : null;
+                  const isEligibleReturn = !o.returnStatus && o.status === 'delivered' && delivAt && (Date.now() - delivAt <= 30 * 60 * 1000);
+
+                  return (
+                    <Link key={o.id} href={`/orders/${o.id}`} className="block border border-[#E8E8E8] rounded-lg p-4 sm:p-5 hover:border-[#9C6B30] transition">
+                      <div className="flex justify-between items-start flex-wrap gap-2">
+                        <div>
+                          <div className="text-[10px] tracking-widest uppercase text-neutral-400">Order</div>
+                          <div className="font-serif-luxe text-base sm:text-lg text-[#1A1A1A]">{o.orderNumber}</div>
+                          <div className="text-xs text-neutral-500 mt-1">{new Date(o.placedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })} · {o.items.length} item(s)</div>
+                        </div>
+                        <div className="text-right flex flex-col items-end gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                            <span className={`inline-block px-3 py-1 text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full capitalize font-semibold ${o.status === 'cancelled' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-[#FAF6EF] text-[#9C6B30]'}`}>{o.status}</span>
+                            {o.returnStatus && (
+                              <span className={`inline-block px-2.5 py-0.5 text-[9px] sm:text-[10px] tracking-wider uppercase rounded-full font-semibold border ${
+                                o.returnStatus === 'REQUESTED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                                o.returnStatus === 'APPROVED' ? 'bg-blue-50 text-blue-800 border-blue-200' :
+                                o.returnStatus === 'PROCESSING' ? 'bg-purple-50 text-purple-800 border-purple-200' :
+                                o.returnStatus === 'REFUNDED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                                o.returnStatus === 'REJECTED' ? 'bg-red-50 text-red-800 border-red-200' :
+                                'bg-neutral-100 text-neutral-700 border-neutral-200'
+                              }`}>
+                                Return: {o.returnStatus === 'REQUESTED' ? 'Requested' : o.returnStatus}
+                              </span>
+                            )}
+                            {isEligibleReturn && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-[9px] sm:text-[10px] font-semibold tracking-wider uppercase rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                                <Clock size={10} className="text-[#9C6B30]" /> Return Eligible (30m)
+                              </span>
+                            )}
+                          </div>
+                          <div className="font-display text-lg sm:text-xl text-[#1A1A1A] mt-0.5">{formatINR(o.amounts.total)}</div>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <span className={`inline-block px-3 py-1 text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full capitalize font-semibold ${o.status === 'cancelled' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-[#FAF6EF] text-[#9C6B30]'}`}>{o.status}</span>
-                        <div className="font-display text-lg sm:text-xl text-[#1A1A1A] mt-1 sm:mt-2">{formatINR(o.amounts.total)}</div>
+                      <div className="flex gap-2 mt-4 overflow-x-auto">{o.items.slice(0, 4).map((it, i) => (<img key={i} src={it.image} className="w-12 h-12 sm:w-14 sm:h-14 rounded-md object-cover shrink-0" />))}</div>
+                    </Link>
+                  );
+                })}</div>
+              )}
+            </div>
+          )}
+
+          {tab === 'returns' && (
+            <div className="border border-[#E8E8E8] rounded-xl p-4 sm:p-6 md:p-8">
+              <div className="flex flex-col xs:flex-row justify-between items-start xs:items-center gap-2 mb-1">
+                <div>
+                  <div className="font-display text-xl xs:text-2xl sm:text-3xl text-[#1A1A1A]">Returns & Refunds</div>
+                  <p className="text-xs text-neutral-500 mt-1">Returns are accepted within 30 minutes of delivery.</p>
+                </div>
+                <button onClick={loadReturns} className="text-xs text-[#9C6B30] hover:underline flex items-center gap-1 cursor-pointer">
+                  <RotateCcw size={12} /> Refresh
+                </button>
+              </div>
+              <div className="gold-line w-12 mb-6" />
+
+              {returnsLoading ? (
+                <div className="py-12 flex justify-center text-[#9C6B30]"><Loader2 className="animate-spin" size={24} /></div>
+              ) : returnsList.length === 0 ? (
+                <div className="text-center py-12 sm:py-16">
+                  <div className="w-14 h-14 sm:w-16 sm:h-16 mx-auto rounded-full bg-[#FAF6EF] flex items-center justify-center text-[#9C6B30] mb-4">
+                    <RotateCcw size={24} />
+                  </div>
+                  <div className="font-serif-luxe text-base sm:text-lg text-neutral-700">No return requests found.</div>
+                  <p className="text-xs text-neutral-500 mt-1 max-w-sm mx-auto">
+                    You can initiate a return for delivered items within 30 minutes of delivery directly from your order page.
+                  </p>
+                  <button onClick={() => setTab('orders')} className="inline-block mt-4 text-[#9C6B30] border-b border-[#9C6B30] pb-0.5 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase cursor-pointer">
+                    View Your Orders
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {returnsList.map(ret => (
+                    <div key={ret.id} className="border border-[#E8E8E8] rounded-xl p-4 sm:p-5 bg-white hover:border-[#9C6B30]/60 transition space-y-3">
+                      <div className="flex justify-between items-start flex-wrap gap-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] tracking-widest uppercase text-neutral-400">Return ID</span>
+                            <span className="font-mono text-xs font-semibold text-neutral-700">{ret.returnId || ret.id}</span>
+                          </div>
+                          <div className="font-serif-luxe text-base sm:text-lg text-[#1A1A1A] mt-0.5">Order #{ret.orderNumber}</div>
+                          <div className="text-xs text-neutral-500 mt-0.5">
+                            Requested on {new Date(ret.requestedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className={`inline-block px-3 py-1 text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full font-semibold border ${
+                            ret.returnStatus === 'REQUESTED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                            ret.returnStatus === 'APPROVED' ? 'bg-blue-50 text-blue-800 border-blue-200' :
+                            ret.returnStatus === 'PROCESSING' ? 'bg-purple-50 text-purple-800 border-purple-200' :
+                            ret.returnStatus === 'REFUNDED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                            ret.returnStatus === 'REJECTED' ? 'bg-red-50 text-red-800 border-red-200' :
+                            'bg-neutral-100 text-neutral-700 border-neutral-200'
+                          }`}>
+                            {ret.returnStatus === 'REQUESTED' ? 'Requested (Under Review)' : ret.returnStatus}
+                          </span>
+                          <div className="font-display text-base sm:text-lg text-[#9C6B30] mt-1 font-semibold">
+                            Refund: {formatINR(ret.refundAmount || 0)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-2.5 bg-[#FAF6EF]/50 rounded-lg text-xs text-neutral-700">
+                        <span className="font-medium text-neutral-900">Reason:</span> {ret.reason}
+                        {ret.comment && <span className="text-neutral-500 italic"> — "{ret.comment}"</span>}
+                      </div>
+
+                      {ret.rejectionReason && (
+                        <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-800">
+                          <span className="font-semibold">Rejection Reason:</span> {ret.rejectionReason}
+                        </div>
+                      )}
+
+                      {ret.gatewayRefundId && (
+                        <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-900 font-mono">
+                          Refund Ref: {ret.gatewayRefundId}
+                        </div>
+                      )}
+
+                      {Array.isArray(ret.items) && ret.items.length > 0 && (
+                        <div className="flex gap-2 overflow-x-auto pt-1">
+                          {ret.items.map((it, idx) => (
+                            <div key={idx} className="flex items-center gap-2 p-1.5 border border-neutral-200 rounded-md shrink-0 bg-neutral-50 text-xs">
+                              {it.image && <img src={it.image} alt={it.name} className="w-8 h-8 rounded object-cover" />}
+                              <div className="max-w-[140px] truncate">
+                                <div className="font-medium truncate">{it.name}</div>
+                                <div className="text-[10px] text-neutral-500">Qty: {it.returnQty || it.qty}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="pt-2 flex justify-end">
+                        <Link href={`/orders/${ret.orderId}`} className="text-[10px] sm:text-[11px] uppercase tracking-wider text-[#9C6B30] hover:underline font-semibold flex items-center gap-1">
+                          View Order Details <ChevronRight size={12} />
+                        </Link>
                       </div>
                     </div>
-                    <div className="flex gap-2 mt-4 overflow-x-auto">{o.items.slice(0, 4).map((it, i) => (<img key={i} src={it.image} className="w-12 h-12 sm:w-14 sm:h-14 rounded-md object-cover shrink-0" />))}</div>
-                  </Link>
-                ))}</div>
+                  ))}
+                </div>
               )}
             </div>
           )}

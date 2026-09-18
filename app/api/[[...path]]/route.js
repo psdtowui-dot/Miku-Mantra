@@ -1999,7 +1999,11 @@ async function handleRoute(request, { params }) {
       const o = await db.collection('orders').findOne({ id });
       if (!o) return err('Order not found', 404);
       if (o.userId !== u.id && u.role !== 'admin') return err('Unauthorized', 403);
-      return ok({ order: clean(o) })
+      const returnDoc = await db.collection('returns').findOne({
+        orderId: id,
+        returnStatus: { $in: ['REQUESTED', 'APPROVED', 'PROCESSING', 'REFUND_INITIATED', 'REFUNDED', 'REJECTED'] }
+      });
+      return ok({ order: clean(o), returnRequest: returnDoc ? clean(returnDoc) : null });
     }
 
     // ============ USER RETURN REQUESTS ============
@@ -2029,11 +2033,16 @@ async function handleRoute(request, { params }) {
         return err('Return request can only be submitted for delivered orders.', 400);
       }
 
-      if (!order.deliveredAt) {
+      let deliveredAtTime = order.deliveredAt ? new Date(order.deliveredAt).getTime() : null;
+      if (!deliveredAtTime && Array.isArray(order.statusHistory)) {
+        const dHist = order.statusHistory.find(h => h.status === 'delivered');
+        if (dHist && dHist.at) deliveredAtTime = new Date(dHist.at).getTime();
+      }
+
+      if (!deliveredAtTime) {
         return err('Order delivery timestamp is missing. Cannot request return.', 400);
       }
 
-      const deliveredAtTime = new Date(order.deliveredAt).getTime();
       const now = new Date();
       const diffMs = now.getTime() - deliveredAtTime;
       const MAX_RETURN_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
@@ -2098,6 +2107,17 @@ async function handleRoute(request, { params }) {
       };
 
       await db.collection('returns').insertOne(returnDoc);
+      await db.collection('orders').updateOne(
+        { id: orderId },
+        {
+          $set: {
+            returnStatus: 'REQUESTED',
+            returnId,
+            refundStatus: 'PENDING',
+            updatedAt: now
+          }
+        }
+      );
       await createAuditLog(db, {
         returnId,
         orderId,
@@ -4088,6 +4108,10 @@ async function handleRoute(request, { params }) {
               }
             }
           );
+          await db.collection('orders').updateOne(
+            { id: rDoc.orderId },
+            { $set: { returnStatus: 'APPROVED', updatedAt: now } }
+          );
 
           await createAuditLog(db, {
             returnId: rDoc.id,
@@ -4131,6 +4155,10 @@ async function handleRoute(request, { params }) {
               }
             }
           );
+          await db.collection('orders').updateOne(
+            { id: rDoc.orderId },
+            { $set: { returnStatus: 'REJECTED', updatedAt: now } }
+          );
 
           await createAuditLog(db, {
             returnId: rDoc.id,
@@ -4162,6 +4190,10 @@ async function handleRoute(request, { params }) {
                 updatedAt: now
               }
             }
+          );
+          await db.collection('orders').updateOne(
+            { id: rDoc.orderId },
+            { $set: { returnStatus: targetStatus, updatedAt: now } }
           );
 
           await createAuditLog(db, {
@@ -4250,6 +4282,10 @@ async function handleRoute(request, { params }) {
                 updatedAt: now
               }
             }
+          );
+          await db.collection('orders').updateOne(
+            { id: rDoc.orderId },
+            { $set: { returnStatus: finalReturnStatus, refundStatus, updatedAt: now } }
           );
 
           await createAuditLog(db, {
