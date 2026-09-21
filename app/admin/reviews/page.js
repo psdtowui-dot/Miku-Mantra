@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { 
   Star, Search, Plus, Filter, Trash2, Edit2, CheckCircle2, EyeOff, 
   Loader2, RefreshCw, X, Image as ImageIcon, MessageSquare, Check, ShieldCheck,
-  CornerDownRight, ExternalLink, ArrowUpDown, CheckSquare, Square, Reply, ShieldAlert
+  CornerDownRight, ExternalLink, ArrowUpDown, CheckSquare, Square, Reply, ShieldAlert,
+  Upload, Camera
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -55,6 +56,48 @@ export default function AdminReviewsPage() {
   const [replyingReview, setReplyingReview] = useState(null);
   const [replyText, setReplyText] = useState('');
   const [submittingReply, setSubmittingReply] = useState(false);
+  const [uploadingAdminPhoto, setUploadingAdminPhoto] = useState(false);
+  const [adminPhotoInputMode, setAdminPhotoInputMode] = useState('upload'); // 'upload' | 'url'
+
+  const handleAdminPhotoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+    if (!validTypes.includes(file.type.toLowerCase())) {
+      toast.error('Please select a JPG, PNG, or WebP photo.');
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('Photo size exceeds 10MB limit.');
+      return;
+    }
+
+    setUploadingAdminPhoto(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        credentials: 'include',
+        body: fd
+      });
+      const d = await res.json();
+      if (res.ok && d.url) {
+        setForm(prev => ({ ...prev, image: d.url }));
+        toast.success('Photo uploaded successfully!');
+      } else {
+        toast.error(d.error || 'Photo upload failed');
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Photo upload network error');
+    } finally {
+      setUploadingAdminPhoto(false);
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -1008,17 +1051,105 @@ export default function AdminReviewsPage() {
                 />
               </div>
 
+              {/* Photo Upload & Preview Section */}
               <div>
-                <label className="block text-xs font-bold text-neutral-700 uppercase tracking-wider mb-1">
-                  Product Photo / Attachment Image URL (Optional)
-                </label>
-                <input
-                  type="url"
-                  value={form.image}
-                  onChange={e => setForm({ ...form, image: e.target.value })}
-                  placeholder="https://images.unsplash.com/..."
-                  className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:border-[#9C6B30]"
-                />
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-neutral-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <Camera size={13} className="text-[#9C6B30]" /> Product Photo (Optional)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setAdminPhotoInputMode(adminPhotoInputMode === 'upload' ? 'url' : 'upload')}
+                    className="text-[10px] text-[#9C6B30] hover:underline font-semibold cursor-pointer"
+                  >
+                    {adminPhotoInputMode === 'upload' ? 'Paste image URL' : 'Upload local file'}
+                  </button>
+                </div>
+
+                {form.image ? (
+                  <div className="flex items-center gap-3 p-3 bg-[#FAF6EF]/60 border border-neutral-200 rounded-xl">
+                    <div className="relative w-16 h-16 rounded-lg overflow-hidden border border-[#9C6B30]/30 shrink-0 bg-neutral-100 shadow-xs">
+                      <img
+                        src={form.image}
+                        alt="Preview"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-semibold text-neutral-800 flex items-center gap-1">
+                        <Check size={13} className="text-emerald-600" /> Photo attached
+                      </div>
+                      <p className="text-[10px] text-neutral-500 truncate mt-0.5 max-w-[240px] font-mono">
+                        {form.image}
+                      </p>
+                      <div className="flex items-center gap-2 mt-2">
+                        <label className="text-[10px] font-semibold text-[#9C6B30] hover:underline cursor-pointer">
+                          Change photo
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp,image/jpg"
+                            onChange={handleAdminPhotoUpload}
+                            className="hidden"
+                          />
+                        </label>
+                        <span className="text-neutral-300">·</span>
+                        <button
+                          type="button"
+                          onClick={() => setForm(prev => ({ ...prev, image: '' }))}
+                          className="text-[10px] font-semibold text-red-600 hover:text-red-700 cursor-pointer"
+                        >
+                          Remove photo
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : adminPhotoInputMode === 'upload' ? (
+                  <div>
+                    <label
+                      className={`flex flex-col items-center justify-center border-2 border-dashed border-neutral-200 rounded-xl p-4 text-center cursor-pointer transition-all bg-white hover:bg-[#FAF6EF]/40 hover:border-[#9C6B30] ${
+                        uploadingAdminPhoto ? 'opacity-60 pointer-events-none' : ''
+                      }`}
+                    >
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/jpg"
+                        onChange={handleAdminPhotoUpload}
+                        className="hidden"
+                      />
+                      {uploadingAdminPhoto ? (
+                        <div className="py-2 flex flex-col items-center gap-1.5">
+                          <Loader2 size={20} className="animate-spin text-[#9C6B30]" />
+                          <span className="text-xs text-neutral-600 font-medium">Uploading photo...</span>
+                        </div>
+                      ) : (
+                        <div className="py-1 flex flex-col items-center gap-1">
+                          <div className="w-8 h-8 rounded-full bg-[#FAF6EF] flex items-center justify-center text-[#9C6B30] mb-0.5">
+                            <Upload size={15} />
+                          </div>
+                          <span className="text-xs font-semibold text-neutral-800">
+                            Upload photo locally from computer
+                          </span>
+                          <span className="text-[10px] text-neutral-400">
+                            Click to select JPG, PNG, or WebP (up to 10MB)
+                          </span>
+                        </div>
+                      )}
+                    </label>
+                  </div>
+                ) : (
+                  <div>
+                    <input
+                      type="url"
+                      value={form.image}
+                      onChange={e => setForm({ ...form, image: e.target.value })}
+                      placeholder="https://images.unsplash.com/..."
+                      className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:border-[#9C6B30]"
+                    />
+                    <p className="text-[10px] text-neutral-400 mt-1">
+                      Paste a direct image link for this review.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Official Store Reply inside edit modal */}

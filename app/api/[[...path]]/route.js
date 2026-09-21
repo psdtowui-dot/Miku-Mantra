@@ -162,8 +162,9 @@ async function recalculateProductRating(db, productId) {
 }
 
 async function connectToMongo() {
-  const directUrl = process.env.MONGO_DIRECT_URL || "mongodb://akashsriv1984_db_user:2M5Edv773XLUmT15@ac-htqrxv1-shard-00-00.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-01.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-02.7szyylz.mongodb.net:27017/userPortal?ssl=true&replicaSet=atlas-1c5jr9-shard-0&authSource=admin&retryWrites=true&w=majority";
-  const mongoUrl = process.env.MONGO_DIRECT_URL || process.env.MONGO_URL || process.env.MONGODB_URI;
+  const directUrl = process.env.MONGO_DIRECT_URL || "mongodb://akashsriv1984_db_user:2M5Edv773XLUmT15@ac-htqrxv1-shard-00-00.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-01.7szyylz.mongodb.net:27017/userPortal?ssl=true&replicaSet=atlas-1c5jr9-shard-0&authSource=admin&retryWrites=true&w=majority";
+  const srvUrl = process.env.MONGO_URL || process.env.MONGODB_URI;
+  const mongoUrl = process.env.MONGO_DIRECT_URL || directUrl || srvUrl;
   if (!mongoUrl) {
     throw new Error("MONGO_URL environment variable is missing.");
   }
@@ -174,12 +175,12 @@ async function connectToMongo() {
           dns.setServers(['8.8.8.8', '1.1.1.1']);
         } catch (e) {}
         try {
-          client = new MongoClient(mongoUrl);
+          client = new MongoClient(mongoUrl, { serverSelectionTimeoutMS: 10000 });
           await client.connect();
         } catch (srvErr) {
           if (directUrl && mongoUrl !== directUrl) {
-            console.log('MongoDB SRV connection failed, attempting fallback to direct replica set...');
-            client = new MongoClient(directUrl);
+            console.log('MongoDB connection attempt failed, falling back to direct replica set...');
+            client = new MongoClient(directUrl, { serverSelectionTimeoutMS: 10000 });
             await client.connect();
           } else {
             throw srvErr;
@@ -920,6 +921,72 @@ async function handleRoute(request, { params }) {
           'Access-Control-Allow-Origin': '*'
         }
       });
+    }
+
+    // Customer & Authenticated Media Upload (Photos for Reviews & Profiles)
+    if (route === '/upload' && method === 'POST') {
+      const u = await getCurrentUser(db, request);
+      if (!u) return err('Sign in to upload photos', 401);
+      try {
+        const formData = await request.formData();
+        const file = formData.get('file');
+        if (!file) return err('No file provided', 400);
+
+        const fileType = (file.type || 'image/jpeg').toLowerCase();
+        const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg', 'image/gif', 'image/avif'];
+        if (!allowedTypes.includes(fileType)) {
+          return err('Invalid photo format. Please upload JPG, PNG, or WebP.', 400);
+        }
+
+        const originalName = file.name || 'photo.jpg';
+        const ext = pathModule.extname(originalName).toLowerCase() || '.jpg';
+        if (!['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif'].includes(ext)) {
+          return err('Invalid file extension. Allowed: .jpg, .jpeg, .png, .webp', 400);
+        }
+
+        if (file.size > 10 * 1024 * 1024) {
+          return err('Photo size exceeds 10MB limit.', 400);
+        }
+
+        const bytes = await file.arrayBuffer();
+        const buffer = Buffer.from(bytes);
+        const filename = `photo-${Date.now()}-${uuidv4().slice(0, 8)}${ext}`;
+
+        let savedToDb = false;
+        try {
+          await db.collection('uploads').insertOne({
+            filename,
+            contentType: fileType,
+            data: buffer,
+            userId: u.id,
+            createdAt: new Date()
+          });
+          savedToDb = true;
+        } catch (dbErr) {
+          console.warn('MongoDB upload save failed, falling back to filesystem only:', dbErr.message);
+        }
+
+        let savedToFs = false;
+        try {
+          const uploadsDir = pathModule.join(process.cwd(), 'public', 'uploads');
+          if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+          const filePath = pathModule.join(uploadsDir, filename);
+          fs.writeFileSync(filePath, buffer);
+          savedToFs = true;
+        } catch (fsErr) {
+          console.warn('Local filesystem write failed:', fsErr.message);
+        }
+
+        if (!savedToDb && !savedToFs) {
+          return err('Photo upload failed. Could not write to storage.', 500);
+        }
+
+        const url = savedToDb ? `/api/uploads/${filename}` : `/uploads/${filename}`;
+        return ok({ url, filename });
+      } catch (e) {
+        console.error('Customer photo upload error:', e);
+        return err('Photo upload error: ' + (e.message || 'Unknown error'), 500);
+      }
     }
 
     if (route === '/check-pincode' && method === 'POST') {
@@ -2482,37 +2549,81 @@ async function handleRoute(request, { params }) {
       const productId = q.get('productId');
       if (!productId) return ok({ eligible: false, reason: 'MISSING_PRODUCT_ID' });
 
-      const prod = await db.collection('products').findOne({ $or: [{ id: productId }, { slug: productId }] });
+      const prod = await db.collection('products').findOne({
+        $or: [{ id: productId }, { slug: productId }, { name: productId }]
+      });
       const targetIds = [productId, prod?.id, prod?.slug].filter(Boolean);
 
-      const deliveredOrders = await db.collection('orders').find({
-        userId: u.id,
-        status: 'delivered',
-        'items.id': { $in: targetIds }
-      }).sort({ createdAt: -1 }).toArray();
-
-      if (!deliveredOrders || deliveredOrders.length === 0) {
-        return ok({ eligible: false, reason: 'NO_DELIVERED_ORDER' });
-      }
-
-      const existingReviews = await db.collection('reviews').find({
-        userId: u.id,
-        productId: { $in: targetIds }
-      }).toArray();
-
-      const reviewedOrderIds = new Set(existingReviews.map(r => r.orderId).filter(Boolean));
-
+      const specificOrderId = q.get('orderId') || q.get('orderNumber');
       let eligibleOrder = null;
       let eligibleItem = null;
 
-      for (const ord of deliveredOrders) {
-        if (!reviewedOrderIds.has(ord.id)) {
-          const item = ord.items.find(it => targetIds.includes(it.id));
-          if (item) {
+      if (specificOrderId) {
+        const ord = await db.collection('orders').findOne({
+          $or: [{ id: specificOrderId }, { orderNumber: specificOrderId }]
+        });
+        if (ord) {
+          const isOwner = ord.userId === u.id ||
+            (u.email && ord.customerEmail && ord.customerEmail.toLowerCase() === u.email.toLowerCase()) ||
+            (u.email && ord.customer?.email && ord.customer.email.toLowerCase() === u.email.toLowerCase()) ||
+            u.role === 'admin';
+          const isDelivered = String(ord.status || '').toLowerCase() === 'delivered' || u.role === 'admin';
+          if (isOwner && isDelivered) {
             eligibleOrder = ord;
-            eligibleItem = item;
-            break;
+            eligibleItem = ord.items?.find(it =>
+              targetIds.includes(it.id) ||
+              targetIds.includes(it.slug) ||
+              targetIds.includes(it.productId) ||
+              (prod && it.name && it.name.toLowerCase() === prod.name.toLowerCase())
+            ) || ord.items?.[0];
           }
+        }
+      }
+
+      if (!eligibleOrder) {
+        const userDeliveredQuery = {
+          $or: [
+            { userId: u.id },
+            ...(u.email ? [{ customerEmail: { $regex: new RegExp(`^${u.email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } }] : []),
+            ...(u.email ? [{ 'customer.email': { $regex: new RegExp(`^${u.email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } }] : [])
+          ],
+          status: { $regex: /^delivered$/i }
+        };
+
+        const deliveredOrders = await db.collection('orders').find(userDeliveredQuery).sort({ placedAt: -1, createdAt: -1 }).toArray();
+
+        if ((!deliveredOrders || deliveredOrders.length === 0) && u.role !== 'admin') {
+          return ok({ eligible: false, reason: 'NO_DELIVERED_ORDER' });
+        }
+
+        const existingReviews = await db.collection('reviews').find({
+          userId: u.id,
+          $or: [
+            { productId: { $in: targetIds } },
+            { productSlug: { $in: targetIds } }
+          ]
+        }).toArray();
+
+        const reviewedOrderIds = new Set(existingReviews.map(r => r.orderId || r.orderNumber).filter(Boolean));
+
+        for (const ord of deliveredOrders) {
+          if (!reviewedOrderIds.has(ord.id) && !reviewedOrderIds.has(ord.orderNumber)) {
+            const item = ord.items?.find(it =>
+              targetIds.includes(it.id) ||
+              targetIds.includes(it.slug) ||
+              targetIds.includes(it.productId) ||
+              (prod && it.name && it.name.toLowerCase() === prod.name.toLowerCase())
+            );
+            if (item) {
+              eligibleOrder = ord;
+              eligibleItem = item;
+              break;
+            }
+          }
+        }
+
+        if (!eligibleOrder && u.role === 'admin') {
+          return ok({ eligible: true, orderId: 'admin', orderItemId: prod?.id || productId, customerReviewsEnabled });
         }
       }
 
@@ -2520,7 +2631,13 @@ async function handleRoute(request, { params }) {
         return ok({ eligible: false, reason: 'ALREADY_REVIEWED' });
       }
 
-      return ok({ eligible: true, orderId: eligibleOrder.id, orderItemId: eligibleItem.id, customerReviewsEnabled });
+      return ok({
+        eligible: true,
+        orderId: eligibleOrder.id,
+        orderNumber: eligibleOrder.orderNumber,
+        orderItemId: eligibleItem.id,
+        customerReviewsEnabled
+      });
     }
 
     if (route === '/reviews' && method === 'POST') {
@@ -2540,56 +2657,128 @@ async function handleRoute(request, { params }) {
       const b = await request.json();
       if (!b.productId) return err('Product ID is required', 400);
 
-      const prod = await db.collection('products').findOne({ $or: [{ id: b.productId }, { slug: b.productId }] });
+      const prod = await db.collection('products').findOne({
+        $or: [{ id: b.productId }, { slug: b.productId }, { name: b.productId }]
+      });
       const targetIds = [b.productId, prod?.id, prod?.slug].filter(Boolean);
 
-      const deliveredOrders = await db.collection('orders').find({
-        userId: u.id,
-        status: 'delivered',
-        'items.id': { $in: targetIds }
-      }).toArray();
+      // 1. Try to find the specific order if orderId or orderNumber was passed
+      const targetOrderId = b.orderId || b.orderNumber;
+      let matchedOrder = null;
 
-      if (!deliveredOrders || deliveredOrders.length === 0) {
-        return err('You can only review products from delivered orders', 403);
+      if (targetOrderId) {
+        matchedOrder = await db.collection('orders').findOne({
+          $or: [
+            { id: targetOrderId },
+            { orderNumber: targetOrderId }
+          ]
+        });
+
+        if (matchedOrder) {
+          const isOwner = matchedOrder.userId === u.id ||
+            (u.email && matchedOrder.customerEmail && matchedOrder.customerEmail.toLowerCase() === u.email.toLowerCase()) ||
+            (u.email && matchedOrder.customer?.email && matchedOrder.customer.email.toLowerCase() === u.email.toLowerCase()) ||
+            (u.email && matchedOrder.address?.email && matchedOrder.address.email.toLowerCase() === u.email.toLowerCase());
+
+          const isDelivered = String(matchedOrder.status || '').toLowerCase() === 'delivered' ||
+            (Array.isArray(matchedOrder.statusHistory) && matchedOrder.statusHistory.some(h => String(h.status).toLowerCase() === 'delivered'));
+
+          if (!isOwner && u.role !== 'admin') {
+            matchedOrder = null; // Unauthorized for this specific order
+          } else if (!isDelivered && u.role !== 'admin') {
+            return err('Reviews can only be submitted for delivered orders.', 403);
+          }
+        }
       }
 
-      const matchedOrder = b.orderId
-        ? deliveredOrders.find(o => o.id === b.orderId)
-        : deliveredOrders[0];
-
+      // 2. If matchedOrder is not set yet, find any delivered order for this user containing the product
       if (!matchedOrder) {
-        return err('Delivered order not found for this product', 403);
+        const userDeliveredQuery = {
+          $or: [
+            { userId: u.id },
+            ...(u.email ? [{ customerEmail: { $regex: new RegExp(`^${u.email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } }] : []),
+            ...(u.email ? [{ 'customer.email': { $regex: new RegExp(`^${u.email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } }] : [])
+          ],
+          status: { $regex: /^delivered$/i }
+        };
+
+        const deliveredOrders = await db.collection('orders').find(userDeliveredQuery).sort({ placedAt: -1, createdAt: -1 }).toArray();
+
+        // Search for an order containing this item
+        for (const ord of deliveredOrders) {
+          const hasItem = ord.items?.some(it =>
+            targetIds.includes(it.id) ||
+            targetIds.includes(it.slug) ||
+            targetIds.includes(it.productId) ||
+            (prod && it.name && it.name.toLowerCase() === prod.name.toLowerCase())
+          );
+          if (hasItem) {
+            matchedOrder = ord;
+            break;
+          }
+        }
+
+        // If targetOrderId was given and matches one of user's delivered orders, accept it
+        if (!matchedOrder && targetOrderId && deliveredOrders.length > 0) {
+          matchedOrder = deliveredOrders.find(o => o.id === targetOrderId || o.orderNumber === targetOrderId);
+        }
+
+        // If user is admin and still no order found, allow review without order
+        if (!matchedOrder && u.role === 'admin') {
+          matchedOrder = null; // Admin curated review
+        } else if (!matchedOrder) {
+          return err('You can only review products from delivered orders', 403);
+        }
       }
 
-      const existingReview = await db.collection('reviews').findOne({
+      // 3. Resolve target item inside order (if order exists)
+      const targetItem = matchedOrder?.items?.find(it =>
+        targetIds.includes(it.id) ||
+        targetIds.includes(it.slug) ||
+        targetIds.includes(it.productId) ||
+        (prod && it.name && it.name.toLowerCase() === prod.name.toLowerCase())
+      ) || matchedOrder?.items?.[0];
+
+      // 4. Duplicate review prevention (per order + product)
+      const duplicateQuery = {
         userId: u.id,
-        productId: { $in: targetIds },
-        orderId: matchedOrder.id
-      });
+        $or: [
+          { productId: { $in: targetIds } },
+          { productSlug: { $in: targetIds } }
+        ]
+      };
+      if (matchedOrder) {
+        duplicateQuery.$and = [{
+          $or: [
+            { orderId: matchedOrder.id },
+            { orderNumber: matchedOrder.orderNumber }
+          ].filter(Boolean)
+        }];
+      }
+      const existingReview = await db.collection('reviews').findOne(duplicateQuery);
 
       if (existingReview) {
-        return err('You have already submitted a review for this delivered item', 400);
+        return err('You have already submitted a review for this delivered item. You can edit your review anytime.', 400);
       }
 
-      const targetItem = matchedOrder.items?.find(it => targetIds.includes(it.id));
       const ratingVal = Math.min(5, Math.max(1, Number(b.rating) || 5));
       const r = {
         id: uuidv4(),
-        productId: prod?.id || b.productId,
-        productSlug: prod?.slug || targetItem?.slug || b.productId,
-        productName: targetItem?.name || prod?.name || 'Fine Jewellery Piece',
-        productImage: targetItem?.image || prod?.images?.[0] || '',
+        productId: prod?.id || targetItem?.productId || targetItem?.id || b.productId,
+        productSlug: prod?.slug || targetItem?.slug || b.productSlug || b.productId,
+        productName: targetItem?.name || prod?.name || b.productName || 'Fine Jewellery Piece',
+        productImage: targetItem?.image || prod?.images?.[0] || b.productImage || '',
         userId: u.id,
-        reviewerName: u.name || 'Verified Customer',
-        reviewerEmail: u.email || '',
-        orderId: matchedOrder.id,
-        orderNumber: matchedOrder.orderNumber || '',
+        reviewerName: u.name || matchedOrder?.address?.fullName || matchedOrder?.customer?.name || 'Verified Customer',
+        reviewerEmail: u.email || matchedOrder?.customerEmail || '',
+        orderId: matchedOrder?.id || '',
+        orderNumber: matchedOrder?.orderNumber || '',
         rating: ratingVal,
         title: (b.title || '').trim().slice(0, 150),
         comment: (b.comment || '').trim().slice(0, 1000),
         images: b.image ? [b.image] : (Array.isArray(b.images) ? b.images : []),
         status: 'published',
-        verifiedPurchase: true,
+        verifiedPurchase: Boolean(matchedOrder || u.role === 'admin'),
         approved: true,
         createdAt: new Date(),
         updatedAt: new Date()
@@ -4810,7 +4999,15 @@ async function handleRoute(request, { params }) {
     }
 
     return err(`Route ${route} not found`, 404)
-  } catch (e) { console.error('API Error:', e); return err('Internal server error: ' + String(e?.message || e), 500) }
+  } catch (e) {
+    console.error('API Error:', e);
+    const msg = String(e?.message || e);
+    if (msg.includes('SSL') || msg.includes('topology') || msg.includes('pool') || msg.includes('connection') || msg.includes('timed out') || msg.includes('Primary')) {
+      connectPromise = null;
+      try { if (client) client.close(); } catch (_) {}
+    }
+    return err('Internal server error: ' + msg, 500);
+  }
 }
 
 export const GET = handleRoute

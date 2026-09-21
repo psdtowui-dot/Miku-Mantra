@@ -4,7 +4,7 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/use-auth';
 import { formatINR } from '@/lib/products';
-import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft, Star, Edit3, Trash2 } from 'lucide-react';
+import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft, Star, Edit3, Trash2, Upload, Camera, Image as ImageIcon } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 
@@ -96,6 +96,8 @@ function OrderInner() {
   const [submittingReview, setSubmittingReview] = useState(false);
   const [deletingReview, setDeletingReview] = useState(false);
   const [reviewModalErr, setReviewModalErr] = useState('');
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoInputMode, setPhotoInputMode] = useState('upload'); // 'upload' | 'url'
 
   // Live timer ticker for 30-minute return countdown
   const [nowTime, setNowTime] = useState(Date.now());
@@ -332,7 +334,58 @@ function OrderInner() {
     }
     setHoverRating(0);
     setReviewModalErr('');
+    setPhotoInputMode('upload');
     setShowReviewModal(true);
+  };
+
+  const handleLocalPhotoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Reset input so same file can be selected again if needed
+    e.target.value = '';
+
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+    if (!validTypes.includes(file.type.toLowerCase())) {
+      setReviewModalErr('Please select a JPG, PNG, or WebP photo.');
+      toast.error('Invalid photo format');
+      return;
+    }
+
+    if (file.size > 8 * 1024 * 1024) {
+      setReviewModalErr('Photo size exceeds 8MB. Please choose a smaller image.');
+      toast.error('Photo size exceeds 8MB');
+      return;
+    }
+
+    setUploadingPhoto(true);
+    setReviewModalErr('');
+
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+
+      const r = await fetch('/api/upload', {
+        method: 'POST',
+        credentials: 'include',
+        body: fd
+      });
+
+      const d = await r.json();
+      if (r.ok && d.url) {
+        setReviewForm(prev => ({ ...prev, image: d.url }));
+        toast.success('Photo uploaded and attached successfully!');
+      } else {
+        setReviewModalErr(d.error || 'Failed to upload photo. Please try again.');
+        toast.error(d.error || 'Photo upload failed');
+      }
+    } catch (err) {
+      console.error(err);
+      setReviewModalErr('Network error during photo upload.');
+      toast.error('Photo upload error');
+    } finally {
+      setUploadingPhoto(false);
+    }
   };
 
   const handleSubmitReview = async (e) => {
@@ -379,8 +432,10 @@ function OrderInner() {
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
           body: JSON.stringify({
-            productId: reviewTargetItem.id,
+            productId: reviewTargetItem.id || reviewTargetItem.slug,
+            productSlug: reviewTargetItem.slug,
             orderId: order.id,
+            orderNumber: order.orderNumber,
             rating: reviewForm.rating,
             title: reviewForm.title.trim(),
             comment: reviewForm.comment.trim(),
@@ -1366,21 +1421,105 @@ function OrderInner() {
                 />
               </div>
 
-              {/* Optional Photo URL */}
+              {/* Customer Photo Upload Section */}
               <div>
-                <label className="block text-xs font-medium text-neutral-800 mb-1 uppercase tracking-wider">
-                  Photo URL (Optional)
-                </label>
-                <input
-                  type="url"
-                  value={reviewForm.image}
-                  onChange={e => setReviewForm(prev => ({ ...prev, image: e.target.value }))}
-                  placeholder="https://example.com/my-jewellery-photo.jpg"
-                  className="w-full px-3 py-2 border border-[#E8E8E8] rounded-md text-xs sm:text-sm focus:outline-none focus:border-[#9C6B30]"
-                />
-                <p className="text-[10px] text-neutral-400 mt-1">
-                  Add an image link to show off your piece being worn.
-                </p>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-semibold text-neutral-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <Camera size={13} className="text-[#9C6B30]" /> Customer Photo (Optional)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setPhotoInputMode(photoInputMode === 'upload' ? 'url' : 'upload')}
+                    className="text-[10px] text-[#9C6B30] hover:underline font-medium cursor-pointer"
+                  >
+                    {photoInputMode === 'upload' ? 'Or paste image link' : 'Upload local photo instead'}
+                  </button>
+                </div>
+
+                {reviewForm.image ? (
+                  <div className="flex items-center gap-3 p-3 bg-[#FAF6EF]/60 border border-[#E8E8E8] rounded-xl">
+                    <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden border border-[#9C6B30]/30 shrink-0 bg-neutral-100 shadow-xs">
+                      <img
+                        src={reviewForm.image}
+                        alt="Customer piece preview"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-semibold text-neutral-800 flex items-center gap-1">
+                        <Check size={13} className="text-emerald-600" /> Photo attached
+                      </div>
+                      <p className="text-[10px] text-neutral-500 truncate mt-0.5 max-w-[200px] sm:max-w-xs font-mono">
+                        {reviewForm.image}
+                      </p>
+                      <div className="flex items-center gap-2 mt-2">
+                        <label className="text-[10px] font-semibold text-[#9C6B30] hover:underline cursor-pointer">
+                          Change photo
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp,image/jpg"
+                            onChange={handleLocalPhotoUpload}
+                            className="hidden"
+                          />
+                        </label>
+                        <span className="text-neutral-300">·</span>
+                        <button
+                          type="button"
+                          onClick={() => setReviewForm(prev => ({ ...prev, image: '' }))}
+                          className="text-[10px] font-semibold text-red-600 hover:text-red-700 cursor-pointer"
+                        >
+                          Remove photo
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : photoInputMode === 'upload' ? (
+                  <div>
+                    <label
+                      className={`flex flex-col items-center justify-center border-2 border-dashed border-neutral-200 rounded-xl p-4 text-center cursor-pointer transition-all bg-white hover:bg-[#FAF6EF]/40 hover:border-[#9C6B30] ${
+                        uploadingPhoto ? 'opacity-60 pointer-events-none' : ''
+                      }`}
+                    >
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/jpg"
+                        onChange={handleLocalPhotoUpload}
+                        className="hidden"
+                      />
+                      {uploadingPhoto ? (
+                        <div className="py-2 flex flex-col items-center gap-1.5">
+                          <Loader2 size={20} className="animate-spin text-[#9C6B30]" />
+                          <span className="text-xs text-neutral-600 font-medium">Uploading photo from device...</span>
+                        </div>
+                      ) : (
+                        <div className="py-1 flex flex-col items-center gap-1">
+                          <div className="w-9 h-9 rounded-full bg-[#FAF6EF] flex items-center justify-center text-[#9C6B30] mb-0.5">
+                            <Upload size={16} />
+                          </div>
+                          <span className="text-xs font-semibold text-neutral-800">
+                            Upload photo locally from your device
+                          </span>
+                          <span className="text-[10px] text-neutral-400">
+                            Click to browse JPG, PNG, or WebP (up to 8MB)
+                          </span>
+                        </div>
+                      )}
+                    </label>
+                  </div>
+                ) : (
+                  <div>
+                    <input
+                      type="url"
+                      value={reviewForm.image}
+                      onChange={e => setReviewForm(prev => ({ ...prev, image: e.target.value }))}
+                      placeholder="https://example.com/my-jewellery-photo.jpg"
+                      className="w-full px-3 py-2 border border-[#E8E8E8] rounded-md text-xs sm:text-sm focus:outline-none focus:border-[#9C6B30]"
+                    />
+                    <p className="text-[10px] text-neutral-400 mt-1">
+                      Paste an image URL to show off your piece being worn.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Actions */}
