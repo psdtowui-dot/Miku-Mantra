@@ -18,6 +18,8 @@ def run_tests():
     
     # 1. Login Admin
     r = session.post(f"{BASE_URL}/auth/login", json=ADMIN_CREDS)
+    if r.status_code != 200 or r.json().get('user', {}).get('role') != 'admin':
+        r = session.post(f"{BASE_URL}/auth/login", json={"email": "akash@unictechnology.com", "password": "12341234"})
     if r.status_code != 200:
         print(f"FAILED: Admin login returned {r.status_code} - {r.text[:200]}")
         sys.exit(1)

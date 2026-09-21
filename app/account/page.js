@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { useWishlist } from '@/lib/cart-store';
 import { PRODUCTS, formatINR } from '@/lib/products';
-import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound, RotateCcw, Clock } from 'lucide-react';
+import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound, RotateCcw, Clock, Star } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function AccountPage() {
@@ -17,6 +17,8 @@ export default function AccountPage() {
   const [orders, setOrders] = useState([]);
   const [returnsList, setReturnsList] = useState([]);
   const [returnsLoading, setReturnsLoading] = useState(false);
+  const [reviewsList, setReviewsList] = useState([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
   const [profileForm, setProfileForm] = useState({ name: '', phone: '' });
   const [addrForm, setAddrForm] = useState({ fullName: '', phone: '', line1: '', line2: '', city: '', state: '', pincode: '', isDefault: false });
   const [showAddr, setShowAddr] = useState(false);
@@ -39,6 +41,7 @@ export default function AccountPage() {
       loadAddresses();
       loadOrders();
       loadReturns();
+      loadReviews();
     }
   }, [user]);
 
@@ -54,6 +57,35 @@ export default function AccountPage() {
       console.error(e);
     } finally {
       setReturnsLoading(false);
+    }
+  }
+  async function loadReviews() {
+    setReviewsLoading(true);
+    try {
+      const r = await authFetch('/api/reviews/mine');
+      const d = await r.json();
+      if (r.ok) setReviewsList(d.reviews || []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setReviewsLoading(false);
+    }
+  }
+
+  async function deleteCustomerReview(id) {
+    if (!confirm('Are you sure you want to remove this review?')) return;
+    try {
+      const r = await authFetch(`/api/reviews/${id}`, { method: 'DELETE' });
+      if (r.ok) {
+        toast.success('Review removed');
+        loadReviews();
+      } else {
+        const d = await r.json().catch(() => ({}));
+        toast.error(d.error || 'Failed to remove review');
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error('Network error');
     }
   }
 
@@ -193,6 +225,7 @@ export default function AccountPage() {
     { k: 'security', n: 'Password & Security', i: Lock },
     { k: 'orders', n: 'Orders', i: Package },
     { k: 'returns', n: 'Returns & Refunds', i: RotateCcw },
+    { k: 'reviews', n: 'My Reviews', i: Star },
     { k: 'addresses', n: 'Addresses', i: MapPin },
     { k: 'wishlist', n: 'Wishlist', i: Heart }
   ];
@@ -432,6 +465,11 @@ export default function AccountPage() {
                                 <Clock size={10} className="text-[#9C6B30]" /> Return Eligible (30m)
                               </span>
                             )}
+                            {o.status === 'delivered' && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-[9px] sm:text-[10px] font-semibold tracking-wider uppercase rounded-full bg-[#FAF6EF] text-[#9C6B30] border border-[#9C6B30]/30 hover:bg-[#9C6B30] hover:text-white transition">
+                                <Star size={10} className="fill-amber-400 stroke-amber-500" /> Rate & Review
+                              </span>
+                            )}
                           </div>
                           <div className="font-display text-lg sm:text-xl text-[#1A1A1A] mt-0.5">{formatINR(o.amounts.total)}</div>
                         </div>
@@ -539,6 +577,122 @@ export default function AccountPage() {
                         <Link href={`/orders/${ret.orderId}`} className="text-[10px] sm:text-[11px] uppercase tracking-wider text-[#9C6B30] hover:underline font-semibold flex items-center gap-1">
                           View Order Details <ChevronRight size={12} />
                         </Link>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'reviews' && (
+            <div className="border border-[#E8E8E8] rounded-xl p-4 sm:p-6 md:p-8">
+              <div className="flex flex-col xs:flex-row justify-between items-start xs:items-center gap-2 mb-1">
+                <div>
+                  <div className="font-display text-xl xs:text-2xl sm:text-3xl text-[#1A1A1A]">My Reviews</div>
+                  <p className="text-xs text-neutral-500 mt-1">Verified reviews you have shared on purchased jewellery.</p>
+                </div>
+                <button onClick={loadReviews} className="text-xs text-[#9C6B30] hover:underline flex items-center gap-1 cursor-pointer">
+                  <RotateCcw size={12} /> Refresh
+                </button>
+              </div>
+              <div className="gold-line w-12 mb-6" />
+
+              {reviewsLoading ? (
+                <div className="py-12 flex justify-center text-[#9C6B30]"><Loader2 className="animate-spin" size={24} /></div>
+              ) : reviewsList.length === 0 ? (
+                <div className="text-center py-12 sm:py-16">
+                  <div className="w-14 h-14 sm:w-16 sm:h-16 mx-auto rounded-full bg-[#FAF6EF] flex items-center justify-center text-[#9C6B30] mb-4">
+                    <Star size={24} className="fill-[#9C6B30]/20 stroke-[#9C6B30]" />
+                  </div>
+                  <div className="font-serif-luxe text-base sm:text-lg text-neutral-700">No reviews yet.</div>
+                  <p className="text-xs text-neutral-500 mt-1 max-w-sm mx-auto">
+                    Once you receive a delivered order, you can rate and review your pieces directly from the order page.
+                  </p>
+                  <button onClick={() => setTab('orders')} className="inline-block mt-4 text-[#9C6B30] border-b border-[#9C6B30] pb-0.5 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase cursor-pointer">
+                    View Delivered Orders
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {reviewsList.map(r => (
+                    <div key={r.id} className="border border-[#E8E8E8] rounded-xl p-4 sm:p-5 bg-white hover:border-[#9C6B30]/60 transition space-y-3">
+                      <div className="flex justify-between items-start flex-wrap gap-3">
+                        <div className="flex items-center gap-3">
+                          {r.productImage && (
+                            <img src={r.productImage} alt={r.productName || 'Product'} className="w-14 h-14 rounded-lg object-cover border border-[#E8E8E8] shrink-0" />
+                          )}
+                          <div>
+                            <Link href={`/product/${r.productSlug || r.productId}`} className="font-serif-luxe text-base sm:text-lg text-[#1A1A1A] hover:text-[#9C6B30] font-medium block">
+                              {r.productName || 'Jewellery Item'}
+                            </Link>
+                            <div className="flex items-center gap-2 flex-wrap text-xs text-neutral-500 mt-0.5">
+                              {r.orderNumber && (
+                                <Link href={`/orders/${r.orderId}`} className="hover:text-[#9C6B30] font-mono">
+                                  Order #{r.orderNumber}
+                                </Link>
+                              )}
+                              <span>·</span>
+                              <span>{r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase bg-emerald-50 text-emerald-800 border border-emerald-200">
+                            Verified Buyer
+                          </span>
+                          <span className={`inline-block px-2.5 py-0.5 text-[10px] font-semibold tracking-wider uppercase rounded-full border ${
+                            r.status === 'hidden' ? 'bg-neutral-100 text-neutral-600 border-neutral-200' : 'bg-[#FAF6EF] text-[#9C6B30] border-[#9C6B30]/30'
+                          }`}>
+                            {r.status || 'published'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Rating & Review Content */}
+                      <div className="space-y-1.5 pt-1">
+                        <div className="flex items-center gap-1.5 text-[#D4AF37]">
+                          {[1, 2, 3, 4, 5].map(s => (
+                            <Star key={s} size={14} className={s <= r.rating ? 'fill-[#D4AF37] stroke-[#D4AF37]' : 'text-neutral-300'} />
+                          ))}
+                          <span className="text-xs font-semibold text-neutral-800 ml-1">{r.rating}.0 / 5</span>
+                        </div>
+
+                        {r.title && (
+                          <h4 className="font-medium text-sm sm:text-base text-neutral-900 pt-0.5">{r.title}</h4>
+                        )}
+
+                        <p className="text-xs sm:text-sm text-neutral-700 leading-relaxed italic">
+                          &ldquo;{r.comment}&rdquo;
+                        </p>
+
+                        {Array.isArray(r.images) && r.images.length > 0 && (
+                          <div className="flex gap-2 pt-2">
+                            {r.images.map((imgUrl, i) => (
+                              <a key={i} href={imgUrl} target="_blank" rel="noreferrer">
+                                <img src={imgUrl} alt="Review attachment" className="w-14 h-14 rounded-md object-cover border border-[#E8E8E8]" />
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="pt-2 border-t border-[#E8E8E8] flex justify-between items-center text-xs">
+                        <Link
+                          href={`/orders/${r.orderId}?action=review&itemId=${r.productId}`}
+                          className="text-[#9C6B30] hover:underline font-medium flex items-center gap-1"
+                        >
+                          <Star size={12} className="fill-amber-400 stroke-amber-500" /> Edit in Order
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => deleteCustomerReview(r.id)}
+                          className="text-red-600 hover:text-red-800 flex items-center gap-1 cursor-pointer"
+                        >
+                          <Trash2 size={12} /> Remove Review
+                        </button>
                       </div>
                     </div>
                   ))}

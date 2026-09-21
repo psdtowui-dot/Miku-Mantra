@@ -341,6 +341,22 @@ export default function ProductClient({ initialProduct, slug }) {
                                 ))}
                               </div>
                             )}
+
+                            {r.adminReply && (
+                              <div className="mt-3 p-3.5 bg-[#FAF6EF]/80 border-l-2 border-[#9C6B30] rounded-r-lg text-xs space-y-1">
+                                <div className="font-semibold text-[#9C6B30] flex items-center justify-between flex-wrap gap-1">
+                                  <span>Response from {typeof r.adminReply === 'object' ? (r.adminReply.repliedBy || 'MikuMantra Atelier') : 'MikuMantra Atelier'}</span>
+                                  {typeof r.adminReply === 'object' && r.adminReply.repliedAt && (
+                                    <span className="text-[10px] text-neutral-400 font-normal">
+                                      {new Date(r.adminReply.repliedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-neutral-700 leading-relaxed font-serif-luxe text-xs sm:text-sm">
+                                  {typeof r.adminReply === 'object' ? r.adminReply.comment : r.adminReply}
+                                </p>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>

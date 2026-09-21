@@ -4,7 +4,7 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/use-auth';
 import { formatINR } from '@/lib/products';
-import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft } from 'lucide-react';
+import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft, Star, Edit3, Trash2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 
@@ -77,12 +77,25 @@ function OrderInner() {
   const sp = useSearchParams();
   const success = sp.get('success') === '1';
   const actionParam = sp.get('action');
+  const itemIdParam = sp.get('itemId');
 
   const [order, setOrder] = useState(null);
   const [returnRequest, setReturnRequest] = useState(null);
   const [loading, setLoading] = useState(true);
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
+
+  // Reviews State
+  const [orderReviews, setOrderReviews] = useState([]);
+  const [customerReviewsEnabled, setCustomerReviewsEnabled] = useState(true);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [reviewTargetItem, setReviewTargetItem] = useState(null);
+  const [existingReview, setExistingReview] = useState(null);
+  const [reviewForm, setReviewForm] = useState({ rating: 5, title: '', comment: '', image: '' });
+  const [hoverRating, setHoverRating] = useState(0);
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const [deletingReview, setDeletingReview] = useState(false);
+  const [reviewModalErr, setReviewModalErr] = useState('');
 
   // Live timer ticker for 30-minute return countdown
   const [nowTime, setNowTime] = useState(Date.now());
@@ -297,6 +310,129 @@ function OrderInner() {
     }
   };
 
+  // Customer Reviews Handlers
+  const openReviewModal = (item) => {
+    setReviewTargetItem(item);
+    const existing = orderReviews.find(r => r.productId === item.id || r.productSlug === item.slug);
+    setExistingReview(existing || null);
+    if (existing) {
+      setReviewForm({
+        rating: existing.rating || 5,
+        title: existing.title || '',
+        comment: existing.comment || '',
+        image: Array.isArray(existing.images) && existing.images.length > 0 ? existing.images[0] : (existing.image || '')
+      });
+    } else {
+      setReviewForm({
+        rating: 5,
+        title: '',
+        comment: '',
+        image: ''
+      });
+    }
+    setHoverRating(0);
+    setReviewModalErr('');
+    setShowReviewModal(true);
+  };
+
+  const handleSubmitReview = async (e) => {
+    e.preventDefault();
+    if (!customerReviewsEnabled) {
+      setReviewModalErr('Customer reviews are currently disabled.');
+      return;
+    }
+    if (!reviewForm.comment.trim()) {
+      setReviewModalErr('Please share a few words about your experience.');
+      return;
+    }
+
+    setSubmittingReview(true);
+    setReviewModalErr('');
+
+    try {
+      if (existingReview) {
+        // Update existing review
+        const r = await fetch(`/api/reviews/${existingReview.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            rating: reviewForm.rating,
+            title: reviewForm.title.trim(),
+            comment: reviewForm.comment.trim(),
+            image: reviewForm.image.trim()
+          })
+        });
+        const d = await r.json();
+        if (r.ok && d.review) {
+          toast.success('Your review has been updated!');
+          setOrderReviews(prev => prev.map(rev => rev.id === existingReview.id ? d.review : rev));
+          setShowReviewModal(false);
+        } else {
+          setReviewModalErr(d.error || 'Failed to update review.');
+          toast.error(d.error || 'Review update failed');
+        }
+      } else {
+        // Create new review
+        const r = await fetch('/api/reviews', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            productId: reviewTargetItem.id,
+            orderId: order.id,
+            rating: reviewForm.rating,
+            title: reviewForm.title.trim(),
+            comment: reviewForm.comment.trim(),
+            image: reviewForm.image.trim()
+          })
+        });
+        const d = await r.json();
+        if (r.ok && d.review) {
+          toast.success('Thank you! Your review has been submitted.');
+          setOrderReviews(prev => [...prev, d.review]);
+          setShowReviewModal(false);
+        } else {
+          setReviewModalErr(d.error || 'Failed to submit review.');
+          toast.error(d.error || 'Review submission failed');
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      setReviewModalErr('Network error. Please try again.');
+      toast.error('Network error');
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
+
+  const handleDeleteReview = async () => {
+    if (!existingReview || deletingReview) return;
+    if (!confirm('Are you sure you want to delete your review?')) return;
+    setDeletingReview(true);
+    try {
+      const r = await fetch(`/api/reviews/${existingReview.id}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+      if (r.ok) {
+        toast.success('Review deleted successfully');
+        setOrderReviews(prev => prev.filter(rev => rev.id !== existingReview.id));
+        setShowReviewModal(false);
+      } else {
+        const d = await r.json().catch(() => ({}));
+        setReviewModalErr(d.error || 'Failed to delete review');
+        toast.error(d.error || 'Failed to delete review');
+      }
+    } catch (err) {
+      console.error(err);
+      setReviewModalErr('Network error. Please try again.');
+      toast.error('Network error');
+    } finally {
+      setDeletingReview(false);
+    }
+  };
+
   useEffect(() => {
     if (!authLoading && !user) {
       router.push(`/login?redirect=/orders/${id}`);
@@ -312,6 +448,8 @@ function OrderInner() {
         if (r.ok) {
           setOrder(d.order);
           setReturnRequest(d.returnRequest || null);
+          setOrderReviews(d.reviews || []);
+          setCustomerReviewsEnabled(d.customerReviewsEnabled ?? true);
         } else {
           if (r.status === 401) {
             router.push(`/login?redirect=/orders/${id}`);
@@ -360,6 +498,19 @@ function OrderInner() {
       openReturnModal();
     }
   }, [order, actionParam, canRequestReturn]);
+
+  // Auto-open review modal if action=review query parameter exists on delivered order
+  useEffect(() => {
+    if (order && actionParam === 'review' && order.status === 'delivered' && !showReviewModal) {
+      const target = itemIdParam
+        ? order.items?.find(it => it.id === itemIdParam || it.slug === itemIdParam)
+        : (order.items?.find(it => !orderReviews.some(r => r.productId === it.id || r.productSlug === it.slug)) || order.items?.[0]);
+
+      if (target) {
+        openReviewModal(target);
+      }
+    }
+  }, [order, actionParam, itemIdParam, orderReviews, showReviewModal]);
 
   if (authLoading || loading) return <div className="h-96 flex items-center justify-center"><Loader2 className="animate-spin text-[#9C6B30]" /></div>;
   if (!user) return null;
@@ -616,9 +767,96 @@ function OrderInner() {
             </div>
           </div>
 
-          <div className="space-y-3">{order.items.map((it, i) => (
-            <div key={i} className="flex gap-3 sm:gap-4 border border-[#E8E8E8] rounded-lg p-3"><img loading="lazy" src={it.image} className="w-16 h-16 sm:w-20 sm:h-20 rounded object-cover shrink-0" /><div className="flex-1 min-w-0"><Link href={`/product/${it.slug}`} className="font-serif-luxe text-base sm:text-lg hover:text-[#9C6B30] truncate block">{it.name}</Link><div className="text-xs text-neutral-500">Quantity: {it.qty}</div></div><div className="font-medium text-xs sm:text-sm shrink-0">{formatINR(it.price * it.qty)}</div></div>
-          ))}</div>
+          {/* Customer Reviews Callout Banner when Delivered */}
+          {order.status === 'delivered' && (
+            <div className="mb-6 p-4 sm:p-5 bg-gradient-to-br from-[#FAF6EF] via-white to-[#FAF6EF]/60 border border-[#E8E8E8] rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-full bg-[#9C6B30]/10 flex items-center justify-center text-[#9C6B30] shrink-0 mt-0.5">
+                  <Star size={18} className="fill-[#9C6B30]/20 stroke-[#9C6B30]" />
+                </div>
+                <div>
+                  <h4 className="font-display text-sm sm:text-base text-[#1A1A1A]">Customer Reviews</h4>
+                  <p className="text-xs text-neutral-500 mt-0.5">
+                    {customerReviewsEnabled
+                      ? 'Share your thoughts on the pieces in this delivered order to guide other jewellery collectors.'
+                      : 'Customer reviews are currently paused by the atelier.'}
+                  </p>
+                </div>
+              </div>
+              {customerReviewsEnabled && (
+                <div className="text-xs text-[#9C6B30] font-medium shrink-0 self-end sm:self-center">
+                  {orderReviews.length} of {order.items.length} item(s) reviewed
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {order.items.map((it, i) => {
+              const itemReview = orderReviews.find(r => r.productId === it.id || r.productSlug === it.slug);
+              return (
+                <div key={i} className="border border-[#E8E8E8] rounded-lg p-3 sm:p-4 transition hover:border-neutral-300">
+                  <div className="flex gap-3 sm:gap-4 items-start">
+                    <img loading="lazy" src={it.image} alt={it.name} className="w-16 h-16 sm:w-20 sm:h-20 rounded object-cover shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <Link href={`/product/${it.slug}`} className="font-serif-luxe text-base sm:text-lg hover:text-[#9C6B30] truncate block">
+                        {it.name}
+                      </Link>
+                      <div className="text-xs text-neutral-500 mt-0.5">Quantity: {it.qty}</div>
+                      <div className="font-medium text-xs sm:text-sm text-[#1A1A1A] mt-1 sm:hidden">
+                        {formatINR(it.price * it.qty)}
+                      </div>
+                    </div>
+                    <div className="font-medium text-xs sm:text-sm shrink-0 hidden sm:block">
+                      {formatINR(it.price * it.qty)}
+                    </div>
+                  </div>
+
+                  {/* Customer Review Section for this item */}
+                  {order.status === 'delivered' && (
+                    <div className="mt-3 pt-3 border-t border-[#E8E8E8] flex flex-wrap items-center justify-between gap-2">
+                      {itemReview ? (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold tracking-wider uppercase bg-amber-50 text-amber-900 border border-amber-200">
+                            <span className="flex text-[#D4AF37]">
+                              {[1, 2, 3, 4, 5].map(s => (
+                                <Star key={s} size={11} className={s <= itemReview.rating ? 'fill-[#D4AF37] stroke-[#D4AF37]' : 'text-neutral-300'} />
+                              ))}
+                            </span>
+                            <span>{itemReview.rating}.0 · Reviewed</span>
+                          </span>
+                          {itemReview.title && (
+                            <span className="text-xs text-neutral-600 font-medium italic truncate max-w-[200px] sm:max-w-xs">
+                              &ldquo;{itemReview.title}&rdquo;
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-neutral-500">
+                          {customerReviewsEnabled ? 'Have you worn this piece?' : 'Reviews paused'}
+                        </div>
+                      )}
+
+                      {customerReviewsEnabled && (
+                        <button
+                          type="button"
+                          onClick={() => openReviewModal(it)}
+                          className={`px-3 py-1.5 rounded-md text-[11px] tracking-wider uppercase font-medium transition cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                            itemReview
+                              ? 'bg-neutral-100 hover:bg-neutral-200 text-neutral-800'
+                              : 'bg-[#1A1A1A] hover:bg-[#9C6B30] text-white shadow-xs'
+                          }`}
+                        >
+                          <Star size={12} className={itemReview ? 'fill-amber-400 stroke-amber-500' : ''} />
+                          {itemReview ? 'View / Edit Review' : 'Rate & Review'}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
 
           <div className="mt-6 border-t border-[#E8E8E8] pt-4 space-y-1 text-xs sm:text-sm max-w-xs ml-auto">
             <div className="flex justify-between"><span className="text-neutral-500">Subtotal</span><span>{formatINR(order.amounts.subtotal)}</span></div>
@@ -987,6 +1225,198 @@ function OrderInner() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Customer Review Modal */}
+      {showReviewModal && reviewTargetItem && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+          onClick={() => !submittingReview && !deletingReview && setShowReviewModal(false)}
+        >
+          <div
+            className="bg-white text-[#1A1A1A] w-full max-w-lg rounded-xl border border-neutral-200 overflow-hidden shadow-2xl my-6"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="bg-[#1A1A1A] text-white p-4 sm:p-5 flex justify-between items-center">
+              <div>
+                <div className="text-[10px] tracking-widest uppercase text-[#9C6B30] font-semibold">
+                  {existingReview ? 'Update Your Review' : 'Rate & Review Item'}
+                </div>
+                <h3 className="font-display text-lg sm:text-xl font-light">
+                  {existingReview ? 'Edit Review' : 'Customer Review'}
+                </h3>
+              </div>
+              <button
+                disabled={submittingReview || deletingReview}
+                onClick={() => setShowReviewModal(false)}
+                className="text-neutral-400 hover:text-white transition p-1 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Target Item summary */}
+            <div className="p-4 sm:px-6 bg-[#FAF6EF]/60 border-b border-[#E8E8E8] flex items-center gap-3">
+              <img
+                src={reviewTargetItem.image}
+                alt={reviewTargetItem.name}
+                className="w-12 h-12 rounded object-cover border border-[#E8E8E8] shrink-0"
+              />
+              <div className="min-w-0">
+                <div className="font-serif-luxe text-sm sm:text-base text-[#1A1A1A] truncate">
+                  {reviewTargetItem.name}
+                </div>
+                <div className="text-[11px] text-neutral-500 mt-0.5">
+                  Order #{order.orderNumber}
+                </div>
+              </div>
+            </div>
+
+            {reviewModalErr && (
+              <div className="mx-4 sm:mx-6 mt-4 p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-md flex items-center gap-2">
+                <AlertTriangle size={14} className="shrink-0 text-red-500" />
+                <span>{reviewModalErr}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmitReview} className="p-4 sm:p-6 space-y-4">
+              {/* Star Rating */}
+              <div>
+                <label className="block text-xs font-medium text-neutral-800 mb-1.5 uppercase tracking-wider">
+                  Overall Rating *
+                </label>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1">
+                    {[1, 2, 3, 4, 5].map(s => {
+                      const active = (hoverRating || reviewForm.rating) >= s;
+                      return (
+                        <button
+                          key={s}
+                          type="button"
+                          onMouseEnter={() => setHoverRating(s)}
+                          onMouseLeave={() => setHoverRating(0)}
+                          onClick={() => {
+                            setReviewForm(prev => ({ ...prev, rating: s }));
+                            setReviewModalErr('');
+                          }}
+                          className="p-1 text-neutral-300 hover:scale-110 transition-transform cursor-pointer focus:outline-none"
+                        >
+                          <Star
+                            size={26}
+                            className={active ? 'fill-[#D4AF37] stroke-[#D4AF37]' : 'stroke-neutral-300'}
+                          />
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <span className="text-xs font-semibold text-[#9C6B30] ml-2">
+                    {(() => {
+                      const cur = hoverRating || reviewForm.rating;
+                      if (cur === 5) return '5 / 5 · Exceptional';
+                      if (cur === 4) return '4 / 5 · Very Good';
+                      if (cur === 3) return '3 / 5 · Good';
+                      if (cur === 2) return '2 / 5 · Fair';
+                      return '1 / 5 · Poor';
+                    })()}
+                  </span>
+                </div>
+              </div>
+
+              {/* Review Title */}
+              <div>
+                <label className="block text-xs font-medium text-neutral-800 mb-1 uppercase tracking-wider">
+                  Headline / Title (Optional)
+                </label>
+                <input
+                  type="text"
+                  maxLength={150}
+                  value={reviewForm.title}
+                  onChange={e => {
+                    setReviewForm(prev => ({ ...prev, title: e.target.value }));
+                    setReviewModalErr('');
+                  }}
+                  placeholder="e.g. Stunning craftsmanship and diamond sparkle!"
+                  className="w-full px-3 py-2 border border-[#E8E8E8] rounded-md text-xs sm:text-sm focus:outline-none focus:border-[#9C6B30]"
+                />
+              </div>
+
+              {/* Review Comment */}
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-xs font-medium text-neutral-800 uppercase tracking-wider">
+                    Detailed Review *
+                  </label>
+                  <span className="text-[10px] text-neutral-400">
+                    {reviewForm.comment.length}/1000
+                  </span>
+                </div>
+                <textarea
+                  rows={4}
+                  maxLength={1000}
+                  required
+                  value={reviewForm.comment}
+                  onChange={e => {
+                    setReviewForm(prev => ({ ...prev, comment: e.target.value }));
+                    setReviewModalErr('');
+                  }}
+                  placeholder="Share your experience with this jewellery piece: its design, finishing, comfort, weight, and luster..."
+                  className="w-full px-3 py-2 border border-[#E8E8E8] rounded-md text-xs sm:text-sm focus:outline-none focus:border-[#9C6B30]"
+                />
+              </div>
+
+              {/* Optional Photo URL */}
+              <div>
+                <label className="block text-xs font-medium text-neutral-800 mb-1 uppercase tracking-wider">
+                  Photo URL (Optional)
+                </label>
+                <input
+                  type="url"
+                  value={reviewForm.image}
+                  onChange={e => setReviewForm(prev => ({ ...prev, image: e.target.value }))}
+                  placeholder="https://example.com/my-jewellery-photo.jpg"
+                  className="w-full px-3 py-2 border border-[#E8E8E8] rounded-md text-xs sm:text-sm focus:outline-none focus:border-[#9C6B30]"
+                />
+                <p className="text-[10px] text-neutral-400 mt-1">
+                  Add an image link to show off your piece being worn.
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-[#E8E8E8]">
+                {existingReview ? (
+                  <button
+                    type="button"
+                    disabled={deletingReview || submittingReview}
+                    onClick={handleDeleteReview}
+                    className="text-xs text-red-600 hover:text-red-800 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                  >
+                    {deletingReview ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                    Delete Review
+                  </button>
+                ) : <div />}
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={submittingReview || deletingReview}
+                    onClick={() => setShowReviewModal(false)}
+                    className="px-4 py-2 border border-[#E8E8E8] text-neutral-700 text-xs uppercase tracking-wider rounded-md hover:bg-neutral-50 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submittingReview || deletingReview}
+                    className="px-5 py-2 bg-[#1A1A1A] text-white text-xs uppercase tracking-wider rounded-md hover:bg-[#9C6B30] transition font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    {submittingReview ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                    {existingReview ? 'Update Review' : 'Submit Review'}
+                  </button>
+                </div>
+              </div>
+            </form>
           </div>
         </div>
       )}

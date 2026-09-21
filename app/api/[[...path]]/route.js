@@ -2046,7 +2046,15 @@ async function handleRoute(request, { params }) {
         orderId: id,
         returnStatus: { $in: ['REQUESTED', 'APPROVED', 'PROCESSING', 'REFUND_INITIATED', 'REFUNDED', 'REJECTED'] }
       });
-      return ok({ order: clean(o), returnRequest: returnDoc ? clean(returnDoc) : null });
+      const orderReviews = await db.collection('reviews').find({ orderId: id }).toArray();
+      const siteDoc = await db.collection('site_settings').findOne({ id: 'default' });
+      const customerReviewsEnabled = siteDoc?.customerReviewsEnabled ?? true;
+      return ok({
+        order: clean(o),
+        returnRequest: returnDoc ? clean(returnDoc) : null,
+        reviews: orderReviews.map(clean),
+        customerReviewsEnabled
+      });
     }
 
     // ============ USER RETURN REQUESTS ============
@@ -2563,15 +2571,19 @@ async function handleRoute(request, { params }) {
         return err('You have already submitted a review for this delivered item', 400);
       }
 
+      const targetItem = matchedOrder.items?.find(it => targetIds.includes(it.id));
       const ratingVal = Math.min(5, Math.max(1, Number(b.rating) || 5));
       const r = {
         id: uuidv4(),
         productId: prod?.id || b.productId,
-        productSlug: prod?.slug || b.productId,
+        productSlug: prod?.slug || targetItem?.slug || b.productId,
+        productName: targetItem?.name || prod?.name || 'Fine Jewellery Piece',
+        productImage: targetItem?.image || prod?.images?.[0] || '',
         userId: u.id,
         reviewerName: u.name || 'Verified Customer',
         reviewerEmail: u.email || '',
         orderId: matchedOrder.id,
+        orderNumber: matchedOrder.orderNumber || '',
         rating: ratingVal,
         title: (b.title || '').trim().slice(0, 150),
         comment: (b.comment || '').trim().slice(0, 1000),
@@ -2587,6 +2599,57 @@ async function handleRoute(request, { params }) {
       await recalculateProductRating(db, r.productId);
 
       return ok({ review: clean(r) });
+    }
+
+    if ((route === '/reviews/mine' || route === '/reviews/user') && method === 'GET') {
+      const u = await getCurrentUser(db, request);
+      if (!u) return err('Sign in to view your reviews', 401);
+      const list = await db.collection('reviews').find({ userId: u.id }).sort({ createdAt: -1 }).toArray();
+      return ok({ reviews: list.map(clean) });
+    }
+
+    if (route.startsWith('/reviews/') && !route.startsWith('/reviews/product/') && method === 'PUT') {
+      const u = await getCurrentUser(db, request);
+      if (!u) return err('Not authenticated', 401);
+      const id = route.split('/')[2];
+      const r = await db.collection('reviews').findOne({ id });
+      if (!r) return err('Review not found', 404);
+      if (r.userId !== u.id && u.role !== 'admin') {
+        return err('Unauthorized to edit this review', 403);
+      }
+
+      const b = await request.json().catch(() => ({}));
+      const updateData = { updatedAt: new Date() };
+
+      if (b.rating !== undefined) updateData.rating = Math.min(5, Math.max(1, Number(b.rating) || 5));
+      if (b.title !== undefined) updateData.title = (b.title || '').trim().slice(0, 150);
+      if (b.comment !== undefined) updateData.comment = (b.comment || '').trim().slice(0, 1000);
+      if (b.image !== undefined) updateData.images = b.image ? [b.image] : [];
+      if (b.images !== undefined) updateData.images = Array.isArray(b.images) ? b.images : (b.images ? [b.images] : []);
+
+      await db.collection('reviews').updateOne({ id }, { $set: updateData });
+      const updated = await db.collection('reviews').findOne({ id });
+      if (r.productId) {
+        await recalculateProductRating(db, r.productId);
+      }
+      return ok({ review: clean(updated) });
+    }
+
+    if (route.startsWith('/reviews/') && !route.startsWith('/reviews/product/') && method === 'DELETE') {
+      const u = await getCurrentUser(db, request);
+      if (!u) return err('Not authenticated', 401);
+      const id = route.split('/')[2];
+      const r = await db.collection('reviews').findOne({ id });
+      if (!r) return err('Review not found', 404);
+      if (r.userId !== u.id && u.role !== 'admin') {
+        return err('Unauthorized to delete this review', 403);
+      }
+
+      await db.collection('reviews').deleteOne({ id });
+      if (r.productId) {
+        await recalculateProductRating(db, r.productId);
+      }
+      return ok({ ok: true, success: true });
     }
 
     if (route.startsWith('/reviews/product/') && method === 'GET') {
@@ -4171,6 +4234,10 @@ async function handleRoute(request, { params }) {
         const search = q.get('search')?.trim();
         const statusFilter = q.get('status')?.trim();
         const productIdFilter = q.get('productId')?.trim();
+        const ratingFilter = q.get('rating')?.trim();
+        const typeFilter = q.get('type')?.trim();
+        const repliedFilter = q.get('replied')?.trim();
+        const sortBy = q.get('sort')?.trim() || 'newest';
 
         let query = {};
         if (statusFilter && statusFilter !== 'ALL') {
@@ -4187,6 +4254,31 @@ async function handleRoute(request, { params }) {
           query.productId = { $in: targetIds };
         }
 
+        if (ratingFilter && ratingFilter !== 'ALL') {
+          const rNum = Number(ratingFilter);
+          if (!isNaN(rNum)) query.rating = rNum;
+        }
+
+        if (typeFilter && typeFilter !== 'ALL') {
+          if (typeFilter === 'customer') {
+            query.orderId = { $exists: true, $ne: null };
+          } else if (typeFilter === 'admin') {
+            query.$or = [{ orderId: { $exists: false } }, { orderId: null }, { userId: 'admin' }];
+          }
+        }
+
+        if (repliedFilter && repliedFilter !== 'ALL') {
+          if (repliedFilter === 'replied') {
+            query['adminReply.comment'] = { $exists: true, $ne: '' };
+          } else if (repliedFilter === 'unreplied') {
+            query.$or = [
+              { adminReply: { $exists: false } },
+              { adminReply: null },
+              { 'adminReply.comment': '' }
+            ];
+          }
+        }
+
         if (search) {
           const escaped = search.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
           const reg = { $regex: escaped, $options: 'i' };
@@ -4196,7 +4288,9 @@ async function handleRoute(request, { params }) {
             { comment: reg },
             { productId: reg },
             { productSlug: reg },
-            { reviewerEmail: reg }
+            { reviewerEmail: reg },
+            { orderNumber: reg },
+            { orderId: reg }
           ];
 
           if (query.$or) {
@@ -4206,8 +4300,46 @@ async function handleRoute(request, { params }) {
           }
         }
 
-        const list = await db.collection('reviews').find(query).sort({ createdAt: -1 }).toArray();
+        let sortObj = { createdAt: -1 };
+        if (sortBy === 'oldest') sortObj = { createdAt: 1 };
+        else if (sortBy === 'rating_high') sortObj = { rating: -1, createdAt: -1 };
+        else if (sortBy === 'rating_low') sortObj = { rating: 1, createdAt: -1 };
+
+        const list = await db.collection('reviews').find(query).sort(sortObj).toArray();
         return ok({ reviews: list.map(clean) });
+      }
+
+      if (sub === 'reviews/bulk' && method === 'POST') {
+        const b = await request.json().catch(() => ({}));
+        const { action, reviewIds } = b;
+        if (!Array.isArray(reviewIds) || reviewIds.length === 0) {
+          return err('No review IDs provided for bulk action', 400);
+        }
+
+        const reviews = await db.collection('reviews').find({ id: { $in: reviewIds } }).toArray();
+        const productIds = Array.from(new Set(reviews.map(r => r.productId).filter(Boolean)));
+
+        if (action === 'publish') {
+          await db.collection('reviews').updateMany(
+            { id: { $in: reviewIds } },
+            { $set: { status: 'published', approved: true, updatedAt: new Date() } }
+          );
+        } else if (action === 'hide') {
+          await db.collection('reviews').updateMany(
+            { id: { $in: reviewIds } },
+            { $set: { status: 'hidden', approved: false, updatedAt: new Date() } }
+          );
+        } else if (action === 'delete') {
+          await db.collection('reviews').deleteMany({ id: { $in: reviewIds } });
+        } else {
+          return err('Invalid bulk action', 400);
+        }
+
+        for (const pid of productIds) {
+          await recalculateProductRating(db, pid);
+        }
+
+        return ok({ success: true, count: reviews.length, action });
       }
 
       if (sub === 'reviews' && method === 'POST') {
@@ -4222,6 +4354,9 @@ async function handleRoute(request, { params }) {
           id: uuidv4(),
           productId: prod?.id || b.productId,
           productSlug: prod?.slug || b.productId,
+          productName: prod?.name || 'Fine Jewellery Piece',
+          productImage: prod?.images?.[0] || '',
+          orderNumber: (b.orderNumber || '').trim(),
           userId: 'admin',
           reviewerName: (b.reviewerName || 'MikuMantra Curator').trim(),
           reviewerEmail: (b.reviewerEmail || 'admin@mikumantra.com').trim(),
@@ -4236,6 +4371,14 @@ async function handleRoute(request, { params }) {
           updatedAt: new Date()
         };
 
+        if (b.adminReply && typeof b.adminReply === 'string' && b.adminReply.trim()) {
+          r.adminReply = {
+            comment: b.adminReply.trim(),
+            repliedAt: new Date(),
+            repliedBy: admin?.name || 'MikuMantra Atelier'
+          };
+        }
+
         await db.collection('reviews').insertOne(r);
         await recalculateProductRating(db, r.productId);
 
@@ -4249,6 +4392,7 @@ async function handleRoute(request, { params }) {
 
         const b = await request.json();
         const updateData = { updatedAt: new Date() };
+        const unsetData = {};
 
         if (b.status !== undefined) {
           updateData.status = b.status === 'hidden' ? 'hidden' : 'published';
@@ -4262,8 +4406,28 @@ async function handleRoute(request, { params }) {
         if (b.images !== undefined) updateData.images = Array.isArray(b.images) ? b.images : [b.images];
         if (b.image !== undefined) updateData.images = [b.image];
         if (b.verifiedPurchase !== undefined) updateData.verifiedPurchase = Boolean(b.verifiedPurchase);
+        if (b.orderNumber !== undefined) updateData.orderNumber = b.orderNumber.trim();
+        if (b.orderId !== undefined) updateData.orderId = b.orderId.trim();
 
-        await db.collection('reviews').updateOne({ id }, { $set: updateData });
+        if (b.adminReply !== undefined) {
+          if (b.adminReply === null || b.adminReply === '' || (typeof b.adminReply === 'object' && !b.adminReply?.comment?.trim())) {
+            unsetData.adminReply = "";
+          } else {
+            const replyComment = typeof b.adminReply === 'object' ? (b.adminReply.comment || '') : b.adminReply;
+            updateData.adminReply = {
+              comment: replyComment.trim(),
+              repliedAt: new Date(),
+              repliedBy: admin?.name || 'MikuMantra Atelier'
+            };
+          }
+        }
+
+        const updateOp = { $set: updateData };
+        if (Object.keys(unsetData).length > 0) {
+          updateOp.$unset = unsetData;
+        }
+
+        await db.collection('reviews').updateOne({ id }, updateOp);
         const updated = await db.collection('reviews').findOne({ id });
         await recalculateProductRating(db, r.productId);
 
