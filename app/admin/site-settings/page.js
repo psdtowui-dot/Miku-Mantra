@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Globe, Upload, Save, Loader2, Image as ImageIcon, Link as LinkIcon, Check, Eye, Truck, Star } from 'lucide-react';
+import Link from 'next/link';
+import { Globe, Upload, Save, Loader2, Image as ImageIcon, Link as LinkIcon, Check, Eye, Truck, Star, CreditCard, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function AdminSiteSettings() {
@@ -170,6 +171,27 @@ export default function AdminSiteSettings() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
         {/* Left Column: Form Controls */}
         <div className="lg:col-span-2 space-y-6">
+
+          {/* Quick Link: Payment Gateways & Razorpay */}
+          <Link
+            href="/admin/payment-settings"
+            className="flex items-center justify-between p-4 bg-gradient-to-r from-[#FAF6EF] to-white border border-[#9C6B30]/30 rounded-xl hover:border-[#9C6B30] transition group shadow-2xs"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-[#9C6B30]/10 text-[#9C6B30] flex items-center justify-center font-bold">
+                <CreditCard size={18} />
+              </div>
+              <div>
+                <div className="text-xs font-bold text-neutral-900 group-hover:text-[#9C6B30] flex items-center gap-1.5 transition">
+                  Manage Payment Gateways &amp; Razorpay CMS
+                  <ArrowRight size={13} className="text-[#9C6B30] transition-transform group-hover:translate-x-1" />
+                </div>
+                <div className="text-[11px] text-neutral-500 mt-0.5">
+                  Enable/remove Razorpay, manage API keys, and configure Cash on Delivery.
+                </div>
+              </div>
+            </div>
+          </Link>
 
           {/* Section 1: General Branding & URLs */}
           <div className="bg-white p-4 xs:p-6 rounded-xl border border-neutral-200 shadow-xs space-y-4">

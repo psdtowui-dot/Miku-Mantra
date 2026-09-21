@@ -106,6 +106,20 @@ const DEFAULT_SITE_SETTINGS = {
     freeShippingThreshold: 2000,
     standardShippingCharge: 500
   },
+  paymentSettings: {
+    razorpay: {
+      enabled: true,
+      testMode: true,
+      keyId: '',
+      keySecret: '',
+      webhookSecret: '',
+      businessName: 'MikuMantra Fine Jewellery',
+      themeColor: '#9C6B30'
+    },
+    cod: {
+      enabled: true
+    }
+  },
   customerReviewsEnabled: true
 };
 
@@ -1058,12 +1072,31 @@ async function handleRoute(request, { params }) {
         settings = { id: 'default', ...DEFAULT_SITE_SETTINGS, createdAt: new Date() };
         await db.collection('site_settings').insertOne(settings);
       }
+      const rawPay = settings?.paymentSettings || DEFAULT_SITE_SETTINGS.paymentSettings;
+      const effectiveKeyId = (rawPay?.razorpay?.keyId && rawPay.razorpay.keyId.trim())
+        ? rawPay.razorpay.keyId.trim()
+        : (process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || process.env.RAZORPAY_KEY_ID || '');
+      const isMockKey = !effectiveKeyId || effectiveKeyId.includes('mock') || !effectiveKeyId.startsWith('rzp_');
+
       const r = clean({
         ...DEFAULT_SITE_SETTINGS,
         ...settings,
         shipping: {
           ...DEFAULT_SITE_SETTINGS.shipping,
           ...((settings && settings.shipping) || {})
+        },
+        paymentSettings: {
+          razorpay: {
+            enabled: rawPay?.razorpay?.enabled !== false,
+            testMode: rawPay?.razorpay?.testMode ?? true,
+            keyId: effectiveKeyId,
+            isMock: isMockKey,
+            businessName: rawPay?.razorpay?.businessName || 'MikuMantra Fine Jewellery',
+            themeColor: rawPay?.razorpay?.themeColor || '#9C6B30'
+          },
+          cod: {
+            enabled: rawPay?.cod?.enabled !== false
+          }
         }
       });
       cacheSet('site_settings', r, 300000);
@@ -1754,6 +1787,15 @@ async function handleRoute(request, { params }) {
       }
 
       let siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+      const chosenPayment = body.payment || 'cod';
+      const payConfig = siteSettings?.paymentSettings;
+      if (chosenPayment === 'razorpay' && payConfig?.razorpay?.enabled === false) {
+        return err('Razorpay payment method is currently disabled by store administrator.', 400);
+      }
+      if (chosenPayment === 'cod' && payConfig?.cod?.enabled === false) {
+        return err('Cash on Delivery payment method is currently disabled by store administrator.', 400);
+      }
+
       const shippingConfig = {
         ...DEFAULT_SITE_SETTINGS.shipping,
         ...((siteSettings && siteSettings.shipping) || {})
@@ -1800,6 +1842,7 @@ async function handleRoute(request, { params }) {
         status: 'confirmed',
         statusHistory: [{ status: 'confirmed', at: now, note: 'Order placed successfully.' }],
         razorpayPaymentId: body.razorpayPaymentId || null,
+        razorpayOrderId: body.razorpayOrderId || null,
         placedAt: now,
         estimatedDelivery: new Date(Date.now() + 5 * 86400 * 1000)
       };
@@ -2156,7 +2199,8 @@ async function handleRoute(request, { params }) {
       try {
         const bodyText = await request.text();
         const signature = request.headers.get('x-razorpay-signature');
-        const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+        const siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+        const webhookSecret = (siteSettings?.paymentSettings?.razorpay?.webhookSecret && siteSettings.paymentSettings.razorpay.webhookSecret.trim()) || process.env.RAZORPAY_WEBHOOK_SECRET;
 
         if (webhookSecret && signature) {
           const expectedSig = crypto.createHmac('sha256', webhookSecret).update(bodyText).digest('hex');
@@ -2166,6 +2210,56 @@ async function handleRoute(request, { params }) {
         }
 
         const event = JSON.parse(bodyText);
+
+        // 1. Payment & Order Success Events
+        if (event.event === 'payment.captured' || event.event === 'order.paid') {
+          const paymentEntity = event?.payload?.payment?.entity;
+          const orderEntity = event?.payload?.order?.entity;
+          const rzpPaymentId = paymentEntity?.id;
+          const rzpOrderId = paymentEntity?.order_id || orderEntity?.id;
+
+          if (rzpPaymentId || rzpOrderId) {
+            const query = {
+              $or: [
+                ...(rzpOrderId ? [{ razorpayOrderId: rzpOrderId }] : []),
+                ...(rzpPaymentId ? [{ razorpayPaymentId: rzpPaymentId }] : [])
+              ]
+            };
+            const orderDoc = await db.collection('orders').findOne(query);
+            if (orderDoc) {
+              await db.collection('orders').updateOne(
+                { id: orderDoc.id },
+                {
+                  $set: {
+                    paymentStatus: 'paid',
+                    razorpayPaymentId: rzpPaymentId || orderDoc.razorpayPaymentId,
+                    updatedAt: new Date()
+                  }
+                }
+              );
+            }
+          }
+        } else if (event.event === 'payment.failed') {
+          const paymentEntity = event?.payload?.payment?.entity;
+          const rzpOrderId = paymentEntity?.order_id;
+          if (rzpOrderId) {
+            const orderDoc = await db.collection('orders').findOne({ razorpayOrderId: rzpOrderId });
+            if (orderDoc && orderDoc.paymentStatus !== 'paid') {
+              await db.collection('orders').updateOne(
+                { id: orderDoc.id },
+                {
+                  $set: {
+                    paymentStatus: 'failed',
+                    paymentFailureReason: paymentEntity?.error_description || 'Payment failed via gateway',
+                    updatedAt: new Date()
+                  }
+                }
+              );
+            }
+          }
+        }
+
+        // 2. Refund Events
         const payload = event?.payload?.refund?.entity;
         if (payload) {
           const gatewayRefundId = payload.id;
@@ -2230,16 +2324,95 @@ async function handleRoute(request, { params }) {
     }
 
 
-    // ============ RAZORPAY (MOCK MODE) ============
+    // ============ RAZORPAY PAYMENT GATEWAY ============
     if (route === '/payment/razorpay/order' && method === 'POST') {
-      const { amount } = await request.json()
-      const id = 'order_MOCK' + Math.random().toString(36).slice(2, 12)
-      return ok({ id, amount: amount * 100, currency: 'INR', key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || 'rzp_test_mockkey', mock: true })
+      const { amount } = await request.json();
+      if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
+        return err('Valid order amount is required.', 400);
+      }
+
+      const siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+      const rzpConfig = siteSettings?.paymentSettings?.razorpay;
+      if (rzpConfig && rzpConfig.enabled === false) {
+        return err('Razorpay payment gateway is currently disabled by store administrator.', 400);
+      }
+
+      const keyId = (rzpConfig?.keyId && rzpConfig.keyId.trim())
+        || process.env.RAZORPAY_KEY_ID
+        || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID
+        || '';
+      const keySecret = (rzpConfig?.keySecret && rzpConfig.keySecret.trim())
+        || process.env.RAZORPAY_KEY_SECRET
+        || '';
+
+      const isRealKeys = keyId && keySecret && !keyId.includes('mock') && keyId.startsWith('rzp_');
+
+      if (isRealKeys) {
+        try {
+          const authHeader = 'Basic ' + Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+          const rzpRes = await fetch('https://api.razorpay.com/v1/orders', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': authHeader
+            },
+            body: JSON.stringify({
+              amount: Math.round(Number(amount) * 100), // amount in paise
+              currency: 'INR',
+              receipt: `rcpt_${uuidv4().slice(0, 10)}`
+            })
+          });
+          const rzpOrder = await rzpRes.json().catch(() => ({}));
+          if (!rzpRes.ok) {
+            return err(rzpOrder.error?.description || `Razorpay Order API error (status ${rzpRes.status})`, 400);
+          }
+          return ok({
+            id: rzpOrder.id,
+            amount: rzpOrder.amount,
+            currency: rzpOrder.currency || 'INR',
+            key: keyId,
+            mock: false
+          });
+        } catch (apiErr) {
+          console.error('Razorpay Orders API call error:', apiErr);
+          return err('Failed to initiate payment with Razorpay.', 500);
+        }
+      }
+
+      // Mock mode fallback when real credentials are not configured
+      const id = 'order_MOCK' + Math.random().toString(36).slice(2, 12);
+      return ok({
+        id,
+        amount: Math.round(Number(amount) * 100),
+        currency: 'INR',
+        key: keyId || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || 'rzp_test_mockkey',
+        mock: true
+      });
     }
+
     if (route === '/payment/razorpay/verify' && method === 'POST') {
-      // In real mode, verify HMAC signature. Mock always returns success.
-      const b = await request.json()
-      return ok({ verified: true, paymentId: b.razorpay_payment_id || 'pay_MOCK' + Math.random().toString(36).slice(2, 12) })
+      const b = await request.json();
+      const siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+      const rzpConfig = siteSettings?.paymentSettings?.razorpay;
+      const keySecret = (rzpConfig?.keySecret && rzpConfig.keySecret.trim()) || process.env.RAZORPAY_KEY_SECRET || '';
+
+      if (keySecret && b.razorpay_order_id && !b.razorpay_order_id.startsWith('order_MOCK') && b.razorpay_signature) {
+        const generatedSignature = crypto
+          .createHmac('sha256', keySecret)
+          .update(`${b.razorpay_order_id}|${b.razorpay_payment_id}`)
+          .digest('hex');
+
+        if (generatedSignature !== b.razorpay_signature) {
+          return err('Payment signature verification failed.', 400);
+        }
+        return ok({ verified: true, paymentId: b.razorpay_payment_id });
+      }
+
+      // Fallback / mock mode
+      return ok({
+        verified: true,
+        paymentId: b.razorpay_payment_id || 'pay_MOCK' + Math.random().toString(36).slice(2, 12)
+      });
     }
 
     // ============ AI CHAT (Gemini) ============
@@ -3382,12 +3555,34 @@ async function handleRoute(request, { params }) {
             settings = { id: 'default', ...DEFAULT_SITE_SETTINGS, createdAt: new Date() };
             await db.collection('site_settings').insertOne(settings);
           }
+          const rawPay = settings?.paymentSettings || DEFAULT_SITE_SETTINGS.paymentSettings;
+          const keyId = rawPay?.razorpay?.keyId || '';
+          const envKeyId = process.env.RAZORPAY_KEY_ID || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || '';
+          const hasKeySecret = Boolean((rawPay?.razorpay?.keySecret && rawPay.razorpay.keySecret.trim()) || process.env.RAZORPAY_KEY_SECRET);
+          const hasWebhookSecret = Boolean((rawPay?.razorpay?.webhookSecret && rawPay.razorpay.webhookSecret.trim()) || process.env.RAZORPAY_WEBHOOK_SECRET);
+
           return ok(clean({
             ...DEFAULT_SITE_SETTINGS,
             ...settings,
             shipping: {
               ...DEFAULT_SITE_SETTINGS.shipping,
               ...((settings && settings.shipping) || {})
+            },
+            paymentSettings: {
+              razorpay: {
+                enabled: rawPay?.razorpay?.enabled !== false,
+                testMode: rawPay?.razorpay?.testMode ?? true,
+                keyId,
+                envKeyId,
+                hasKeySecret,
+                hasWebhookSecret,
+                webhookSecret: rawPay?.razorpay?.webhookSecret ? '••••••••' : '',
+                businessName: rawPay?.razorpay?.businessName || 'MikuMantra Fine Jewellery',
+                themeColor: rawPay?.razorpay?.themeColor || '#9C6B30'
+              },
+              cod: {
+                enabled: rawPay?.cod?.enabled !== false
+              }
             }
           }));
         }
@@ -3406,6 +3601,51 @@ async function handleRoute(request, { params }) {
             }
           }
 
+          if (updates.paymentSettings) {
+            const currentDoc = await db.collection('site_settings').findOne({ id: 'default' });
+            const currentRzp = currentDoc?.paymentSettings?.razorpay || {};
+            const newRzp = updates.paymentSettings.razorpay || {};
+
+            let finalKeySecret = currentRzp.keySecret || '';
+            if (newRzp.keySecret !== undefined && newRzp.keySecret !== '' && newRzp.keySecret !== '••••••••') {
+              finalKeySecret = newRzp.keySecret.trim();
+            }
+
+            let finalWebhookSecret = currentRzp.webhookSecret || '';
+            if (newRzp.webhookSecret !== undefined && newRzp.webhookSecret !== '' && newRzp.webhookSecret !== '••••••••') {
+              finalWebhookSecret = newRzp.webhookSecret.trim();
+            }
+
+            updates.paymentSettings = {
+              razorpay: {
+                enabled: newRzp.enabled !== false,
+                testMode: newRzp.testMode ?? true,
+                keyId: (newRzp.keyId || '').trim(),
+                keySecret: finalKeySecret,
+                webhookSecret: finalWebhookSecret,
+                businessName: newRzp.businessName || 'MikuMantra Fine Jewellery',
+                themeColor: newRzp.themeColor || '#9C6B30'
+              },
+              cod: {
+                enabled: updates.paymentSettings.cod?.enabled !== false
+              }
+            };
+
+            await logAdminActivity(db, {
+              admin,
+              action: 'PAYMENT_SETTINGS_UPDATED',
+              module: 'SITE_SETTINGS',
+              targetId: 'default',
+              targetName: 'Payment Gateways Configuration',
+              metadata: {
+                razorpayEnabled: updates.paymentSettings.razorpay.enabled,
+                testMode: updates.paymentSettings.razorpay.testMode,
+                codEnabled: updates.paymentSettings.cod.enabled
+              },
+              request
+            });
+          }
+
           await db.collection('site_settings').updateOne(
             { id: 'default' },
             { $set: { ...updates, updatedAt: new Date() } },
@@ -3418,12 +3658,29 @@ async function handleRoute(request, { params }) {
             console.warn('revalidatePath warning:', revalErr.message);
           }
           const updated = await db.collection('site_settings').findOne({ id: 'default' });
+          const updatedRawPay = updated?.paymentSettings || DEFAULT_SITE_SETTINGS.paymentSettings;
           return ok(clean({
             ...DEFAULT_SITE_SETTINGS,
             ...updated,
             shipping: {
               ...DEFAULT_SITE_SETTINGS.shipping,
               ...((updated && updated.shipping) || {})
+            },
+            paymentSettings: {
+              razorpay: {
+                enabled: updatedRawPay?.razorpay?.enabled !== false,
+                testMode: updatedRawPay?.razorpay?.testMode ?? true,
+                keyId: updatedRawPay?.razorpay?.keyId || '',
+                envKeyId: process.env.RAZORPAY_KEY_ID || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || '',
+                hasKeySecret: Boolean((updatedRawPay?.razorpay?.keySecret && updatedRawPay.razorpay.keySecret.trim()) || process.env.RAZORPAY_KEY_SECRET),
+                hasWebhookSecret: Boolean((updatedRawPay?.razorpay?.webhookSecret && updatedRawPay.razorpay.webhookSecret.trim()) || process.env.RAZORPAY_WEBHOOK_SECRET),
+                webhookSecret: updatedRawPay?.razorpay?.webhookSecret ? '••••••••' : '',
+                businessName: updatedRawPay?.razorpay?.businessName || 'MikuMantra Fine Jewellery',
+                themeColor: updatedRawPay?.razorpay?.themeColor || '#9C6B30'
+              },
+              cod: {
+                enabled: updatedRawPay?.cod?.enabled !== false
+              }
             }
           }));
         }
@@ -4237,8 +4494,12 @@ async function handleRoute(request, { params }) {
           let refundFailureReason = null;
 
           try {
-            if (order && order.payment === 'razorpay' && order.razorpayPaymentId && process.env.RAZORPAY_KEY_SECRET) {
-              const authHeader = 'Basic ' + Buffer.from(`${process.env.RAZORPAY_KEY_ID}:${process.env.RAZORPAY_KEY_SECRET}`).toString('base64');
+            const currentSettings = await db.collection('site_settings').findOne({ id: 'default' });
+            const effectiveKeyId = (currentSettings?.paymentSettings?.razorpay?.keyId && currentSettings.paymentSettings.razorpay.keyId.trim()) || process.env.RAZORPAY_KEY_ID;
+            const effectiveKeySecret = (currentSettings?.paymentSettings?.razorpay?.keySecret && currentSettings.paymentSettings.razorpay.keySecret.trim()) || process.env.RAZORPAY_KEY_SECRET;
+
+            if (order && order.payment === 'razorpay' && order.razorpayPaymentId && effectiveKeySecret && effectiveKeyId) {
+              const authHeader = 'Basic ' + Buffer.from(`${effectiveKeyId}:${effectiveKeySecret}`).toString('base64');
               const rzpRes = await fetch(`https://api.razorpay.com/v1/payments/${order.razorpayPaymentId}/refund`, {
                 method: 'POST',
                 headers: {

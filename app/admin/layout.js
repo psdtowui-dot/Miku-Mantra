@@ -8,7 +8,7 @@ import {
   Ticket, MessageSquare, Image as ImageIcon, LogOut, Loader2, Menu, X,
   History, Settings, ChevronDown, ChevronRight, Layout, SlidersHorizontal,
   Globe, RotateCcw, ShieldCheck, KeyRound, Eye, EyeOff, Shield, UserCheck,
-  Lock, ScrollText
+  Lock, ScrollText, CreditCard
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -33,6 +33,7 @@ const ADMIN_MGMT_NAV = [
 ];
 
 const UI_NAV = [
+  { href: '/admin/payment-settings', label: 'Payment Gateways', icon: CreditCard, permission: 'settings.view' },
   { href: '/admin/site-settings', label: 'Site & SEO Settings', icon: Globe, permission: 'settings.view' },
   { href: '/admin/homepage', label: 'Promote & Assurance', icon: ShieldCheck, permission: 'settings.view' },
   { href: '/admin/banners', label: 'Banners', icon: ImageIcon, permission: 'settings.view' },
@@ -85,7 +86,7 @@ export default function AdminLayout({ children }) {
   }, [loading, user, router, pathname, isLoginPage]);
 
   useEffect(() => {
-    if (pathname && (pathname.startsWith('/admin/site-settings') || pathname.startsWith('/admin/homepage') || pathname.startsWith('/admin/banners') || pathname.startsWith('/admin/header') || pathname.startsWith('/admin/footer') || pathname.startsWith('/admin/product-filter'))) {
+    if (pathname && (pathname.startsWith('/admin/payment-settings') || pathname.startsWith('/admin/site-settings') || pathname.startsWith('/admin/homepage') || pathname.startsWith('/admin/banners') || pathname.startsWith('/admin/header') || pathname.startsWith('/admin/footer') || pathname.startsWith('/admin/product-filter'))) {
       setUiExpanded(true);
     }
     if (pathname && (pathname.startsWith('/admin/admins') || pathname.startsWith('/admin/roles') || pathname.startsWith('/admin/permissions') || pathname.startsWith('/admin/activity-logs'))) {
@@ -245,7 +246,7 @@ export default function AdminLayout({ children }) {
               <button
                 onClick={() => setUiExpanded(!uiExpanded)}
                 className={`w-full flex items-center justify-between px-5 xs:px-6 py-2.5 text-xs sm:text-sm transition ${
-                  pathname?.startsWith('/admin/banners') || pathname?.startsWith('/admin/header') || pathname?.startsWith('/admin/footer') || pathname?.startsWith('/admin/product-filter') || pathname?.startsWith('/admin/site-settings') || pathname?.startsWith('/admin/homepage')
+                  pathname?.startsWith('/admin/payment-settings') || pathname?.startsWith('/admin/banners') || pathname?.startsWith('/admin/header') || pathname?.startsWith('/admin/footer') || pathname?.startsWith('/admin/product-filter') || pathname?.startsWith('/admin/site-settings') || pathname?.startsWith('/admin/homepage')
                     ? 'text-[#D4AF37] hover:bg-white/5 font-medium'
                     : 'text-white/70 hover:bg-white/5'
                 }`}

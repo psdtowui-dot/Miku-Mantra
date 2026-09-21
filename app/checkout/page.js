@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useCart } from '@/lib/cart-store';
@@ -17,7 +17,7 @@ export default function CheckoutPage() {
   const [selectedAddrId, setSelectedAddrId] = useState('');
   const [addr, setAddr] = useState({ fullName: '', phone: '', line1: '', line2: '', city: '', state: '', pincode: '' });
   const [email, setEmail] = useState('');
-  const [payment, setPayment] = useState('cod');
+  const [payment, setPayment] = useState('razorpay');
   const [placing, setPlacing] = useState(false);
   const [coupon, setCoupon] = useState(null);
   const [gift, setGift] = useState(false);
@@ -29,6 +29,11 @@ export default function CheckoutPage() {
     standardShippingCharge: 500
   });
 
+  const [paymentConfig, setPaymentConfig] = useState({
+    razorpay: { enabled: true, isMock: true },
+    cod: { enabled: true }
+  });
+
   useEffect(() => {
     authFetch('/api/site-settings')
       .then(r => r.json())
@@ -36,9 +41,42 @@ export default function CheckoutPage() {
         if (d && d.shipping) {
           setShippingConfig(d.shipping);
         }
+        if (d && d.paymentSettings) {
+          setPaymentConfig(d.paymentSettings);
+          const rzpOn = d.paymentSettings.razorpay?.enabled !== false;
+          const codOn = d.paymentSettings.cod?.enabled !== false;
+          setPayment(prev => {
+            if (prev === 'razorpay' && !rzpOn) return codOn ? 'cod' : '';
+            if (prev === 'cod' && !codOn) return rzpOn ? 'razorpay' : '';
+            if (!prev) return rzpOn ? 'razorpay' : (codOn ? 'cod' : '');
+            return prev;
+          });
+        }
       })
-      .catch(err => console.error('Failed to load shipping config:', err));
+      .catch(err => console.error('Failed to load site settings:', err));
   }, []);
+
+  const availablePaymentMethods = useMemo(() => {
+    const methods = [];
+    if (paymentConfig?.razorpay?.enabled !== false) {
+      methods.push({
+        k: 'razorpay',
+        t: 'Razorpay',
+        d: 'Credit/Debit Card, UPI, Wallet, Netbanking · Secure',
+        I: CreditCard,
+        badge: paymentConfig?.razorpay?.isMock ? 'MOCK MODE' : null
+      });
+    }
+    if (paymentConfig?.cod?.enabled !== false) {
+      methods.push({
+        k: 'cod',
+        t: 'Cash on Delivery',
+        d: 'Pay when you receive. Cash / UPI accepted.',
+        I: Wallet
+      });
+    }
+    return methods;
+  }, [paymentConfig]);
 
   const freeEnabled = shippingConfig?.freeShippingEnabled ?? true;
   const threshold = Number(shippingConfig?.freeShippingThreshold ?? 2000);
@@ -114,30 +152,52 @@ export default function CheckoutPage() {
   function useSavedAddr(a) { setSelectedAddrId(a.id); setAddr({ fullName: a.fullName, phone: a.phone, line1: a.line1, line2: a.line2 || '', city: a.city, state: a.state, pincode: a.pincode }); }
 
   async function payWithRazorpay() {
-    const orderRes = await authFetch('/api/payment/razorpay/order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ amount: total }) });
-    const rzOrder = await orderRes.json();
-
-    const isMock = !window.Razorpay || rzOrder.key?.includes('mock');
-    if (isMock) {
-      toast.info('Razorpay is in MOCK mode. Simulating a successful payment…');
-      await new Promise(r => setTimeout(r, 800));
-      return { paid: true, paymentId: 'pay_MOCK' + Math.random().toString(36).slice(2, 10) };
-    }
-    return new Promise((resolve) => {
-      const rzp = new window.Razorpay({
-        key: rzOrder.key, amount: rzOrder.amount, currency: rzOrder.currency, name: 'MikuMantra Fine Jewellery',
-        description: 'Order Payment', order_id: rzOrder.id,
-        prefill: { name: addr.fullName, email: user?.email || email, contact: addr.phone },
-        theme: { color: '#9C6B30' },
-        handler: async (resp) => {
-          const v = await authFetch('/api/payment/razorpay/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(resp) });
-          const vd = await v.json();
-          resolve({ paid: vd.verified, paymentId: vd.paymentId });
-        },
-        modal: { ondismiss: () => resolve({ paid: false }) }
+    try {
+      const orderRes = await authFetch('/api/payment/razorpay/order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: total })
       });
-      rzp.open();
-    });
+      const rzOrder = await orderRes.json();
+      if (!orderRes.ok) {
+        toast.error(rzOrder.error || 'Failed to initiate payment.');
+        return { paid: false };
+      }
+
+      const isMock = !window.Razorpay || rzOrder.mock || rzOrder.key?.includes('mock');
+      if (isMock) {
+        toast.info('Razorpay is in MOCK mode. Simulating a successful payment…');
+        await new Promise(r => setTimeout(r, 800));
+        return { paid: true, paymentId: 'pay_MOCK' + Math.random().toString(36).slice(2, 10) };
+      }
+      return new Promise((resolve) => {
+        const rzp = new window.Razorpay({
+          key: rzOrder.key,
+          amount: rzOrder.amount,
+          currency: rzOrder.currency || 'INR',
+          name: paymentConfig?.razorpay?.businessName || 'MikuMantra Fine Jewellery',
+          description: 'Order Payment',
+          order_id: rzOrder.id,
+          prefill: { name: addr.fullName, email: user?.email || email, contact: addr.phone },
+          theme: { color: paymentConfig?.razorpay?.themeColor || '#9C6B30' },
+          handler: async (resp) => {
+            const v = await authFetch('/api/payment/razorpay/verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(resp)
+            });
+            const vd = await v.json();
+            resolve({ paid: vd.verified, paymentId: vd.paymentId });
+          },
+          modal: { ondismiss: () => resolve({ paid: false }) }
+        });
+        rzp.open();
+      });
+    } catch (err) {
+      console.error('Payment gateway error:', err);
+      toast.error('Payment gateway error. Please try again.');
+      return { paid: false };
+    }
   }
 
   async function placeOrder() {
@@ -326,14 +386,24 @@ export default function CheckoutPage() {
               <div className="border border-[#E8E8E8] rounded-xl p-4 sm:p-6 md:p-8">
                 <div className="font-display text-xl sm:text-2xl mb-1">Payment Method</div><div className="gold-line w-10 mb-6" />
                 <div className="space-y-3">
-                  {[{ k: 'razorpay', t: 'Razorpay', d: 'Credit/Debit Card, UPI, Wallet, Netbanking · Secure', I: CreditCard, badge: 'MOCK MODE' }, { k: 'cod', t: 'Cash on Delivery', d: 'Pay when you receive. Cash / UPI accepted.', I: Wallet }].map(p => (
-                    <label key={p.k} className={`flex items-start gap-3 sm:gap-4 p-4 sm:p-5 border rounded-lg cursor-pointer transition ${payment === p.k ? 'border-[#9C6B30] bg-[#FAF6EF]/60' : 'border-[#E8E8E8] hover:border-[#9C6B30]'}`}>
-                      <input type="radio" checked={payment === p.k} onChange={() => setPayment(p.k)} className="mt-1 accent-[#9C6B30] shrink-0" />
-                      <div className="flex-1 min-w-0"><div className="flex flex-wrap items-center gap-2"><p.I size={16} className="text-[#9C6B30] shrink-0" /><div className="font-medium text-[#1A1A1A] text-sm sm:text-base">{p.t}</div>{p.badge && <span className="text-[9px] px-2 py-0.5 bg-amber-100 text-amber-800 rounded uppercase tracking-widest">{p.badge}</span>}</div><div className="text-xs text-neutral-500 mt-1">{p.d}</div></div>
-                    </label>
-                  ))}
+                  {availablePaymentMethods.length === 0 ? (
+                    <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs">
+                      No payment methods are currently active. Please contact store support.
+                    </div>
+                  ) : (
+                    availablePaymentMethods.map(p => (
+                      <label key={p.k} className={`flex items-start gap-3 sm:gap-4 p-4 sm:p-5 border rounded-lg cursor-pointer transition ${payment === p.k ? 'border-[#9C6B30] bg-[#FAF6EF]/60' : 'border-[#E8E8E8] hover:border-[#9C6B30]'}`}>
+                        <input type="radio" checked={payment === p.k} onChange={() => setPayment(p.k)} className="mt-1 accent-[#9C6B30] shrink-0" />
+                        <div className="flex-1 min-w-0"><div className="flex flex-wrap items-center gap-2"><p.I size={16} className="text-[#9C6B30] shrink-0" /><div className="font-medium text-[#1A1A1A] text-sm sm:text-base">{p.t}</div>{p.badge && <span className="text-[9px] px-2 py-0.5 bg-amber-100 text-amber-800 rounded uppercase tracking-widest">{p.badge}</span>}</div><div className="text-xs text-neutral-500 mt-1">{p.d}</div></div>
+                      </label>
+                    ))
+                  )}
                 </div>
-                {payment === 'razorpay' && <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-md text-xs text-amber-800">Razorpay is in MOCK mode. Payment will be simulated — replace <code>RAZORPAY_KEY_ID</code> / <code>RAZORPAY_KEY_SECRET</code> in .env with real test keys to enable live checkout.</div>}
+                {payment === 'razorpay' && paymentConfig?.razorpay?.isMock && (
+                  <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-md text-xs text-amber-800">
+                    Razorpay is currently in MOCK mode. Configure your API keys in the Super Admin Portal to accept live payments.
+                  </div>
+                )}
                 <div className="mt-6 flex justify-between gap-2"><button onClick={() => setStep('address')} className="px-4 sm:px-6 py-3 text-[10px] sm:text-[11px] tracking-wider sm:tracking-widest uppercase text-neutral-500">← Back</button><button onClick={() => setStep('review')} className="px-5 sm:px-8 py-3 sm:py-3.5 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] flex items-center gap-2">Review Order <ChevronRight size={14} /></button></div>
               </div>
             )}
