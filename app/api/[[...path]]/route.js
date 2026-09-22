@@ -4302,6 +4302,10 @@ async function handleRoute(request, { params }) {
           if (col === 'categories' && (!b.name || !b.name.trim())) {
             return err('Category name is required', 400);
           }
+          if (col === 'collections') {
+            if (!b.name || !b.name.trim()) return err('Collection name is required', 400);
+            if (!b.slug || !b.slug.trim()) return err('Collection slug is required', 400);
+          }
           const doc = { id: uuidv4(), createdAt: new Date(), ...b };
           await db.collection(col).insertOne(doc);
           _cache.delete('admin_' + col);
@@ -4310,6 +4314,10 @@ async function handleRoute(request, { params }) {
         if (sub.startsWith(col + '/') && method === 'PUT') {
           const id = sub.split('/')[1];
           const b = await request.json();
+          if (col === 'collections') {
+            if (b.name !== undefined && !b.name.trim()) return err('Collection name is required', 400);
+            if (b.slug !== undefined && !b.slug.trim()) return err('Collection slug is required', 400);
+          }
           await db.collection(col).updateOne({ id }, { $set: b });
           _cache.delete('admin_' + col);
           const up = await db.collection(col).findOne({ id });
