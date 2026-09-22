@@ -1,5 +1,5 @@
 'use client';
-import { useState, Suspense } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/use-auth';
@@ -24,6 +24,16 @@ function ForgotPasswordInner() {
   const [busy, setBusy] = useState(false);
   const [showNewEye, setShowNewEye] = useState(false);
   const [showConfEye, setShowConfEye] = useState(false);
+  const [siteLogo, setSiteLogo] = useState('/logo.png');
+
+  useEffect(() => {
+    fetch('/api/site-settings')
+      .then(r => r.json())
+      .then(d => {
+        if (d?.logo) setSiteLogo(d.logo);
+      })
+      .catch(() => {});
+  }, []);
 
   const handleRequest = async (e) => {
     e.preventDefault();
@@ -105,7 +115,7 @@ function ForgotPasswordInner() {
     <main className="min-h-screen bg-[#FAF6EF]/30 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
         <Link href="/" className="inline-block mb-4">
-          <img className="w-44 h-auto mx-auto object-contain rounded-md" src="/verification-logo.png" alt="MikuMantra" />
+          <img className="w-44 h-auto max-h-16 mx-auto object-contain rounded-md" src={siteLogo || "/verification-logo.png"} alt="Brand Logo" />
         </Link>
         <div className="text-[11px] tracking-[0.3em] uppercase text-[#9C6B30] mb-1">
           {isAdmin ? 'Administrator Security' : 'Customer Account Recovery'}

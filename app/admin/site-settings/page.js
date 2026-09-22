@@ -8,8 +8,10 @@ export default function AdminSiteSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
   const [form, setForm] = useState({
     siteName: '',
+    logo: '',
     seoTitle: '',
     titleTemplate: '',
     seoDescription: '',
@@ -34,6 +36,7 @@ export default function AdminSiteSettings() {
         const d = await r.json();
         setForm({
           siteName: d.siteName || '',
+          logo: d.logo || '/logo.png',
           seoTitle: d.seoTitle || '',
           titleTemplate: d.titleTemplate || '',
           seoDescription: d.seoDescription || '',
@@ -62,6 +65,36 @@ export default function AdminSiteSettings() {
   useEffect(() => {
     load();
   }, []);
+
+  const handleUploadLogo = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingLogo(true);
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const r = await fetch('/api/admin/upload', {
+        method: 'POST',
+        credentials: 'include',
+        body: formData,
+      });
+      if (r.ok) {
+        const d = await r.json();
+        setForm(prev => ({
+          ...prev,
+          logo: d.url
+        }));
+        toast.success('Brand logo uploaded successfully! Click Save Changes to apply everywhere.');
+      } else {
+        const d = await r.json().catch(() => ({}));
+        toast.error(d.error || 'Logo upload failed');
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Upload error');
+    }
+    setUploadingLogo(false);
+  };
 
   const handleUploadBanner = async (e) => {
     const file = e.target.files?.[0];
@@ -222,6 +255,48 @@ export default function AdminSiteSettings() {
                   placeholder="https://yourdomain.com"
                   className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:border-[#9C6B30]"
                 />
+              </div>
+            </div>
+
+            {/* Global Brand Logo */}
+            <div className="pt-3 border-t border-neutral-100">
+              <label className="text-[11px] font-bold text-neutral-600 uppercase tracking-wider block mb-1">
+                Global Brand Logo *
+              </label>
+              <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+                <div className="w-24 h-16 rounded-lg border border-neutral-200 bg-neutral-900/90 flex items-center justify-center p-2 shrink-0 shadow-inner overflow-hidden">
+                  {form.logo ? (
+                    <img
+                      src={form.logo}
+                      alt="Brand Logo Preview"
+                      className="max-h-full max-w-full object-contain"
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                      }}
+                    />
+                  ) : (
+                    <ImageIcon size={22} className="text-neutral-500" />
+                  )}
+                </div>
+                <div className="flex-1 w-full space-y-2">
+                  <div className="flex flex-col xs:flex-row gap-2">
+                    <input
+                      type="text"
+                      value={form.logo}
+                      onChange={e => setForm({ ...form, logo: e.target.value })}
+                      placeholder="e.g. /logo.png or https://..."
+                      className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:border-[#9C6B30]"
+                    />
+                    <label className="bg-neutral-100 hover:bg-neutral-200 text-neutral-700 px-4 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 shrink-0 border border-neutral-200 transition-colors">
+                      {uploadingLogo ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                      <span>{uploadingLogo ? 'Uploading...' : 'Upload Logo'}</span>
+                      <input type="file" accept="image/*" onChange={handleUploadLogo} className="hidden" />
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-neutral-400">
+                    💡 Changing this logo updates it globally: header navigation (desktop &amp; mobile), footer, admin portal sidebar/header, login/recovery screens, and invoice PDFs.
+                  </p>
+                </div>
               </div>
             </div>
           </div>

@@ -169,18 +169,18 @@ export default function Navbar({ initialData }) {
           <div className="flex items-center justify-between h-20">
             {/* Logo Link (Aligned Left) */}
             <div className="flex items-center">
-              {logoSettings?.image ? (
-                <Link href={logoSettings.url || "/"} className="flex items-center max-w-[95px] xs:max-w-[120px] sm:max-w-[200px] lg:max-w-[280px]">
-                  <img
-                    src={logoSettings.image}
-                    alt={logoSettings.alt || "Logo"}
-                    className="h-7 sm:h-10 object-contain max-w-full"
-                    onError={(e) => {
-                      e.target.style.display = 'none';
-                    }}
-                  />
-                </Link>
-              ) : null}
+              <Link href={logoSettings?.url || "/"} className="flex items-center max-w-[95px] xs:max-w-[120px] sm:max-w-[200px] lg:max-w-[280px]">
+                <img
+                  src={logoSettings?.image || "/logo.png"}
+                  alt={logoSettings?.alt || "Logo"}
+                  className="h-7 sm:h-10 object-contain max-w-full"
+                  onError={(e) => {
+                    if (typeof window !== 'undefined' && e.target.src !== window.location.origin + '/logo.png') {
+                      e.target.src = '/logo.png';
+                    }
+                  }}
+                />
+              </Link>
             </div>
 
             {/* Desktop Navigation Links */}
@@ -412,7 +412,18 @@ export default function Navbar({ initialData }) {
             >
               <div>
                 <div className="flex justify-between items-center mb-8 border-b border-neutral-100 pb-4">
-                  <img className="w-32 h-auto" src="/logo.png" alt="MikuMantra Logo" />
+                  <Link href={logoSettings?.url || "/"} onClick={() => setMobile(false)} className="inline-block">
+                    <img
+                      className="w-32 h-auto max-h-12 object-contain"
+                      src={logoSettings?.image || "/logo.png"}
+                      alt={logoSettings?.alt || "MikuMantra Logo"}
+                      onError={(e) => {
+                        if (typeof window !== 'undefined' && e.target.src !== window.location.origin + '/logo.png') {
+                          e.target.src = '/logo.png';
+                        }
+                      }}
+                    />
+                  </Link>
                 </div>
 
                 {/* Mobile Accordion Links */}

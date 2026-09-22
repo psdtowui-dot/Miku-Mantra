@@ -47,6 +47,16 @@ function LoginInner(){
   const [showForgotConfEye, setShowForgotConfEye] = useState(false);
 
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '998849094985-1ec0iv6a0ih2ulrru88vv3ngvcbcv68c.apps.googleusercontent.com';
+  const [siteLogo, setSiteLogo] = useState('/logo.png');
+
+  useEffect(() => {
+    fetch('/api/site-settings')
+      .then(r => r.json())
+      .then(d => {
+        if (d?.logo) setSiteLogo(d.logo);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (redirect && redirect.startsWith('/admin')) {
@@ -606,7 +616,7 @@ function LoginInner(){
                   <div className="w-11 h-11 rounded-full bg-[#FAF6EF] border border-[#9C6B30]/30 flex items-center justify-center text-[#9C6B30]">
                     <KeyRound size={20} />
                   </div>
-                  <img src="/verification-logo.png" alt="MikuMantra" className="h-8 w-auto object-contain rounded" />
+                  <img src={siteLogo || "/verification-logo.png"} alt="Brand Logo" className="h-8 w-auto object-contain rounded" />
                 </div>
                 <h3 className="font-display text-2xl text-[#1A1A1A] font-light">Forgot Password</h3>
                 <div className="gold-line w-10 my-2" />
@@ -655,7 +665,7 @@ function LoginInner(){
                   >
                     <ArrowLeft size={13} /> Change email
                   </button>
-                  <img src="/verification-logo.png" alt="MikuMantra" className="h-7 w-auto object-contain rounded" />
+                  <img src={siteLogo || "/verification-logo.png"} alt="Brand Logo" className="h-7 w-auto object-contain rounded" />
                 </div>
 
                 <h3 className="font-display text-2xl text-[#1A1A1A] font-light">Reset Password</h3>

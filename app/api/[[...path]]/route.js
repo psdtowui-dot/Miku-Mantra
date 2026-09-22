@@ -1148,6 +1148,7 @@ async function handleRoute(request, { params }) {
       const r = clean({
         ...DEFAULT_SITE_SETTINGS,
         ...settings,
+        logo: settings?.logo || DEFAULT_SITE_SETTINGS.logo || '/logo.png',
         shipping: {
           ...DEFAULT_SITE_SETTINGS.shipping,
           ...((settings && settings.shipping) || {})
@@ -1967,10 +1968,11 @@ async function handleRoute(request, { params }) {
 
       const footerDoc = await db.collection('footer').findOne({ id: 'default' });
       const siteSettingsDoc = await db.collection('site_settings').findOne({ id: 'default' });
+      const headerDoc = await db.collection('header').findOne({ id: 'default' });
 
       const companyConfig = {
         name: footerDoc?.company?.name || siteSettingsDoc?.siteName || 'MikuMantra Fine Jewellery',
-        logo: footerDoc?.company?.logo || '/logo.png',
+        logo: siteSettingsDoc?.logo || footerDoc?.company?.logo || headerDoc?.logo?.image || '/logo.png',
         address: footerDoc?.company?.address || '',
         email: footerDoc?.company?.email || '',
         phone: footerDoc?.company?.phone || '',
@@ -2906,6 +2908,26 @@ async function handleRoute(request, { params }) {
         const body = await request.json();
         const { id, _id, ...updates } = body;
         await db.collection('header').updateOne({ id: 'default' }, { $set: updates });
+
+        // Synchronize logo across site_settings and footer if updated
+        if (updates.logo && updates.logo.image) {
+          await db.collection('site_settings').updateOne(
+            { id: 'default' },
+            { $set: { logo: updates.logo.image, updatedAt: new Date() } },
+            { upsert: true }
+          );
+          await db.collection('footer').updateOne(
+            { id: 'default' },
+            { $set: { 'company.logo': updates.logo.image, updatedAt: new Date() } },
+            { upsert: true }
+          );
+          _cache.delete('site_settings');
+          _cache.delete('footer');
+          _cache.delete('homepage_data');
+          invalidateSiteDataCache();
+          try { revalidatePath('/', 'layout'); } catch (e) {}
+        }
+
         const updated = await db.collection('header').findOne({ id: 'default' });
         return ok(clean(updated));
       }
@@ -3794,6 +3816,26 @@ async function handleRoute(request, { params }) {
             { $set: { ...updates, updatedAt: new Date() } },
             { upsert: true }
           );
+
+          // Synchronize logo across site_settings and header if updated
+          if (updates.company && updates.company.logo) {
+            await db.collection('site_settings').updateOne(
+              { id: 'default' },
+              { $set: { logo: updates.company.logo, updatedAt: new Date() } },
+              { upsert: true }
+            );
+            await db.collection('header').updateOne(
+              { id: 'default' },
+              { $set: { 'logo.image': updates.company.logo, updatedAt: new Date() } },
+              { upsert: true }
+            );
+            _cache.delete('site_settings');
+            _cache.delete('header_config');
+            _cache.delete('homepage_data');
+            invalidateSiteDataCache();
+            try { revalidatePath('/', 'layout'); } catch (e) {}
+          }
+
           _cache.delete('footer');
           const updated = await db.collection('footer').findOne({ id: 'default' });
           return ok(clean(updated));
@@ -3816,6 +3858,7 @@ async function handleRoute(request, { params }) {
           return ok(clean({
             ...DEFAULT_SITE_SETTINGS,
             ...settings,
+            logo: settings?.logo || DEFAULT_SITE_SETTINGS.logo || '/logo.png',
             shipping: {
               ...DEFAULT_SITE_SETTINGS.shipping,
               ...((settings && settings.shipping) || {})
@@ -3903,6 +3946,25 @@ async function handleRoute(request, { params }) {
             { $set: { ...updates, updatedAt: new Date() } },
             { upsert: true }
           );
+
+          // Synchronize logo across header and footer if updated
+          if (updates.logo) {
+            await db.collection('header').updateOne(
+              { id: 'default' },
+              { $set: { 'logo.image': updates.logo, updatedAt: new Date() } },
+              { upsert: true }
+            );
+            await db.collection('footer').updateOne(
+              { id: 'default' },
+              { $set: { 'company.logo': updates.logo, updatedAt: new Date() } },
+              { upsert: true }
+            );
+            _cache.delete('header_config');
+            _cache.delete('footer');
+            _cache.delete('homepage_data');
+            invalidateSiteDataCache();
+          }
+
           _cache.delete('site_settings');
           try {
             revalidatePath('/', 'layout');

@@ -369,7 +369,9 @@ export default function HomePage({ initialData }) {
   if (loading) {
     return (
       <div className="h-[80vh] w-full flex flex-col items-center justify-center bg-white text-neutral-500">
-        <span className="h-auto w-36 pb-2"><img src="/logo.png" alt="MikuMantra" /></span>
+        <span className="h-auto w-36 pb-2">
+          <img src={initialData?.logo || initialData?.settings?.logo || '/logo.png'} alt="Brand Logo" className="max-h-12 object-contain mx-auto" />
+        </span>
         <Loader2 className="animate-spin text-[#9C6B30] mb-2" size={26} />
       </div>
     );

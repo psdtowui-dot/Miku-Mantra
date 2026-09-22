@@ -58,9 +58,16 @@ export default function AdminLayout({ children }) {
   const [uiExpanded, setUiExpanded] = useState(false);
   const [adminExpanded, setAdminExpanded] = useState(true);
   const [mounted, setMounted] = useState(false);
+  const [siteLogo, setSiteLogo] = useState('/logo.png');
 
   useEffect(() => {
     setMounted(true);
+    fetch('/api/site-settings')
+      .then(r => r.json())
+      .then(d => {
+        if (d?.logo) setSiteLogo(d.logo);
+      })
+      .catch(() => {});
   }, []);
 
   // Admin password change modal state
@@ -169,7 +176,7 @@ export default function AdminLayout({ children }) {
       >
         <div className="p-4 xs:p-6 border-b border-white/10 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
-            <img className="w-[110px] xs:w-[130px] sm:w-[145px] lg:w-[180px] h-auto object-contain" src="/logo.png" alt="Logo" />
+            <img className="w-[110px] xs:w-[130px] sm:w-[145px] lg:w-[180px] h-auto max-h-12 object-contain" src={siteLogo || "/logo.png"} alt="Logo" />
           </Link>
           <button className="lg:hidden p-1 text-white/70 hover:text-white" onClick={() => setOpen(false)} aria-label="Close sidebar">
             <X size={18} />
@@ -320,7 +327,7 @@ export default function AdminLayout({ children }) {
             <Menu size={20} />
           </button>
           <Link href="/admin" className="flex items-center gap-2">
-            <img className="w-[100px] xs:w-[120px] h-auto object-contain" src="/logo.png" alt="Logo" />
+            <img className="w-[100px] xs:w-[120px] h-auto max-h-10 object-contain" src={siteLogo || "/logo.png"} alt="Logo" />
           </Link>
           <div className="w-6" />
         </header>

@@ -75,6 +75,10 @@ export async function generateMetadata() {
       description: shareDescription,
       images: [absoluteImageUrl],
     },
+    icons: {
+      icon: settings.favicon || settings.logo || '/favicon.ico',
+      apple: settings.logo || '/favicon.ico',
+    },
     robots: { index: true, follow: true, googleBot: { index: true, follow: true } },
   };
 }
@@ -87,13 +91,15 @@ export default async function RootLayout({ children }) {
   ]);
   const siteUrl = getCanonicalBaseUrl(siteSettingsData);
   const siteName = siteSettingsData.siteName || footerData?.company?.name || 'MikuMantra Fine Jewellery';
+  const effectiveLogo = siteSettingsData?.logo || headerData?.logo?.image || footerData?.company?.logo || '/logo.png';
+  const fullLogoUrl = effectiveLogo.startsWith('http') ? effectiveLogo : `${siteUrl}${effectiveLogo.startsWith('/') ? '' : '/'}${effectiveLogo}`;
 
   const orgJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'JewelryStore',
     name: siteName,
     url: siteUrl,
-    logo: footerData?.company?.logo ? (footerData.company.logo.startsWith('http') ? footerData.company.logo : `${siteUrl}${footerData.company.logo}`) : `${siteUrl}/favicon.ico`,
+    logo: fullLogoUrl,
     address: footerData?.company?.address ? { '@type': 'PostalAddress', streetAddress: footerData.company.address } : undefined,
     telephone: footerData?.company?.phone,
     email: footerData?.company?.email,

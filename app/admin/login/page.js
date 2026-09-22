@@ -46,6 +46,16 @@ function AdminLoginInner() {
   const [showForgotConfEye, setShowForgotConfEye] = useState(false);
 
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '998849094985-1ec0iv6a0ih2ulrru88vv3ngvcbcv68c.apps.googleusercontent.com';
+  const [siteLogo, setSiteLogo] = useState('/logo.png');
+
+  useEffect(() => {
+    fetch('/api/site-settings')
+      .then(r => r.json())
+      .then(d => {
+        if (d?.logo) setSiteLogo(d.logo);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!loading && user && user.role === 'admin') {
@@ -366,7 +376,7 @@ function AdminLoginInner() {
       <div className="sm:mx-auto sm:w-full sm:max-w-md relative z-10">
         <div className="flex justify-center mb-6">
           <Link href="/" className="inline-block transition-transform hover:scale-105">
-            <img className="h-10 w-auto object-contain brightness-110" src="/logo.png" alt="MikuMantra Fine Jewellery" />
+            <img className="h-10 w-auto object-contain brightness-110" src={siteLogo || "/logo.png"} alt="Brand Logo" />
           </Link>
         </div>
 
@@ -534,7 +544,7 @@ function AdminLoginInner() {
                   <div className="w-11 h-11 rounded-xl bg-[#D4AF37]/15 border border-[#D4AF37]/30 flex items-center justify-center text-[#D4AF37]">
                     <KeyRound size={20} />
                   </div>
-                  <img src="/verification-logo.png" alt="MikuMantra" className="h-7 w-auto object-contain rounded" />
+                  <img src={siteLogo || "/verification-logo.png"} alt="Brand Logo" className="h-7 w-auto object-contain rounded" />
                 </div>
                 <h3 className="text-xl font-serif tracking-wide text-white">Admin Password Reset</h3>
                 <p className="text-xs text-neutral-400 mt-1 mb-5 leading-relaxed">
@@ -582,7 +592,7 @@ function AdminLoginInner() {
                   >
                     <ArrowLeft size={13} /> Change email
                   </button>
-                  <img src="/verification-logo.png" alt="MikuMantra" className="h-7 w-auto object-contain rounded" />
+                  <img src={siteLogo || "/verification-logo.png"} alt="Brand Logo" className="h-7 w-auto object-contain rounded" />
                 </div>
 
                 <h3 className="text-xl font-serif tracking-wide text-white">Reset Admin Password</h3>
