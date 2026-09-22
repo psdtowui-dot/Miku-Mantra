@@ -1970,9 +1970,51 @@ async function handleRoute(request, { params }) {
       const siteSettingsDoc = await db.collection('site_settings').findOne({ id: 'default' });
       const headerDoc = await db.collection('header').findOne({ id: 'default' });
 
+      const logoUrl = siteSettingsDoc?.logo || footerDoc?.company?.logo || headerDoc?.logo?.image || '/logo.png';
+
+      let logoBuffer = null;
+      try {
+        if (logoUrl.includes('/uploads/')) {
+          const filename = logoUrl.split('/uploads/')[1];
+          const fileDoc = await db.collection('uploads').findOne({ filename });
+          if (fileDoc && fileDoc.data) {
+            let buf = fileDoc.data;
+            if (buf.buffer) buf = Buffer.from(buf.buffer);
+            else if (!Buffer.isBuffer(buf)) buf = Buffer.from(buf);
+            logoBuffer = buf;
+          } else {
+            const fsPath = pathModule.join(process.cwd(), 'public', 'uploads', filename);
+            if (fs.existsSync(fsPath)) {
+              logoBuffer = fs.readFileSync(fsPath);
+            }
+          }
+        } else if (logoUrl.startsWith('data:')) {
+          const b64 = logoUrl.split(',')[1];
+          if (b64) logoBuffer = Buffer.from(b64, 'base64');
+        } else if (logoUrl.startsWith('http://') || logoUrl.startsWith('https://')) {
+          const res = await fetch(logoUrl);
+          if (res.ok) {
+            logoBuffer = Buffer.from(await res.arrayBuffer());
+          }
+        } else {
+          const localPath = pathModule.join(process.cwd(), 'public', logoUrl.replace(/^\//, ''));
+          if (fs.existsSync(localPath)) {
+            logoBuffer = fs.readFileSync(localPath);
+          } else {
+            const defaultLogo = pathModule.join(process.cwd(), 'public', 'logo.png');
+            if (fs.existsSync(defaultLogo)) {
+              logoBuffer = fs.readFileSync(defaultLogo);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Invoice: Failed to resolve logoBuffer:', err.message);
+      }
+
       const companyConfig = {
         name: footerDoc?.company?.name || siteSettingsDoc?.siteName || 'MikuMantra Fine Jewellery',
-        logo: siteSettingsDoc?.logo || footerDoc?.company?.logo || headerDoc?.logo?.image || '/logo.png',
+        logo: logoUrl,
+        logoBuffer,
         address: footerDoc?.company?.address || '',
         email: footerDoc?.company?.email || '',
         phone: footerDoc?.company?.phone || '',
