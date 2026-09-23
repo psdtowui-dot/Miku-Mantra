@@ -249,7 +249,7 @@ export default function AdminProducts() {
       price: +form.price,
       mrp: +form.mrp || +form.price,
       stock: +form.stock || 0,
-      rating: +form.rating || 4.8,
+      rating: Number.isFinite(+form.rating) ? +form.rating : 0,
       reviews: +form.reviews || 0
     };
     const url = editing === 'new' ? '/api/admin/products' : `/api/admin/products/${editing}`;

@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import ProductCard from '@/components/site/product-card';
@@ -8,7 +8,7 @@ import CompareBar from '@/components/site/compare-bar';
 import { getRelated, formatINR, getNormalizedSpecs, getNormalizedBenefits } from '@/lib/products';
 import { useCart, useWishlist } from '@/lib/cart-store';
 import { useCompare, useRecentlyViewed } from '@/lib/browsing';
-import { Heart, Share2, Truck, Minus, Plus, ChevronRight, Star, Sparkles, MapPin, Loader2, GitCompare } from 'lucide-react';
+import { Heart, Share2, Truck, Minus, Plus, ChevronRight, ChevronDown, ChevronUp, Star, MapPin, Loader2, GitCompare, ShieldCheck } from 'lucide-react';
 import BenefitIcon from '@/components/ui/benefit-icon';
 import { toast } from 'sonner';
 import { WAREHOUSE_PINCODE } from '@/lib/constants';
@@ -31,8 +31,10 @@ export default function ProductClient({ initialProduct, slug }) {
   const [zoom, setZoom] = useState({ on: false, x: 50, y: 50 });
   const [reviewData, setReviewData] = useState({ reviews: [], averageRating: 0, totalReviews: 0, breakdown: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 }, customerReviewsEnabled: true });
   const [loadingReviews, setLoadingReviews] = useState(true);
+  const [showAllReviews, setShowAllReviews] = useState(false);
+  const reviewsContainerRef = useRef(null);
 
-  useEffect(() => { (async () => { try { const r = await fetch(`/api/products/${slug}`, { cache: 'no-store' }); if (r.ok) { const d = await r.json(); if (d.product) setP(d.product); if (d.related) setRelated(d.related); } } finally { setLoading(false); } })(); }, [slug]);
+  useEffect(() => { setShowAllReviews(false); (async () => { try { const r = await fetch(`/api/products/${slug}`, { cache: 'no-store' }); if (r.ok) { const d = await r.json(); if (d.product) setP(d.product); if (d.related) setRelated(d.related); } } finally { setLoading(false); } })(); }, [slug]);
   useEffect(() => { if (p?.id) pushRecent(p.id); }, [p?.id]);
 
   useEffect(() => {
@@ -118,14 +120,26 @@ export default function ProductClient({ initialProduct, slug }) {
               )}
               {disc > 0 && <span className="absolute top-3 right-3 sm:top-4 sm:right-4 bg-[#9C6B30] text-white text-[9px] sm:text-[10px] tracking-wider uppercase px-2 py-1 sm:px-3 sm:py-1.5">-{disc}%</span>}
             </div>
-            <div className="mt-4 grid grid-cols-5 gap-2 sm:gap-3">{p.images.map((im, i) => (<button key={i} onClick={() => setImg(i)} className={`aspect-square rounded-lg overflow-hidden border-2 transition ${img === i ? 'border-[#9C6B30]' : 'border-transparent hover:border-[#E8E8E8]'}`}><img loading="lazy" src={im} className="w-full h-full object-cover" /></button>))}<div className="aspect-square rounded-lg border border-dashed border-[#E8E8E8] flex flex-col items-center justify-center text-[7px] xs:text-[8px] sm:text-[9px] tracking-tight xs:tracking-normal sm:tracking-widest uppercase text-neutral-400 gap-0.5"><Sparkles size={13} className="shrink-0" />360° View</div></div>
+            {p.images && p.images.length > 1 && (
+              <div className="mt-4 grid grid-cols-5 gap-2 sm:gap-3">
+                {p.images.map((im, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setImg(i)}
+                    className={`aspect-square rounded-lg overflow-hidden border-2 transition ${img === i ? 'border-[#9C6B30]' : 'border-transparent hover:border-[#E8E8E8]'}`}
+                  >
+                    <img loading="lazy" src={im} alt="" className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div>
             <div className="text-[10px] sm:text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-2">{p.metal}</div>
             <h1 className="font-display text-2xl xs:text-3xl sm:text-4xl md:text-5xl text-[#1A1A1A] font-light leading-tight break-words">{p.name}</h1>
             <div className="flex items-center gap-2 sm:gap-3 mt-4 flex-wrap">
               <div className="flex items-center gap-1 text-xs sm:text-sm">
-                <Star size={14} className="fill-[#D4AF37] stroke-[#D4AF37]" />
+                <Star size={14} className={(reviewData.totalReviews > 0 || p.rating > 0) ? "fill-[#D4AF37] stroke-[#D4AF37]" : "text-neutral-300 stroke-neutral-400"} />
                 <span className="font-medium">
                   {reviewData.totalReviews > 0 ? reviewData.averageRating.toFixed(1) : (p.rating > 0 ? p.rating : '0.0')}
                 </span>
@@ -138,7 +152,7 @@ export default function ProductClient({ initialProduct, slug }) {
             </div>
             <div className="gold-line w-full my-6" />
             <div className="flex flex-wrap items-baseline gap-2 sm:gap-4"><span className="font-display text-2xl xs:text-3xl sm:text-4xl text-[#1A1A1A]">{formatINR(p.price)}</span>{p.mrp > p.price && <><span className="text-sm sm:text-base text-neutral-400 line-through">{formatINR(p.mrp)}</span><span className="text-[#9C6B30] text-xs sm:text-sm font-medium">Save {disc}%</span></>}</div>
-            <div className="text-xs text-neutral-500 mt-1">Inclusive of all taxes · EMI from ₹{Math.round(p.price / 12).toLocaleString('en-IN')}/mo{isOutOfStock ? ' · Out of stock' : (p.stock <= 5 && p.stock > 0 ? ` · Only ${p.stock} left` : '')}</div>
+            <div className="text-xs text-neutral-500 mt-1">Inclusive of all taxes{isOutOfStock ? ' · Out of stock' : (p.stock <= 5 && p.stock > 0 ? ` · Only ${p.stock} left` : '')}</div>
             {isOutOfStock && (
               <div className="mt-3 inline-block px-3 py-1 bg-red-100 text-red-700 text-xs font-semibold uppercase tracking-widest rounded-md">
                 OUT OF STOCK
@@ -248,38 +262,49 @@ export default function ProductClient({ initialProduct, slug }) {
               )}
                 {tab === 'rev' && (
                   <div className="space-y-6 pt-2">
-                    {/* Summary & Rating Breakdown */}
-                    <div className="bg-[#FAF6EF]/50 p-4 sm:p-6 rounded-xl border border-[#E8E8E8] grid sm:grid-cols-12 gap-6 items-center">
-                      <div className="sm:col-span-5 text-center sm:text-left space-y-1 sm:border-r border-[#E8E8E8] sm:pr-6">
-                        <div className="text-3xl sm:text-4xl font-display font-bold text-[#1A1A1A]">
-                          {reviewData.averageRating > 0 ? reviewData.averageRating.toFixed(1) : '0.0'}
+                    {/* Summary & Rating Breakdown Card */}
+                    <div className="bg-gradient-to-br from-[#FAF6EF] via-white to-[#FAF6EF]/60 p-5 sm:p-7 rounded-2xl border border-[#E8E8E8] shadow-xs grid sm:grid-cols-12 gap-6 sm:gap-8 items-center">
+                      <div className="sm:col-span-5 text-center sm:text-left space-y-2 sm:border-r border-[#E8E8E8] sm:pr-8">
+                        <div className="flex items-baseline justify-center sm:justify-start gap-2">
+                          <span className="text-4xl sm:text-5xl font-display font-light text-[#1A1A1A]">
+                            {reviewData.averageRating > 0 ? reviewData.averageRating.toFixed(1) : '0.0'}
+                          </span>
+                          <span className="text-sm text-neutral-400 font-light">/ 5.0</span>
                         </div>
                         <div className="flex items-center justify-center sm:justify-start gap-1 text-[#D4AF37]">
                           {[1, 2, 3, 4, 5].map(star => (
                             <Star
                               key={star}
-                              size={16}
-                              className={star <= Math.round(reviewData.averageRating) ? 'fill-[#D4AF37] stroke-[#D4AF37]' : 'text-neutral-300'}
+                              size={18}
+                              className={star <= Math.round(reviewData.averageRating) ? 'fill-[#D4AF37] stroke-[#D4AF37]' : 'text-neutral-300 stroke-neutral-300'}
                             />
                           ))}
                         </div>
-                        <p className="text-xs text-neutral-500 font-light pt-1">
+                        <p className="text-xs text-neutral-500 font-light tracking-wide">
                           Based on {reviewData.totalReviews} verified {reviewData.totalReviews === 1 ? 'review' : 'reviews'}
                         </p>
                       </div>
 
                       {/* Histogram */}
-                      <div className="sm:col-span-7 space-y-1.5 text-xs">
+                      <div className="sm:col-span-7 space-y-2 text-xs">
                         {[5, 4, 3, 2, 1].map(stars => {
                           const cnt = reviewData.breakdown[stars] || 0;
                           const pct = reviewData.totalReviews > 0 ? Math.round((cnt / reviewData.totalReviews) * 100) : 0;
                           return (
-                            <div key={stars} className="flex items-center gap-2">
-                              <span className="w-8 text-neutral-600 font-medium">{stars} ★</span>
-                              <div className="flex-1 h-2 bg-neutral-200 rounded-full overflow-hidden">
-                                <div className="h-full bg-[#9C6B30] rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
+                            <div key={stars} className="flex items-center gap-2.5">
+                              <span className="w-10 text-neutral-600 font-medium flex items-center gap-1 shrink-0 text-xs">
+                                <span>{stars}</span>
+                                <Star size={11} className="fill-[#D4AF37] stroke-[#D4AF37]" />
+                              </span>
+                              <div className="flex-1 h-2 bg-neutral-100 rounded-full overflow-hidden border border-neutral-200/50">
+                                <div
+                                  className="h-full bg-gradient-to-r from-[#C79B3B] to-[#9C6B30] rounded-full transition-all duration-700 ease-out"
+                                  style={{ width: `${pct}%` }}
+                                />
                               </div>
-                              <span className="w-9 text-right text-neutral-400 text-[11px] font-mono">{cnt} ({pct}%)</span>
+                              <span className="w-16 text-right text-neutral-500 text-[11px] font-mono shrink-0 whitespace-nowrap">
+                                {cnt} <span className="text-neutral-400">({pct}%)</span>
+                              </span>
                             </div>
                           );
                         })}
@@ -292,73 +317,139 @@ export default function ProductClient({ initialProduct, slug }) {
                         <Loader2 className="animate-spin text-[#9C6B30]" size={24} />
                       </div>
                     ) : reviewData.reviews.length === 0 ? (
-                      <div className="text-center py-10 px-4 border border-dashed border-[#E8E8E8] rounded-xl bg-white space-y-1">
-                        <Star className="mx-auto text-neutral-300" size={32} />
-                        <h4 className="font-medium text-neutral-800 text-sm">No reviews yet</h4>
-                        <p className="text-xs text-neutral-500 max-w-sm mx-auto">
+                      <div className="text-center py-12 px-6 border border-dashed border-[#E8E8E8] rounded-2xl bg-[#FAF6EF]/30 space-y-2">
+                        <div className="w-12 h-12 rounded-full bg-white border border-[#E8E8E8] mx-auto flex items-center justify-center text-neutral-400 shadow-2xs">
+                          <Star className="text-[#9C6B30]/60" size={22} />
+                        </div>
+                        <h4 className="font-medium text-neutral-800 text-sm tracking-tight">No reviews yet</h4>
+                        <p className="text-xs text-neutral-500 max-w-sm mx-auto leading-relaxed">
                           Be the first to review this piece! If you purchased this item, submit your review directly from your delivered order page.
                         </p>
                       </div>
                     ) : (
                       <div className="space-y-4">
-                        {reviewData.reviews.map(r => (
-                          <div key={r.id} className="border border-[#E8E8E8] rounded-xl p-4 sm:p-5 bg-white space-y-2">
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="font-semibold text-sm text-[#1A1A1A]">{r.reviewerName || 'Customer'}</span>
-                                  {r.verifiedPurchase && (
-                                    <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full font-semibold">
-                                      Verified Buyer
-                                    </span>
-                                  )}
+                        <div
+                          ref={reviewsContainerRef}
+                          tabIndex={showAllReviews ? 0 : undefined}
+                          role={showAllReviews ? "region" : undefined}
+                          aria-label={showAllReviews ? "Customer reviews list" : undefined}
+                          className={`space-y-4 ${
+                            showAllReviews
+                              ? "max-h-[520px] sm:max-h-[580px] overflow-y-auto overflow-x-hidden pr-2 sm:pr-3 pb-2 reviews-scroll-container focus:outline-none"
+                              : ""
+                          }`}
+                        >
+                          {(showAllReviews ? reviewData.reviews : reviewData.reviews.slice(0, 2)).map(r => {
+                            const initials = (r.reviewerName || 'Customer')
+                              .split(' ')
+                              .map(w => w[0])
+                              .filter(Boolean)
+                              .slice(0, 2)
+                              .join('')
+                              .toUpperCase() || 'C';
+
+                            return (
+                              <div
+                                key={r.id}
+                                className="border border-[#EAE6DF] hover:border-[#D4AF37]/50 rounded-2xl p-4 sm:p-5 bg-white space-y-3 transition-all duration-300 shadow-[0_2px_8px_rgba(0,0,0,0.02)] hover:shadow-[0_4px_16px_rgba(156,107,48,0.06)]"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-[#FAF6EF] to-[#F3ECE0] border border-[#E8E8E8] text-[#9C6B30] font-medium text-xs flex items-center justify-center shrink-0 tracking-wider shadow-2xs">
+                                      {initials}
+                                    </div>
+                                    <div>
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-semibold text-sm text-[#1A1A1A]">{r.reviewerName || 'Customer'}</span>
+                                        {r.verifiedPurchase && (
+                                          <span className="inline-flex items-center gap-1 text-[10px] tracking-wider uppercase font-semibold text-emerald-700 bg-emerald-50/90 border border-emerald-200/80 px-2 py-0.5 rounded-full shadow-2xs">
+                                            <ShieldCheck size={11} className="text-emerald-600" />
+                                            Verified Buyer
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex gap-1 text-[#D4AF37] mt-1">
+                                        {[1, 2, 3, 4, 5].map(s => (
+                                          <Star
+                                            key={s}
+                                            size={13}
+                                            className={s <= r.rating ? 'fill-[#D4AF37] stroke-[#D4AF37]' : 'text-neutral-300 stroke-neutral-300'}
+                                          />
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <span className="text-xs text-neutral-400 font-light shrink-0 pt-0.5">
+                                    {r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}
+                                  </span>
                                 </div>
-                                <div className="flex gap-1 text-[#D4AF37] mt-1">
-                                  {[1, 2, 3, 4, 5].map(s => (
-                                    <Star key={s} size={13} className={s <= r.rating ? 'fill-[#D4AF37] stroke-[#D4AF37]' : 'text-neutral-300'} />
-                                  ))}
-                                </div>
-                              </div>
-                              <span className="text-[11px] text-neutral-400 shrink-0">
-                                {r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}
-                              </span>
-                            </div>
 
-                            {r.title && (
-                              <h5 className="font-medium text-sm text-neutral-900 pt-1">{r.title}</h5>
-                            )}
+                                {r.title && (
+                                  <h5 className="font-medium text-sm sm:text-base text-neutral-900 pt-0.5 tracking-tight">{r.title}</h5>
+                                )}
 
-                            <p className="font-serif-luxe text-sm sm:text-base text-neutral-700 leading-relaxed">
-                              &ldquo;{r.comment}&rdquo;
-                            </p>
-
-                            {Array.isArray(r.images) && r.images.length > 0 && (
-                              <div className="flex gap-2 pt-2">
-                                {r.images.map((imgUrl, i) => (
-                                  <a key={i} href={imgUrl} target="_blank" rel="noreferrer">
-                                    <img src={imgUrl} alt="Customer photo" className="w-16 h-16 object-cover rounded-lg border border-[#E8E8E8]" />
-                                  </a>
-                                ))}
-                              </div>
-                            )}
-
-                            {r.adminReply && (
-                              <div className="mt-3 p-3.5 bg-[#FAF6EF]/80 border-l-2 border-[#9C6B30] rounded-r-lg text-xs space-y-1">
-                                <div className="font-semibold text-[#9C6B30] flex items-center justify-between flex-wrap gap-1">
-                                  <span>Response from {typeof r.adminReply === 'object' ? (r.adminReply.repliedBy || 'MikuMantra Atelier') : 'MikuMantra Atelier'}</span>
-                                  {typeof r.adminReply === 'object' && r.adminReply.repliedAt && (
-                                    <span className="text-[10px] text-neutral-400 font-normal">
-                                      {new Date(r.adminReply.repliedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                                    </span>
-                                  )}
-                                </div>
-                                <p className="text-neutral-700 leading-relaxed font-serif-luxe text-xs sm:text-sm">
-                                  {typeof r.adminReply === 'object' ? r.adminReply.comment : r.adminReply}
+                                <p className="text-neutral-600 text-xs sm:text-sm leading-relaxed font-normal">
+                                  {r.comment}
                                 </p>
+
+                                {Array.isArray(r.images) && r.images.length > 0 && (
+                                  <div className="flex gap-2 pt-1.5">
+                                    {r.images.map((imgUrl, i) => (
+                                      <a
+                                        key={i}
+                                        href={imgUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="group/img block overflow-hidden rounded-xl border border-[#E8E8E8] hover:border-[#9C6B30] transition shadow-2xs"
+                                      >
+                                        <img
+                                          src={imgUrl}
+                                          alt="Customer photo"
+                                          className="w-16 h-16 sm:w-20 sm:h-20 object-cover group-hover/img:scale-105 transition-transform duration-300"
+                                        />
+                                      </a>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {r.adminReply && (
+                                  <div className="mt-3.5 p-3.5 sm:p-4 bg-[#FAF6EF]/70 border-l-2 border-[#9C6B30] rounded-r-xl text-xs space-y-1.5">
+                                    <div className="font-semibold text-[#9C6B30] flex items-center justify-between flex-wrap gap-1 text-xs tracking-wide">
+                                      <span>Response from {typeof r.adminReply === 'object' ? (r.adminReply.repliedBy || 'MikuMantra Atelier') : 'MikuMantra Atelier'}</span>
+                                      {typeof r.adminReply === 'object' && r.adminReply.repliedAt && (
+                                        <span className="text-[10px] text-neutral-400 font-normal">
+                                          {new Date(r.adminReply.repliedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-neutral-700 leading-relaxed font-serif-luxe text-xs sm:text-sm">
+                                      {typeof r.adminReply === 'object' ? r.adminReply.comment : r.adminReply}
+                                    </p>
+                                  </div>
+                                )}
                               </div>
-                            )}
+                            );
+                          })}
+                        </div>
+
+                        {reviewData.reviews.length > 2 && (
+                          <div className="pt-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (showAllReviews && reviewsContainerRef.current) {
+                                  reviewsContainerRef.current.scrollTop = 0;
+                                }
+                                setShowAllReviews(prev => !prev);
+                              }}
+                              aria-expanded={showAllReviews}
+                              className="inline-flex items-center justify-center gap-2.5 px-8 py-3 rounded-full text-xs font-medium tracking-[0.2em] uppercase transition-all duration-300 border border-[#9C6B30] text-[#9C6B30] hover:bg-[#9C6B30] hover:text-white shadow-xs hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#9C6B30]/30 active:scale-[0.98]"
+                            >
+                              <span>{showAllReviews ? 'Show Less Reviews' : `Show More Reviews (${reviewData.reviews.length - 2} More)`}</span>
+                              {showAllReviews ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                            </button>
                           </div>
-                        ))}
+                        )}
                       </div>
                     )}
                   </div>

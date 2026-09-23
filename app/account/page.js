@@ -36,6 +36,11 @@ export default function AccountPage() {
 
   useEffect(() => { if (!loading && !user) router.push('/login?redirect=/account'); }, [loading, user, router]);
   useEffect(() => {
+    if (tab === 'wishlist') {
+      router.push('/wishlist');
+    }
+  }, [tab, router]);
+  useEffect(() => {
     if (user) {
       setProfileForm({ name: user.name || '', phone: user.phone || '' });
       loadAddresses();
@@ -227,7 +232,7 @@ export default function AccountPage() {
     { k: 'returns', n: 'Returns & Refunds', i: RotateCcw },
     { k: 'reviews', n: 'My Reviews', i: Star },
     { k: 'addresses', n: 'Addresses', i: MapPin },
-    { k: 'wishlist', n: 'Wishlist', i: Heart }
+    { k: 'wishlist', n: 'Wishlist', i: Heart, href: '/wishlist' }
   ];
 
   return (
@@ -250,12 +255,33 @@ export default function AccountPage() {
               <div className="text-xs text-neutral-500 mt-0.5 truncate">{user.email}</div>
             </div>
             <nav>
-              {tabs.map(t => (
-                <button key={t.k} onClick={() => setTab(t.k)} className={`w-full flex items-center gap-3 px-4 sm:px-6 py-3 sm:py-3.5 text-xs sm:text-sm border-t border-[#E8E8E8] transition ${tab === t.k ? 'bg-[#FAF6EF] text-[#9C6B30] font-medium' : 'text-neutral-600 hover:bg-[#FAF6EF]/50'}`}>
-                  <t.i size={16} className="shrink-0" /><span className="flex-1 text-left">{t.n}</span><ChevronRight size={14} className="opacity-40 shrink-0" />
-                </button>
-              ))}
-              <button onClick={doLogout} className="w-full flex items-center gap-3 px-4 sm:px-6 py-3 sm:py-3.5 text-xs sm:text-sm border-t border-[#E8E8E8] text-red-600 hover:bg-red-50"><LogOut size={16} className="shrink-0" />Sign Out</button>
+              {tabs.map(t => {
+                if (t.href) {
+                  return (
+                    <Link
+                      key={t.k}
+                      href={t.href}
+                      className="w-full flex items-center gap-3 px-4 sm:px-6 py-3 sm:py-3.5 text-xs sm:text-sm border-t border-[#E8E8E8] text-neutral-600 hover:bg-[#FAF6EF]/50 transition cursor-pointer"
+                    >
+                      <t.i size={16} className="shrink-0" />
+                      <span className="flex-1 text-left">{t.n}</span>
+                      <ChevronRight size={14} className="opacity-40 shrink-0" />
+                    </Link>
+                  );
+                }
+                return (
+                  <button
+                    key={t.k}
+                    onClick={() => setTab(t.k)}
+                    className={`w-full flex items-center gap-3 px-4 sm:px-6 py-3 sm:py-3.5 text-xs sm:text-sm border-t border-[#E8E8E8] transition cursor-pointer ${tab === t.k ? 'bg-[#FAF6EF] text-[#9C6B30] font-medium' : 'text-neutral-600 hover:bg-[#FAF6EF]/50'}`}
+                  >
+                    <t.i size={16} className="shrink-0" />
+                    <span className="flex-1 text-left">{t.n}</span>
+                    <ChevronRight size={14} className="opacity-40 shrink-0" />
+                  </button>
+                );
+              })}
+              <button onClick={doLogout} className="w-full flex items-center gap-3 px-4 sm:px-6 py-3 sm:py-3.5 text-xs sm:text-sm border-t border-[#E8E8E8] text-red-600 hover:bg-red-50 cursor-pointer"><LogOut size={16} className="shrink-0" />Sign Out</button>
             </nav>
           </div>
         </aside>
@@ -840,12 +866,9 @@ export default function AccountPage() {
           )}
 
           {tab === 'wishlist' && (
-            <div className="border border-[#E8E8E8] rounded-xl p-4 sm:p-6 md:p-8">
-              <div className="font-display text-xl xs:text-2xl sm:text-3xl text-[#1A1A1A] mb-1">Your Wishlist</div>
-              <div className="gold-line w-12 mb-6" />
-              {wishItems.length === 0 ? (<div className="text-center py-12 sm:py-16"><Heart size={30} className="mx-auto text-[#9C6B30] mb-3" /><div className="font-serif-luxe text-base sm:text-lg text-neutral-500">Nothing saved yet.</div><Link href="/shop" className="inline-block mt-4 text-[#9C6B30] border-b border-[#9C6B30] pb-1 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase">Explore</Link></div>) : (
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-6">{wishItems.map((p, i) => <ProductCard key={p.id} p={p} index={i} />)}</div>
-              )}
+            <div className="border border-[#E8E8E8] rounded-xl p-8 sm:p-12 text-center space-y-3">
+              <Loader2 className="animate-spin text-[#9C6B30] mx-auto" size={32} />
+              <p className="text-sm text-neutral-500 font-serif-luxe">Redirecting to your Wishlist…</p>
             </div>
           )}
         </section>

@@ -1586,7 +1586,12 @@ async function handleRoute(request, { params }) {
     if (route === '/wishlist' && method === 'GET') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const list = await db.collection('wishlist').find({ userId: u.id }).sort({ createdAt: -1 }).toArray();
-      return ok({ wishlist: list.map(clean) })
+      const productIds = list.map(w => w.productId).filter(Boolean);
+      let prods = [];
+      if (productIds.length > 0) {
+        prods = await db.collection('products').find({ id: { $in: productIds } }).toArray();
+      }
+      return ok({ wishlist: list.map(clean), products: prods.map(clean) })
     }
     if (route === '/wishlist' && method === 'POST') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
