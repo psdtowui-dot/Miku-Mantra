@@ -304,10 +304,7 @@ function WhyUs({ assuranceSection, assuranceCards = [] }) {
   );
 }
 
-function Testimonials() {
-  const t = [{ n: 'Aanya Kapoor', r: 'The Meher choker was my bridal moment. Received compliments the whole night — it truly felt like a family heirloom in the making.', c: 'Bride, Delhi' }, { n: 'Ishaan Mehta', r: 'Bought the Aureus solitaire for our anniversary. The brilliance is unreal, and the packaging felt like a Cartier boutique.', c: 'Anniversary, Mumbai' }, { n: 'Priyanka Rao', r: 'I wear the Saanvi chain every single day. Feather-light, and the shine is exactly the same six months in.', c: 'Everyday Muse, Bangalore' }];
-  return (<section className="py-10 md:py-20 bg-[#1A1A1A] text-white"><div className="max-w-[1400px] mx-auto px-4 sm:px-6 md:px-8"><div className="text-center max-w-2xl mx-auto mb-8 sm:mb-12"><div className="text-[10px] sm:text-[11px] tracking-[0.35em] uppercase text-[#D4AF37] mb-2 sm:mb-3">Voices from the Vault</div><h2 className="font-display text-2xl xs:text-3xl md:text-5xl font-light break-words">Loved by 10,000+ patrons</h2><div className="gold-line w-16 mx-auto my-4 sm:my-5" /></div><div className="grid md:grid-cols-3 gap-4 sm:gap-6">{t.map((x, i) => (<motion.div key={i} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * .1 }} className="p-4 xs:p-6 sm:p-8 rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur"><div className="flex gap-1 text-[#D4AF37] mb-3 sm:mb-4">{Array(5).fill(0).map((_, k) => <span key={k}>★</span>)}</div><p className="font-serif-luxe text-base sm:text-xl leading-relaxed text-white/90">&ldquo;{x.r}&rdquo;</p><div className="mt-4 sm:mt-6 pt-3 sm:pt-4 border-t border-white/10"><div className="font-medium text-sm sm:text-base">{x.n}</div><div className="text-xs text-white/50 mt-0.5">{x.c}</div></div></motion.div>))}</div></div></section>);
-}
+
 
 function InstagramStrip() {
   const imgs = ['https://images.unsplash.com/photo-1651160670627-2896ddf7822f?crop=entropy&cs=srgb&fm=jpg&q=85', 'https://images.unsplash.com/photo-1685970731194-e27b477e87ba?crop=entropy&cs=srgb&fm=jpg&q=85', 'https://images.unsplash.com/photo-1622398925373-3f91b1e275f5?crop=entropy&cs=srgb&fm=jpg&q=85', 'https://images.unsplash.com/photo-1585960622850-ed33c41d6418?crop=entropy&cs=srgb&fm=jpg&q=85', 'https://images.unsplash.com/photo-1610173827043-9db50e0d8ef9?crop=entropy&cs=srgb&fm=jpg&q=85', 'https://images.unsplash.com/photo-1600685890506-593fdf55949b?crop=entropy&cs=srgb&fm=jpg&q=85'];
@@ -384,7 +381,6 @@ export default function HomePage({ initialData }) {
       <CollectionsTabs collections={collections} allProducts={products} />
       <OfferBanner promotions={homepageCMS.homepagePromotions} />
       <WhyUs assuranceSection={homepageCMS.assuranceSection} assuranceCards={homepageCMS.assuranceCards} />
-      <Testimonials />
       <InstagramStrip />
       <Newsletter />
       <RecentlyViewed />

@@ -149,7 +149,17 @@ function ShopInner() {
     // Sort order
     if (sort === 'price-asc') result.sort((a, b) => a.price - b.price);
     else if (sort === 'price-desc') result.sort((a, b) => b.price - a.price);
-    else if (sort === 'rating') result.sort((a, b) => b.rating - a.rating);
+    else if (sort === 'rating') result.sort((a, b) => (b.rating || 0) - (a.rating || 0));
+    else if (sort === 'discount') {
+      result.sort((a, b) => {
+        const discA = a.mrp > a.price && a.mrp > 0 ? ((a.mrp - a.price) / a.mrp) * 100 : 0;
+        const discB = b.mrp > b.price && b.mrp > 0 ? ((b.mrp - b.price) / b.mrp) * 100 : 0;
+        if (discB !== discA) return discB - discA;
+        const saveA = a.mrp > a.price ? a.mrp - a.price : 0;
+        const saveB = b.mrp > b.price ? b.mrp - b.price : 0;
+        return saveB - saveA;
+      });
+    }
 
     return result;
   }, [all, filterGroups, sp, range, sort]);
@@ -400,6 +410,7 @@ function ShopInner() {
                       {sort === 'rating' && 'Highest Rated'}
                       {sort === 'price-asc' && 'Price: Low to High'}
                       {sort === 'price-desc' && 'Price: High to Low'}
+                      {sort === 'discount' && 'High Discount'}
                     </span>
                     <ChevronDown size={14} className={`text-neutral-400 shrink-0 transition-transform duration-300 ${sortOpen ? 'rotate-180 text-[#9C6B30]' : ''}`} />
                   </button>
@@ -419,7 +430,8 @@ function ShopInner() {
                             { val: 'newest', lab: 'Newest' },
                             { val: 'rating', lab: 'Highest Rated' },
                             { val: 'price-asc', lab: 'Price: Low to High' },
-                            { val: 'price-desc', lab: 'Price: High to Low' }
+                            { val: 'price-desc', lab: 'Price: High to Low' },
+                            { val: 'discount', lab: 'High Discount' }
                           ].map(opt => (
                             <button
                               key={opt.val}

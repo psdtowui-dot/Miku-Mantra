@@ -1452,9 +1452,34 @@ async function handleRoute(request, { params }) {
         return err('Please enter a valid 10-digit mobile number.', 400);
       }
       const cleanPhone = `+91${mobile10}`;
-      await db.collection('users').updateOne({ id: u.id }, { $set: { name: (name || u.name).trim(), phone: cleanPhone } });
+      await db.collection('users').updateOne(
+        { id: u.id },
+        { $set: { name: (name || u.name).trim(), phone: cleanPhone, updatedAt: new Date() } }
+      );
+
+      // Invalidate server session cache so subsequent /auth/me queries return fresh data immediately
+      invalidateUserSessionCache(u.id);
+      let t = request.headers.get('x-auth-token') || request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+      if (!t) { try { const store = await cookies(); t = store.get(SESSION_COOKIE)?.value; } catch (e) {} }
+      if (t) invalidateUserSessionCache(t);
+
       const up = await db.collection('users').findOne({ id: u.id });
-      return ok({ user: { id: up.id, name: up.name, email: up.email, phone: up.phone || '', role: up.role || 'user' } });
+      const { passwordHash, passwordSalt, _id, ...safe } = up;
+      const roleKey = up.roleKey || (up.role === 'admin' ? 'SUPER_ADMIN' : 'USER');
+      const status = up.status || 'active';
+      const permissions = up.role === 'admin' ? await resolveUserPermissions(db, { ...up, roleKey }) : [];
+      const finalUser = {
+        ...safe,
+        phone: cleanPhone,
+        roleKey,
+        status,
+        permissions,
+        hasPassword: !!passwordHash
+      };
+      if (t) {
+        userSessionCacheSet(t, finalUser, 30000);
+      }
+      return ok({ user: finalUser });
     }
     if (route === '/auth/change-password' && method === 'POST') {
       const u = await getCurrentUser(db, request);
@@ -1491,6 +1516,11 @@ async function handleRoute(request, { params }) {
         { id: u.id },
         { $set: { passwordSalt: salt, passwordHash: hash, updatedAt: new Date() } }
       );
+
+      invalidateUserSessionCache(u.id);
+      let t = request.headers.get('x-auth-token') || request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+      if (!t) { try { const store = await cookies(); t = store.get(SESSION_COOKIE)?.value; } catch (e) {} }
+      if (t) invalidateUserSessionCache(t);
 
       return ok({
         success: true,
@@ -1654,7 +1684,12 @@ async function handleRoute(request, { params }) {
     if (route === '/wishlist' && method === 'GET') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const list = await db.collection('wishlist').find({ userId: u.id }).sort({ createdAt: -1 }).toArray();
-      return ok({ wishlist: list.map(clean) })
+      const productIds = list.map(w => w.productId).filter(Boolean);
+      let prods = [];
+      if (productIds.length > 0) {
+        prods = await db.collection('products').find({ id: { $in: productIds } }).toArray();
+      }
+      return ok({ wishlist: list.map(clean), products: prods.map(clean) })
     }
     if (route === '/wishlist' && method === 'POST') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);

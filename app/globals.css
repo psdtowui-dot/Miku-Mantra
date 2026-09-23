@@ -235,3 +235,35 @@ aside nav {
     animation-range: 0px 200px;
   }
 }
+
+/* Premium minimalist scrollbar for reviews */
+.reviews-scroll-container {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(156, 107, 48, 0.25) transparent;
+  overscroll-behavior-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.reviews-scroll-container::-webkit-scrollbar {
+  width: 4px;
+}
+
+.reviews-scroll-container::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.reviews-scroll-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.reviews-scroll-container::-webkit-scrollbar-thumb {
+  background: rgba(156, 107, 48, 0.25);
+  border-radius: 999px;
+  transition: background 0.2s ease;
+}
+
+.reviews-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 107, 48, 0.6);
+}
