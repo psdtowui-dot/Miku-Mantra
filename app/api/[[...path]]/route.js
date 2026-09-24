@@ -1678,6 +1678,40 @@ async function handleRoute(request, { params }) {
       await db.collection('addresses').insertOne(a);
       return ok({ address: clean(a) });
     }
+    if (route.startsWith('/addresses/') && (method === 'PUT' || method === 'PATCH')) {
+      const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
+      const id = route.split('/')[2];
+      const b = await request.json();
+      const rawPhone = (b.phone || '').toString();
+      const digits = rawPhone.replace(/[^0-9]/g, '');
+      const mobile10 = digits.startsWith('91') && digits.length === 12 ? digits.slice(2) : digits;
+      if (!mobile10 || mobile10.length !== 10) {
+        return err('Please enter a valid 10-digit mobile number.', 400);
+      }
+      const cleanPhone = `+91${mobile10}`;
+      const isDefault = !!b.isDefault;
+      if (isDefault) {
+        await db.collection('addresses').updateMany({ userId: u.id }, { $set: { isDefault: false } });
+      }
+      const updateData = {
+        fullName: (b.fullName || '').trim(),
+        phone: cleanPhone,
+        line1: (b.line1 || '').trim(),
+        line2: (b.line2 || '').trim(),
+        city: (b.city || '').trim(),
+        state: (b.state || '').trim(),
+        pincode: (b.pincode || '').trim(),
+        isDefault,
+        updatedAt: new Date()
+      };
+      const res = await db.collection('addresses').updateOne(
+        { id, userId: u.id },
+        { $set: updateData }
+      );
+      if (res.matchedCount === 0) return err('Address not found', 404);
+      const updated = await db.collection('addresses').findOne({ id, userId: u.id });
+      return ok({ address: clean(updated) });
+    }
     if (route.startsWith('/addresses/') && method === 'DELETE') { const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401); const id = route.split('/')[2]; await db.collection('addresses').deleteOne({ id, userId: u.id }); return ok({ ok: true }) }
 
     // ============ WISHLIST ============

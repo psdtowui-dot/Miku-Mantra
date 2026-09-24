@@ -1,11 +1,11 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { useWishlist } from '@/lib/cart-store';
 import { PRODUCTS, formatINR } from '@/lib/products';
-import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound, RotateCcw, Clock, Star, Sparkles, CheckCircle2 } from 'lucide-react';
+import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound, RotateCcw, Clock, Star, Sparkles, CheckCircle2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function AccountPage() {
@@ -22,6 +22,9 @@ export default function AccountPage() {
   const [profileForm, setProfileForm] = useState({ name: '', phone: '' });
   const [addrForm, setAddrForm] = useState({ fullName: '', phone: '', line1: '', line2: '', city: '', state: '', pincode: '', isDefault: false });
   const [showAddr, setShowAddr] = useState(false);
+  const [editingAddrId, setEditingAddrId] = useState(null);
+  const [addrSaving, setAddrSaving] = useState(false);
+  const addrFormRef = useRef(null);
   const [saving, setSaving] = useState(false);
 
   const [profileErrors, setProfileErrors] = useState({ name: '', phone: '' });
@@ -174,7 +177,43 @@ export default function AccountPage() {
     return valid;
   };
 
-  async function addAddress(e) {
+  const handleAddNewAddress = () => {
+    setEditingAddrId(null);
+    setAddrForm({ fullName: '', phone: '', line1: '', line2: '', city: '', state: '', pincode: '', isDefault: addresses.length === 0 });
+    setAddrErrors({});
+    setShowAddr(true);
+    setTimeout(() => {
+      addrFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 50);
+  };
+
+  const handleEditAddress = (addr) => {
+    setEditingAddrId(addr.id);
+    setAddrForm({
+      fullName: addr.fullName || '',
+      phone: addr.phone || '',
+      line1: addr.line1 || '',
+      line2: addr.line2 || '',
+      city: addr.city || '',
+      state: addr.state || '',
+      pincode: addr.pincode || '',
+      isDefault: !!addr.isDefault
+    });
+    setAddrErrors({});
+    setShowAddr(true);
+    setTimeout(() => {
+      addrFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 50);
+  };
+
+  const handleCancelAddrForm = () => {
+    setShowAddr(false);
+    setEditingAddrId(null);
+    setAddrForm({ fullName: '', phone: '', line1: '', line2: '', city: '', state: '', pincode: '', isDefault: false });
+    setAddrErrors({});
+  };
+
+  async function saveAddress(e) {
     e.preventDefault();
     if (!validateAllAddr()) return;
     const rawDigits = (addrForm.phone || '').toString().replace(/^\+91/, '').replace(/[^0-9]/g, '').slice(0, 10);
@@ -182,11 +221,64 @@ export default function AccountPage() {
       ...addrForm,
       phone: `+91${rawDigits}`
     };
-    const r = await authFetch('/api/addresses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    const d = await r.json(); if (r.ok) { setShowAddr(false); setAddrForm({ fullName: '', phone: '', line1: '', line2: '', city: '', state: '', pincode: '', isDefault: false }); setAddrErrors({}); loadAddresses(); toast.success('Address saved'); } else toast.error(d.error || 'Failed');
+    setAddrSaving(true);
+    try {
+      if (editingAddrId) {
+        const r = await authFetch(`/api/addresses/${editingAddrId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (r.ok) {
+          handleCancelAddrForm();
+          await loadAddresses();
+          toast.success('Address updated successfully');
+        } else {
+          toast.error(d.error || 'Failed to update address');
+        }
+      } else {
+        const r = await authFetch('/api/addresses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (r.ok) {
+          handleCancelAddrForm();
+          await loadAddresses();
+          toast.success('Address saved successfully');
+        } else {
+          toast.error(d.error || 'Failed to save address');
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('An error occurred while saving address');
+    } finally {
+      setAddrSaving(false);
+    }
   }
 
-  async function deleteAddress(id) { const r = await authFetch(`/api/addresses/${id}`, { method: 'DELETE' }); if (r.ok) { loadAddresses(); toast.success('Removed'); } }
+  async function deleteAddress(id) {
+    if (!confirm('Are you sure you want to remove this address?')) return;
+    try {
+      const r = await authFetch(`/api/addresses/${id}`, { method: 'DELETE' });
+      if (r.ok) {
+        if (editingAddrId === id) {
+          handleCancelAddrForm();
+        }
+        await loadAddresses();
+        toast.success('Address removed');
+      } else {
+        const d = await r.json().catch(() => ({}));
+        toast.error(d.error || 'Failed to remove address');
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Network error');
+    }
+  }
 
   const handlePasswordSubmit = async (e) => {
     e.preventDefault();
@@ -916,7 +1008,7 @@ export default function AccountPage() {
                   <p className="text-xs text-neutral-500 mt-1 font-light">Manage your shipping and billing destinations for seamless checkout.</p>
                 </div>
                 <button
-                  onClick={() => setShowAddr(true)}
+                  onClick={handleAddNewAddress}
                   className="flex items-center gap-1.5 text-[11px] tracking-[0.2em] uppercase px-4 py-2 border border-[#1A1A1A] rounded-full hover:bg-[#1A1A1A] hover:text-white transition shrink-0 cursor-pointer font-medium"
                 >
                   <Plus size={13} /> Add New Address
@@ -926,7 +1018,23 @@ export default function AccountPage() {
               <div className="h-[1.5px] w-14 bg-gradient-to-r from-[#9C6B30] to-[#E5C378] my-5" />
 
               {showAddr && (
-                <form onSubmit={addAddress} className="grid md:grid-cols-2 gap-4 border border-[#EAE3D6] rounded-2xl p-5 sm:p-6 mb-6 bg-gradient-to-br from-[#FAF8F5] to-white shadow-sm" noValidate>
+                <form ref={addrFormRef} onSubmit={saveAddress} className="grid md:grid-cols-2 gap-4 border border-[#EAE3D6] rounded-2xl p-5 sm:p-6 mb-6 bg-gradient-to-br from-[#FAF8F5] to-white shadow-sm" noValidate>
+                  <div className="md:col-span-2 flex items-center justify-between pb-3 border-b border-[#EAE3D6]/70">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-[#9C6B30]"></span>
+                      <h3 className="font-serif-luxe text-lg text-[#1A1A1A] font-light">
+                        {editingAddrId ? 'Edit Address' : 'Add New Address'}
+                      </h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCancelAddrForm}
+                      className="text-xs text-neutral-400 hover:text-neutral-700 transition cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+
                   <div>
                     <label className="block text-[11px] tracking-[0.2em] uppercase font-medium text-neutral-600 mb-1.5">Full Name *</label>
                     <input
@@ -1061,8 +1169,15 @@ export default function AccountPage() {
                   </div>
 
                   <div className="md:col-span-2 flex gap-3 justify-end pt-2">
-                    <button type="button" onClick={() => { setShowAddr(false); setAddrErrors({}); }} className="px-5 py-2.5 text-xs text-neutral-500 hover:text-neutral-800 transition cursor-pointer">Cancel</button>
-                    <button className="px-7 py-2.5 bg-[#1A1A1A] text-white text-[11px] tracking-[0.2em] uppercase rounded-full hover:bg-[#9C6B30] transition cursor-pointer font-medium shadow-sm">Save Address</button>
+                    <button type="button" onClick={handleCancelAddrForm} className="px-5 py-2.5 text-xs text-neutral-500 hover:text-neutral-800 transition cursor-pointer">Cancel</button>
+                    <button
+                      type="submit"
+                      disabled={addrSaving}
+                      className="px-7 py-2.5 bg-[#1A1A1A] text-white text-[11px] tracking-[0.2em] uppercase rounded-full hover:bg-[#9C6B30] transition cursor-pointer font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      {addrSaving && <Loader2 className="animate-spin" size={13} />}
+                      {editingAddrId ? 'Update Address' : 'Save Address'}
+                    </button>
                   </div>
                 </form>
               )}
@@ -1079,7 +1194,14 @@ export default function AccountPage() {
 
               <div className="grid md:grid-cols-2 gap-4">
                 {addresses.map(a => (
-                  <div key={a.id} className="border border-[#EAE3D6] rounded-2xl p-5 sm:p-6 relative bg-gradient-to-br from-white to-[#FAF8F5]/60 hover:border-[#9C6B30] transition shadow-[0_2px_12px_rgba(0,0,0,0.02)]">
+                  <div
+                    key={a.id}
+                    className={`border rounded-2xl p-5 sm:p-6 relative bg-gradient-to-br transition shadow-[0_2px_12px_rgba(0,0,0,0.02)] ${
+                      editingAddrId === a.id
+                        ? 'border-[#9C6B30] bg-[#FAF8F5] ring-2 ring-[#9C6B30]/20'
+                        : 'border-[#EAE3D6] from-white to-[#FAF8F5]/60 hover:border-[#9C6B30]'
+                    }`}
+                  >
                     {a.isDefault && (
                       <span className="absolute top-4 right-4 text-[9px] tracking-widest uppercase text-[#9C6B30] bg-[#FAF5EB] border border-[#9C6B30]/30 px-2.5 py-0.5 rounded-full font-semibold">
                         Default
@@ -1090,9 +1212,23 @@ export default function AccountPage() {
                       {a.line1}{a.line2 ? ', ' + a.line2 : ''}<br />{a.city}, {a.state} — {a.pincode}
                     </div>
                     <div className="text-xs text-neutral-500 mt-2 font-light">Phone: {a.phone}</div>
-                    <button onClick={() => deleteAddress(a.id)} className="mt-4 text-xs text-red-600 hover:text-red-800 hover:underline flex items-center gap-1 cursor-pointer font-medium">
-                      <Trash2 size={12} /> Remove
-                    </button>
+
+                    <div className="mt-4 pt-3 border-t border-[#EAE3D6]/70 flex items-center gap-4">
+                      <button
+                        type="button"
+                        onClick={() => handleEditAddress(a)}
+                        className="text-xs text-[#9C6B30] hover:text-[#7A5222] hover:underline flex items-center gap-1.5 cursor-pointer font-medium transition"
+                      >
+                        <Pencil size={12} /> Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteAddress(a.id)}
+                        className="text-xs text-red-600 hover:text-red-800 hover:underline flex items-center gap-1.5 cursor-pointer font-medium transition"
+                      >
+                        <Trash2 size={12} /> Remove
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
