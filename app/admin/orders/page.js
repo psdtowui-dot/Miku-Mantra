@@ -157,7 +157,7 @@ export default function AdminOrders(){
                   <th className="text-left p-3">Items</th>
                   <th className="text-right p-3 min-w-[90px]">Total</th>
                   <th className="text-left p-3 min-w-[80px]">Payment</th>
-                  <th className="text-left p-3 min-w-[150px]">Status &amp; Courier</th>
+                  <th className="text-left p-3 min-w-[130px]">Status</th>
                   <th className="text-center p-3 min-w-[110px]">Actions</th>
                 </tr>
               </thead>
@@ -204,29 +204,29 @@ export default function AdminOrders(){
                             <option value="cancelled">Cancelled</option>
                           </select>
 
-                          {/* Courier tracking summary under status */}
-                          {(o.courier?.trackingNumber || o.trackingNumber) ? (
-                            <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-neutral-600 font-mono">
-                              <span className="text-[#9C6B30] font-sans font-semibold uppercase">
-                                {o.courier?.carrier || o.carrier || 'Courier'}:
-                              </span>
-                              <span className="bg-neutral-100 px-1.5 py-0.5 rounded border border-neutral-200 font-medium">
-                                {o.courier?.trackingNumber || o.trackingNumber}
-                              </span>
-                              {(o.courier?.trackingUrl || o.trackingUrl) && (
-                                <a 
-                                  href={o.courier?.trackingUrl || o.trackingUrl} 
-                                  target="_blank" 
-                                  rel="noreferrer" 
-                                  className="text-[#9C6B30] hover:text-[#855B29] inline-flex items-center" 
-                                  title="Track Live ↗"
-                                >
-                                  <ExternalLink size={11} />
-                                </a>
-                              )}
-                            </div>
-                          ) : (
-                            o.status === 'shipped' && (
+                          {/* Courier tracking option ONLY shown when order was shipped */}
+                          {o.status === 'shipped' && (
+                            (o.courier?.trackingNumber || o.trackingNumber) ? (
+                              <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-neutral-600 font-mono">
+                                <span className="text-[#9C6B30] font-sans font-semibold uppercase">
+                                  {o.courier?.carrier || o.carrier || 'Courier'}:
+                                </span>
+                                <span className="bg-neutral-100 px-1.5 py-0.5 rounded border border-neutral-200 font-medium">
+                                  {o.courier?.trackingNumber || o.trackingNumber}
+                                </span>
+                                {(o.courier?.trackingUrl || o.trackingUrl) && (
+                                  <a 
+                                    href={o.courier?.trackingUrl || o.trackingUrl} 
+                                    target="_blank" 
+                                    rel="noreferrer" 
+                                    className="text-[#9C6B30] hover:text-[#855B29] inline-flex items-center" 
+                                    title="Track Live ↗"
+                                  >
+                                    <ExternalLink size={11} />
+                                  </a>
+                                )}
+                              </div>
+                            ) : (
                               <button
                                 onClick={() => openShipModal(o)}
                                 className="mt-1 text-[10px] text-[#9C6B30] hover:underline flex items-center gap-1 font-medium cursor-pointer"

@@ -234,8 +234,8 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
             )}
           </div>
 
-          {/* Courier & Logistics Tracking Section */}
-          {(order.status === 'shipped' || order.status === 'delivered' || order.courier || order.carrier || isEditingCourier) && (
+          {/* Courier & Logistics Tracking Section - ONLY shown when order was shipped */}
+          {order.status === 'shipped' && (
             <div className="bg-white rounded-xl border border-neutral-200 p-4 sm:p-6 shadow-xs space-y-4">
               <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-neutral-100">
                 <div className="flex items-center gap-2">

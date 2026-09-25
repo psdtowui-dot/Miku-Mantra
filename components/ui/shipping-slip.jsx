@@ -240,8 +240,8 @@ export default function ShippingSlip({ order, onClose }) {
             </div>
           </div>
 
-          {/* Courier & Tracking Information (if dispatched) */}
-          {(order.courier?.carrier || order.courier?.trackingNumber || order.carrier || order.trackingNumber) && (
+          {/* Courier & Tracking Information (ONLY when order was shipped) */}
+          {order.status === 'shipped' && (order.courier?.carrier || order.courier?.trackingNumber || order.carrier || order.trackingNumber) && (
             <div className="border-b-[2px] border-black pb-2.5 pt-1 text-xs">
               <div className="flex justify-between items-center bg-neutral-50 p-2 border border-neutral-300 rounded-sm">
                 <div>

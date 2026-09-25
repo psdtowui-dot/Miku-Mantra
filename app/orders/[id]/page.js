@@ -788,8 +788,8 @@ function OrderInner() {
             <div className="text-xs text-neutral-500 mb-6">Estimated delivery: <span className="text-[#1A1A1A] font-medium">{new Date(order.estimatedDelivery).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</span></div>
           )}
 
-          {/* Live Courier Tracking Card */}
-          {(order.status === 'shipped' || order.status === 'delivered' || order.courier || order.carrier || order.trackingNumber) && (
+          {/* Live Courier Tracking Card - ONLY shown when order was shipped */}
+          {order.status === 'shipped' && (
             <div className="mb-6 p-4 sm:p-6 bg-gradient-to-br from-[#FAF6EF] via-white to-[#FAF6EF]/40 border border-[#D4AF37]/50 rounded-xl shadow-xs space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#E8E8E8]">
                 <div className="flex items-center gap-3">

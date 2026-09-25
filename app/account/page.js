@@ -444,7 +444,7 @@ export default function AccountPage() {
                           <div className="text-[10px] tracking-widest uppercase text-neutral-400">Order</div>
                           <div className="font-serif-luxe text-base sm:text-lg text-[#1A1A1A]">{o.orderNumber}</div>
                           <div className="text-xs text-neutral-500 mt-1">{new Date(o.placedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })} · {o.items.length} item(s)</div>
-                          {(o.courier?.trackingNumber || o.trackingNumber) && (
+                          {o.status === 'shipped' && (o.courier?.trackingNumber || o.trackingNumber) && (
                             <div className="mt-1.5 flex items-center gap-1.5">
                               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#FAF6EF] text-[#9C6B30] font-sans font-semibold text-[10px] uppercase border border-[#D4AF37]/30">
                                 <Truck size={11} /> {o.courier?.carrier || o.carrier || 'Courier'}: <span className="font-mono">{o.courier?.trackingNumber || o.trackingNumber}</span>
