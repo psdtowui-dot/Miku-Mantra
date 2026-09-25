@@ -240,7 +240,30 @@ export default function ShippingSlip({ order, onClose }) {
             </div>
           </div>
 
+          {/* Courier & Tracking Information (ONLY when order was shipped) */}
+          {order.status === 'shipped' && (order.courier?.carrier || order.courier?.trackingNumber || order.carrier || order.trackingNumber) && (
+            <div className="border-b-[2px] border-black pb-2.5 pt-1 text-xs">
+              <div className="flex justify-between items-center bg-neutral-50 p-2 border border-neutral-300 rounded-sm">
+                <div>
+                  <span className="text-[8px] text-neutral-500 uppercase font-bold block">Logistics Carrier</span>
+                  <span className="font-bold text-neutral-900 text-xs">
+                    {order.courier?.carrier || order.carrier || 'Courier Partner'}
+                  </span>
+                </div>
+                {(order.courier?.trackingNumber || order.trackingNumber) && (
+                  <div className="text-right">
+                    <span className="text-[8px] text-neutral-500 uppercase font-bold block">AWB / Consignment No.</span>
+                    <span className="font-mono font-black text-black tracking-wider text-xs">
+                      {order.courier?.trackingNumber || order.trackingNumber}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Section 4: Compact Package Items Summary */}
+
           <div className="border-b-[2px] border-black pb-3">
             <div className="text-[10px] tracking-wider font-bold uppercase text-neutral-500 mb-1.5 flex items-center gap-1">
               <Package size={10} className="stroke-[3]" /> PACKAGE CONTENTS:

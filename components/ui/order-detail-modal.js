@@ -1,7 +1,8 @@
 'use client';
-import React from 'react';
-import { X, Download, Calendar, User, Mail, Phone, MapPin, Wallet, CreditCard, Clock, FileText, CheckCircle2, Package, Truck, Home } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Download, Calendar, User, Mail, Phone, MapPin, Wallet, CreditCard, Clock, FileText, CheckCircle2, Package, Truck, Home, ExternalLink, Copy, Check, Edit3, Send, ShieldCheck } from 'lucide-react';
 import { formatINR } from '@/lib/products';
+import { POPULAR_COURIERS, getTrackingUrl } from '@/lib/courier';
 import ShippingSlip from './shipping-slip';
 
 const STEPS = [
@@ -13,6 +14,82 @@ const STEPS = [
 
 export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
   const [showShippingSlip, setShowShippingSlip] = React.useState(false);
+  const [isEditingCourier, setIsEditingCourier] = useState(false);
+  const [showShipPrompt, setShowShipPrompt] = useState(false);
+  const [carrierInput, setCarrierInput] = useState('Blue Dart');
+  const [customCarrierInput, setCustomCarrierInput] = useState('');
+  const [trackingNumberInput, setTrackingNumberInput] = useState('');
+  const [trackingUrlInput, setTrackingUrlInput] = useState('');
+  const [courierNotesInput, setCourierNotesInput] = useState('');
+  const [copiedAwb, setCopiedAwb] = useState(false);
+  const [savingCourier, setSavingCourier] = useState(false);
+
+  useEffect(() => {
+    if (order) {
+      const currentCarrier = order.courier?.carrier || order.carrier || 'Blue Dart';
+      const isKnown = POPULAR_COURIERS.some(c => c.name.toLowerCase() === currentCarrier.toLowerCase() || c.id === currentCarrier.toLowerCase());
+      if (isKnown) {
+        setCarrierInput(currentCarrier);
+        setCustomCarrierInput('');
+      } else if (currentCarrier) {
+        setCarrierInput('other');
+        setCustomCarrierInput(currentCarrier);
+      }
+      setTrackingNumberInput(order.courier?.trackingNumber || order.trackingNumber || '');
+      setTrackingUrlInput(order.courier?.trackingUrl || order.trackingUrl || '');
+      setCourierNotesInput(order.courier?.notes || '');
+    }
+  }, [order]);
+
+  const handleCopyAwb = (awb) => {
+    if (!awb) return;
+    navigator.clipboard?.writeText(awb);
+    setCopiedAwb(true);
+    setTimeout(() => setCopiedAwb(false), 2000);
+  };
+
+  const handleCarrierChange = (val) => {
+    setCarrierInput(val);
+    const effectiveCarrier = val === 'other' ? customCarrierInput : val;
+    if (trackingNumberInput && (!trackingUrlInput || trackingUrlInput.includes('track'))) {
+      setTrackingUrlInput(getTrackingUrl(effectiveCarrier, trackingNumberInput));
+    }
+  };
+
+  const handleTrackingNumberChange = (val) => {
+    setTrackingNumberInput(val);
+    const effectiveCarrier = carrierInput === 'other' ? customCarrierInput : carrierInput;
+    setTrackingUrlInput(getTrackingUrl(effectiveCarrier, val));
+  };
+
+  const handleStatusSelect = (newStatus) => {
+    if (newStatus === 'shipped' && order.status !== 'shipped') {
+      setShowShipPrompt(true);
+    } else {
+      onUpdateStatus(order.id, newStatus);
+    }
+  };
+
+  const handleSaveCourierDetails = async (asShippedStatus = false) => {
+    setSavingCourier(true);
+    try {
+      const carrierName = carrierInput === 'other' ? customCarrierInput.trim() : carrierInput;
+      const computedUrl = trackingUrlInput.trim() || getTrackingUrl(carrierName, trackingNumberInput.trim());
+      const courierData = {
+        carrier: carrierName || 'Courier Partner',
+        trackingNumber: trackingNumberInput.trim(),
+        trackingUrl: computedUrl,
+        notes: courierNotesInput.trim()
+      };
+      const targetStatus = asShippedStatus ? 'shipped' : order.status;
+      await onUpdateStatus(order.id, targetStatus, courierData);
+      setIsEditingCourier(false);
+      setShowShipPrompt(false);
+    } finally {
+      setSavingCourier(false);
+    }
+  };
+
   if (!order) return null;
 
   const address = order.address || {};
@@ -79,7 +156,7 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
                   ) : (
                     <select 
                       value={order.status} 
-                      onChange={(e) => onUpdateStatus(order.id, e.target.value)}
+                      onChange={(e) => handleStatusSelect(e.target.value)}
                       className="border border-neutral-200 bg-[#F7F5F0] rounded-md px-2.5 py-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-700 focus:outline-none focus:border-[#9C6B30] cursor-pointer"
                     >
                       <option value="confirmed">Confirmed</option>
@@ -156,6 +233,189 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
               </div>
             )}
           </div>
+
+          {/* Courier & Logistics Tracking Section - ONLY shown when order was shipped */}
+          {order.status === 'shipped' && (
+            <div className="bg-white rounded-xl border border-neutral-200 p-4 sm:p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-neutral-100">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-full bg-[#9C6B30]/10 text-[#9C6B30] flex items-center justify-center">
+                    <Truck size={16} />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold tracking-widest uppercase text-neutral-800">
+                      Courier &amp; Logistics Tracking
+                    </h3>
+                    <p className="text-[11px] text-neutral-500">
+                      Live dispatch information and consignment details
+                    </p>
+                  </div>
+                </div>
+
+                {!isEditingCourier && onUpdateStatus && (
+                  <button
+                    onClick={() => setIsEditingCourier(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#9C6B30] bg-[#FAF6EF] hover:bg-[#9C6B30] hover:text-white rounded border border-[#D4AF37]/40 transition shadow-2xs cursor-pointer"
+                  >
+                    <Edit3 size={13} />
+                    {order.courier?.trackingNumber || order.trackingNumber ? 'Edit Courier Details' : 'Add Courier Details'}
+                  </button>
+                )}
+              </div>
+
+              {isEditingCourier ? (
+                /* Inline Edit Courier Form */
+                <form 
+                  onSubmit={(e) => { e.preventDefault(); handleSaveCourierDetails(false); }}
+                  className="space-y-4 bg-neutral-50 p-4 rounded-lg border border-neutral-200"
+                >
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-neutral-600 uppercase tracking-wider mb-1">
+                        Courier Partner *
+                      </label>
+                      <select
+                        value={carrierInput}
+                        onChange={(e) => handleCarrierChange(e.target.value)}
+                        className="w-full text-xs border border-neutral-300 rounded px-2.5 py-2 bg-white focus:outline-none focus:border-[#9C6B30]"
+                      >
+                        {POPULAR_COURIERS.map(c => (
+                          <option key={c.id} value={c.name}>{c.name}</option>
+                        ))}
+                      </select>
+                      {carrierInput === 'Other Courier' && (
+                        <input
+                          type="text"
+                          placeholder="Enter courier name"
+                          value={customCarrierInput}
+                          onChange={(e) => {
+                            setCustomCarrierInput(e.target.value);
+                            if (trackingNumberInput) {
+                              setTrackingUrlInput(getTrackingUrl(e.target.value, trackingNumberInput));
+                            }
+                          }}
+                          className="mt-2 w-full text-xs border border-neutral-300 rounded px-2.5 py-1.5 bg-white focus:outline-none focus:border-[#9C6B30]"
+                        />
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-neutral-600 uppercase tracking-wider mb-1">
+                        AWB / Tracking Number *
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 12345678901"
+                        value={trackingNumberInput}
+                        onChange={(e) => handleTrackingNumberChange(e.target.value)}
+                        className="w-full text-xs font-mono border border-neutral-300 rounded px-2.5 py-2 bg-white focus:outline-none focus:border-[#9C6B30]"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-neutral-600 uppercase tracking-wider mb-1">
+                      Tracking Portal URL (Auto-generated or custom)
+                    </label>
+                    <input
+                      type="url"
+                      placeholder="https://..."
+                      value={trackingUrlInput}
+                      onChange={(e) => setTrackingUrlInput(e.target.value)}
+                      className="w-full text-xs font-mono border border-neutral-300 rounded px-2.5 py-2 bg-white focus:outline-none focus:border-[#9C6B30]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-neutral-600 uppercase tracking-wider mb-1">
+                      Dispatch Notes (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Fragile jewellery, tamper-evident bag sealed"
+                      value={courierNotesInput}
+                      onChange={(e) => setCourierNotesInput(e.target.value)}
+                      className="w-full text-xs border border-neutral-300 rounded px-2.5 py-1.5 bg-white focus:outline-none focus:border-[#9C6B30]"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-neutral-200">
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingCourier(false)}
+                      className="px-3 py-1.5 text-xs text-neutral-600 hover:text-neutral-900 border border-neutral-300 rounded bg-white hover:bg-neutral-100 transition cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={savingCourier}
+                      className="px-4 py-1.5 text-xs font-semibold text-white bg-[#9C6B30] hover:bg-[#855B29] rounded transition flex items-center gap-1.5 disabled:opacity-60 cursor-pointer"
+                    >
+                      {savingCourier ? 'Saving...' : 'Save Courier Tracking'}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                /* View Courier Information */
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                  <div>
+                    <span className="text-[10px] text-neutral-400 block uppercase tracking-wider">Logistics Partner</span>
+                    <span className="font-semibold text-neutral-800 text-sm mt-0.5 block">
+                      {order.courier?.carrier || order.carrier || 'Not assigned yet'}
+                    </span>
+                    {(order.courier?.shippedAt || order.shippedAt) && (
+                      <span className="text-[10px] text-neutral-400 mt-0.5 block">
+                        Dispatched: {new Date(order.courier?.shippedAt || order.shippedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] text-neutral-400 block uppercase tracking-wider">AWB / Tracking Number</span>
+                    {(order.courier?.trackingNumber || order.trackingNumber) ? (
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <code className="font-mono font-bold text-xs bg-neutral-100 px-2 py-0.5 rounded border border-neutral-200 text-neutral-800 select-all">
+                          {order.courier?.trackingNumber || order.trackingNumber}
+                        </code>
+                        <button
+                          onClick={() => handleCopyAwb(order.courier?.trackingNumber || order.trackingNumber)}
+                          className="text-neutral-400 hover:text-[#9C6B30] transition p-1 cursor-pointer"
+                          title="Copy AWB Number"
+                        >
+                          {copiedAwb ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="italic text-neutral-400 mt-0.5 block">No AWB entered yet</span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col justify-center sm:items-end">
+                    {(order.courier?.trackingUrl || order.trackingUrl) ? (
+                      <a
+                        href={order.courier?.trackingUrl || order.trackingUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-[#9C6B30] text-white text-xs font-semibold rounded hover:bg-[#855B29] transition shadow-xs w-full sm:w-auto"
+                      >
+                        <ExternalLink size={13} />
+                        Track Package ↗
+                      </a>
+                    ) : (
+                      <span className="text-[11px] text-neutral-400">Tracking link unavailable</span>
+                    )}
+                    {order.courier?.notes && (
+                      <p className="text-[11px] text-neutral-500 italic mt-1 truncate max-w-[200px]">
+                        "{order.courier.notes}"
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
 
           {/* Customer & Address + Payment Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
@@ -407,6 +667,132 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
           )}
         </div>
       </div>
+
+      {/* Ship Order with Courier Tracking Prompt Modal */}
+      {showShipPrompt && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs z-[70] flex items-center justify-center p-3" onClick={() => setShowShipPrompt(false)}>
+          <div 
+            className="bg-white rounded-xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-neutral-200 space-y-4 animate-in fade-in zoom-in-95"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+              <div className="flex items-center gap-2">
+                <Truck size={18} className="text-[#9C6B30]" />
+                <h3 className="font-display text-base font-semibold text-neutral-800">
+                  Mark Order as Shipped
+                </h3>
+              </div>
+              <button 
+                onClick={() => setShowShipPrompt(false)} 
+                className="text-neutral-400 hover:text-neutral-700 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-neutral-600">
+              Provide courier partner and AWB consignment details for Order <span className="font-mono font-bold text-neutral-800">#{order.orderNumber}</span>. Customers will receive live tracking access.
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-neutral-700 uppercase tracking-wider mb-1">
+                  Courier Partner *
+                </label>
+                <select
+                  value={carrierInput}
+                  onChange={(e) => handleCarrierChange(e.target.value)}
+                  className="w-full text-xs border border-neutral-300 rounded-md px-3 py-2 bg-white focus:outline-none focus:border-[#9C6B30]"
+                >
+                  {POPULAR_COURIERS.map(c => (
+                    <option key={c.id} value={c.name}>{c.name}</option>
+                  ))}
+                </select>
+                {carrierInput === 'Other Courier' && (
+                  <input
+                    type="text"
+                    placeholder="Enter custom courier name"
+                    value={customCarrierInput}
+                    onChange={(e) => setCustomCarrierInput(e.target.value)}
+                    className="mt-2 w-full text-xs border border-neutral-300 rounded px-2.5 py-1.5 focus:outline-none focus:border-[#9C6B30]"
+                  />
+                )}
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-neutral-700 uppercase tracking-wider mb-1">
+                  AWB / Tracking Number
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. 1490211029348"
+                  value={trackingNumberInput}
+                  onChange={(e) => handleTrackingNumberChange(e.target.value)}
+                  className="w-full text-xs font-mono border border-neutral-300 rounded-md px-3 py-2 bg-white focus:outline-none focus:border-[#9C6B30]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-neutral-700 uppercase tracking-wider mb-1">
+                  Tracking Portal URL
+                </label>
+                <input
+                  type="url"
+                  placeholder="https://..."
+                  value={trackingUrlInput}
+                  onChange={(e) => setTrackingUrlInput(e.target.value)}
+                  className="w-full text-xs font-mono border border-neutral-300 rounded-md px-3 py-2 bg-white focus:outline-none focus:border-[#9C6B30]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-neutral-700 uppercase tracking-wider mb-1">
+                  Dispatch Notes (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Secure jewellery pouch sealed"
+                  value={courierNotesInput}
+                  onChange={(e) => setCourierNotesInput(e.target.value)}
+                  className="w-full text-xs border border-neutral-300 rounded-md px-3 py-1.5 bg-white focus:outline-none focus:border-[#9C6B30]"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-3 border-t border-neutral-100">
+              <button
+                type="button"
+                onClick={() => {
+                  onUpdateStatus(order.id, 'shipped');
+                  setShowShipPrompt(false);
+                }}
+                className="text-xs text-neutral-500 hover:text-neutral-800 underline order-2 sm:order-1 cursor-pointer"
+              >
+                Ship without tracking info
+              </button>
+
+              <div className="flex items-center gap-2 order-1 sm:order-2 w-full sm:w-auto justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowShipPrompt(false)}
+                  className="px-3 py-2 text-xs border border-neutral-300 rounded-md text-neutral-700 hover:bg-neutral-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={savingCourier}
+                  onClick={() => handleSaveCourierDetails(true)}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-[#9C6B30] hover:bg-[#855B29] rounded-md transition shadow-sm disabled:opacity-60 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {savingCourier ? 'Updating...' : 'Confirm & Mark Shipped'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showShippingSlip && (
         <ShippingSlip 
           order={order} 

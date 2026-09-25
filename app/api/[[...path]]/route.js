@@ -11,10 +11,12 @@ import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS a
 import { buildInvoicePDF } from '@/lib/pdf-invoice'
 import { buildShippingSlipPDF } from '@/lib/pdf-shippingslip'
 import { WAREHOUSE_PINCODE } from '@/lib/constants'
-import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification } from '@/lib/notifications'
-import { sendPasswordResetEmail } from '@/lib/email-service'
+import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification, sendOrderShippedNotification } from '@/lib/notifications'
+import { sendPasswordResetEmail, sendOrderShippedEmail } from '@/lib/email-service'
 import { seedRbacIfEmpty, resolveUserPermissions, hasPermission, logAdminActivity, validatePrivilegeEscalation, PERMISSIONS, DEFAULT_ROLES } from '@/lib/rbac'
 import { invalidateSiteDataCache } from '@/lib/db-site-settings'
+import { getTrackingUrl } from '@/lib/courier'
+
 
 
 // Simple in-memory server cache with TTL
@@ -4549,23 +4551,85 @@ async function handleRoute(request, { params }) {
           cancelled: 'Order cancelled.',
           confirmed: 'Order confirmed.'
         };
-        const setDoc = { status: b.status };
+
+        const targetStatus = b.status || existingOrder.status;
+        const setDoc = {};
+        if (b.status) {
+          setDoc.status = b.status;
+        }
+
         if (b.status === 'delivered') {
           setDoc.deliveredAt = new Date();
         }
 
+        // Process courier tracking details
+        const rawCourier = b.courier || (b.carrier || b.trackingNumber || b.trackingUrl ? {
+          carrier: b.carrier || b.courierName || '',
+          trackingNumber: b.trackingNumber || '',
+          trackingUrl: b.trackingUrl || '',
+          notes: b.shippingNotes || b.notes || ''
+        } : null);
+
+        let courierInfo = null;
+        if (rawCourier) {
+          const carrier = (rawCourier.carrier || existingOrder.courier?.carrier || existingOrder.carrier || 'Courier').trim();
+          const trackingNumber = (rawCourier.trackingNumber || '').trim();
+          let trackingUrl = (rawCourier.trackingUrl || '').trim();
+          
+          if (!trackingUrl && trackingNumber) {
+            trackingUrl = getTrackingUrl(carrier, trackingNumber);
+          }
+
+          const shippedAt = rawCourier.shippedAt ? new Date(rawCourier.shippedAt) : (existingOrder.courier?.shippedAt || existingOrder.shippedAt || new Date());
+          const courierNotes = (rawCourier.notes || '').trim();
+
+          courierInfo = {
+            carrier,
+            trackingNumber,
+            trackingUrl,
+            shippedAt,
+            notes: courierNotes
+          };
+
+          setDoc.courier = courierInfo;
+          setDoc.carrier = carrier;
+          setDoc.trackingNumber = trackingNumber;
+          setDoc.trackingUrl = trackingUrl;
+          if (!existingOrder.shippedAt && (targetStatus === 'shipped' || targetStatus === 'delivered')) {
+            setDoc.shippedAt = shippedAt;
+          }
+        } else if (b.status === 'shipped' && !existingOrder.shippedAt) {
+          setDoc.shippedAt = new Date();
+        }
+
+        // Build history note
+        let historyNote = b.note || '';
+        if (!historyNote) {
+          if (b.status === 'shipped') {
+            historyNote = courierInfo?.carrier && courierInfo?.trackingNumber
+              ? `Shipped via ${courierInfo.carrier} (AWB: ${courierInfo.trackingNumber})`
+              : 'Shipped via courier.';
+          } else if (!b.status && courierInfo) {
+            historyNote = `Courier tracking updated: ${courierInfo.carrier} (AWB: ${courierInfo.trackingNumber || 'N/A'})`;
+          } else if (b.status) {
+            historyNote = notes[b.status] || `Status updated to ${b.status}`;
+          }
+        }
+
+        const updateOperation = { $set: setDoc };
+        if (b.status || courierInfo) {
+          updateOperation.$push = {
+            statusHistory: {
+              status: targetStatus,
+              at: new Date(),
+              note: historyNote
+            }
+          };
+        }
+
         const updateResult = await db.collection('orders').updateOne(
           { id, status: { $ne: 'cancelled' } },
-          {
-            $set: setDoc,
-            $push: {
-              statusHistory: {
-                status: b.status,
-                at: new Date(),
-                note: b.note || notes[b.status] || ''
-              }
-            }
-          }
+          updateOperation
         );
 
         if (updateResult.modifiedCount === 0) {
@@ -4573,8 +4637,29 @@ async function handleRoute(request, { params }) {
         }
 
         const up = await db.collection('orders').findOne({ id });
-        return ok({ order: clean(up) });
+        const cleanedUp = clean(up);
+
+        // Enriched customer email
+        const customerEmail = up.customerEmail || up.guestEmail || (up.userId ? (await db.collection('users').findOne({ id: up.userId }))?.email : null);
+        if (customerEmail) cleanedUp.customerEmail = customerEmail;
+
+        // Trigger notifications if shipped or tracking updated on shipped order
+        if (b.status === 'shipped' || (courierInfo && targetStatus === 'shipped')) {
+          sendOrderShippedNotification({ order: cleanedUp, courier: cleanedUp.courier, user: null, db }).catch(err => {
+            console.error('[Notification Error] Shipped notification error:', err);
+          });
+          if (customerEmail) {
+            sendOrderShippedEmail({ toEmail: customerEmail, order: cleanedUp, courier: cleanedUp.courier, customerName: cleanedUp.address?.fullName }).catch(err => {
+              console.error('[Email Error] Shipped email error:', err);
+            });
+          }
+        }
+
+        await logAdminActivity(db, admin, 'orders.update', `Updated order #${existingOrder.orderNumber}: ${b.status ? `status=${b.status}` : 'updated tracking'}`);
+
+        return ok({ order: cleanedUp });
       }
+
 
       // Customers
       if (sub === 'customers' && method === 'GET') {

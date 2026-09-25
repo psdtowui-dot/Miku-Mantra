@@ -345,6 +345,18 @@ backend:
           agent: "testing"
           comment: "All existing features verified working after Phase 3 changes. GET /products/celestine-diamond-pendant returns product + related. GET /categories, /collections, /banners all return correct data. POST /coupons/validate with AURELIA10 works correctly. POST /orders with COD placement works and decrements stock correctly. No regressions detected."
 
+  - task: "Courier Tracking After Order Shipped"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js, lib/courier.js, lib/notifications.js, lib/email-service.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "PUT /admin/orders/:id accepts carrier, trackingNumber, trackingUrl, courier notes. Automatically builds tracking URL using preset Indian logistics templates (Blue Dart, Delhivery, DTDC, India Post, Shiprocket, FedEx, Ekart). Stores structured courier object in MongoDB and records audit note in statusHistory. Supports updating courier details post-shipment. Sends WhatsApp/SMS & email notifications. Verified via test_courier_tracking.py (6/6 tests passing)."
+
 frontend:
   - task: "Frontend UI"
     implemented: true
@@ -358,14 +370,27 @@ frontend:
           agent: "testing"
           comment: "Frontend testing not performed as per instructions. Only backend API testing was conducted."
 
+  - task: "Courier Tracking UI (Admin & Customer)"
+    implemented: true
+    working: true
+    file: "app/orders/[id]/page.js, app/admin/orders/page.js, components/ui/order-detail-modal.js, app/account/page.js, components/ui/shipping-slip.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "1) Admin orders table shows tracking pill with 1-click track link and opens modal to enter courier details when changing status to shipped. 2) OrderDetailModal includes dedicated Courier & Logistics Tracking panel with inline edit form. 3) Customer order page (/orders/[id]) displays Live Courier Tracking Card with carrier badge, AWB copy button, and Track Package link. 4) Customer account (/account) shows courier tracking badge on order cards. 5) Shipping slip and PDF include carrier name and AWB number. Build verified clean."
+
 metadata:
-  created_by: "testing_agent"
-  version: "1.0"
-  test_sequence: 2
+  created_by: "main_agent"
+  version: "1.1"
+  test_sequence: 3
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Courier Tracking After Order Shipped"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -375,3 +400,5 @@ agent_communication:
       message: "Completed comprehensive backend API testing. All 78 tests passed with 100% success rate. All backend endpoints are working correctly including: public data APIs, authentication flow, admin auto-promotion, addresses CRUD, coupons validation, orders (COD and Razorpay MOCK), admin endpoints (dashboard, products, orders, customers, categories, collections, coupons, banners, reviews), admin access control, and reviews. No issues found. Backend is production-ready."
     - agent: "testing"
       message: "Phase 3 backend testing completed successfully. All 79 Phase 3 tests passed with 100% success rate. NEW features tested and verified working: (1) Products pagination with backwards compatibility - page/limit params work, cache with 30s TTL confirmed faster on 2nd request. (2) Order status history tracking - statusHistory array correctly tracks all status changes (confirmed→packed→shipped→delivered) with timestamps and notes. (3) PDF Invoice generation - /orders/:id/invoice returns valid PDF with correct headers, magic bytes, and order number in filename. (4) Cache invalidation - admin writes correctly bust cache for products, categories, collections, and banners. (5) Sitemap & Robots - /sitemap.xml contains product/category/collection URLs, /robots.txt has sitemap reference and /admin disallow. (6) Regression tests - all existing features still working correctly, no regressions detected. All Phase 3 features are production-ready."
+    - agent: "main"
+      message: "Courier Tracking after shipment has been fully implemented and verified. Production build succeeded with zero errors, and all 6 automated courier tracking tests passed (login, ship with Blue Dart, verify AWB and auto-URL generation, statusHistory note audit trail, post-shipment courier update to Delhivery, and customer endpoint verification)."
