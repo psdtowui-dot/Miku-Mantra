@@ -4175,6 +4175,76 @@ async function handleRoute(request, { params }) {
         }
       }
 
+      // Batch upload media
+      if (sub === 'upload-batch' && method === 'POST') {
+        try {
+          const formData = await request.formData();
+          const files = formData.getAll('files');
+          if ((!files || files.length === 0) && formData.get('file')) {
+            files.push(formData.get('file'));
+          }
+          if (!files.length) return err('No files provided', 400);
+
+          const uploadsDir = pathModule.join(process.cwd(), 'public', 'uploads');
+          if (!fs.existsSync(uploadsDir)) {
+            fs.mkdirSync(uploadsDir, { recursive: true });
+          }
+
+          const results = [];
+          for (const file of files) {
+            if (!file || typeof file === 'string') continue;
+            const fileType = file.type || 'image/jpeg';
+            const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+            if (!allowedTypes.includes(fileType)) continue;
+
+            const originalName = file.name || 'image.jpg';
+            const ext = pathModule.extname(originalName).toLowerCase();
+            if (!['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext)) continue;
+            if (file.size > 15 * 1024 * 1024) continue;
+
+            const bytes = await file.arrayBuffer();
+            const buffer = Buffer.from(bytes);
+            const filename = `${uuidv4()}-${originalName.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+
+            let savedToDb = false;
+            try {
+              await db.collection('uploads').insertOne({
+                filename,
+                contentType: fileType,
+                data: buffer,
+                createdAt: new Date()
+              });
+              savedToDb = true;
+            } catch (dbErr) {
+              console.warn('MongoDB upload-batch save failed:', dbErr.message);
+            }
+
+            let savedToFs = false;
+            try {
+              const filePath = pathModule.join(uploadsDir, filename);
+              fs.writeFileSync(filePath, buffer);
+              savedToFs = true;
+            } catch (fsErr) {
+              console.warn('Local filesystem batch write failed:', fsErr.message);
+            }
+
+            if (savedToDb || savedToFs) {
+              const url = savedToDb ? `/api/uploads/${filename}` : `/uploads/${filename}`;
+              results.push({
+                originalName,
+                filename,
+                url
+              });
+            }
+          }
+
+          return ok({ uploads: results });
+        } catch (e) {
+          console.error('Upload batch error:', e);
+          return err('Upload batch failed: ' + e.message, 500);
+        }
+      }
+
       // Global Banner settings transitions
       if (sub === 'bannerSettings') {
         if (method === 'GET') {
@@ -4245,6 +4315,242 @@ async function handleRoute(request, { params }) {
         _cache.delete('admin_dashboard');
         return ok({ product: clean(p) });
       }
+
+      // Bulk JSON Import Products
+      if (sub === 'products/import' && method === 'POST') {
+        if (!hasPermission(admin, 'products.create') && !hasPermission(admin, 'products.edit')) {
+          return err('Permission denied: products.create or products.edit required', 403);
+        }
+
+        const b = await request.json().catch(() => ({}));
+        const rawProducts = Array.isArray(b.products) ? b.products : [];
+        const matchMode = b.matchMode || 'update'; // 'update' | 'skip' | 'create_new'
+        const overwriteImages = !!b.overwriteImages;
+
+        if (!rawProducts.length) {
+          return err('No products provided for import', 400);
+        }
+
+        let createdCount = 0;
+        let updatedCount = 0;
+        let skippedCount = 0;
+        const errors = [];
+        const importedProducts = [];
+
+        for (let idx = 0; idx < rawProducts.length; idx++) {
+          const item = rawProducts[idx];
+          if (!item || typeof item !== 'object') continue;
+
+          const name = (item.name || '').trim();
+          if (!name) {
+            errors.push({ index: idx, error: 'Product name is required' });
+            continue;
+          }
+
+          const price = Number(item.price);
+          if (isNaN(price) || price < 0) {
+            errors.push({ index: idx, name, error: 'Valid price is required' });
+            continue;
+          }
+
+          const mrp = item.mrp !== undefined && item.mrp !== '' && !isNaN(Number(item.mrp)) ? Number(item.mrp) : price;
+          const stock = item.stock !== undefined && !isNaN(parseInt(item.stock)) ? parseInt(item.stock) : 10;
+          const category = (item.category || 'gold').trim().toLowerCase();
+          const collection = (item.collection || 'trending').trim().toLowerCase();
+          const gender = (item.gender || 'women').trim().toLowerCase();
+
+          // Search matching product in database by name, sku, or slug
+          const queryConditions = [
+            { name: { $regex: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } }
+          ];
+          if (item.sku && String(item.sku).trim()) {
+            queryConditions.push({ sku: String(item.sku).trim() });
+          }
+          if (item.slug && String(item.slug).trim()) {
+            queryConditions.push({ slug: String(item.slug).trim().toLowerCase() });
+          }
+
+          const existing = await db.collection('products').findOne({ $or: queryConditions });
+
+          // Extract and normalize images
+          let images = [];
+          if (Array.isArray(item.images)) {
+            images = item.images.filter(img => typeof img === 'string' && img.trim());
+          } else if (typeof item.images === 'string' && item.images.trim()) {
+            images = item.images.split('\n').map(s => s.trim()).filter(Boolean);
+          } else if (item.image && typeof item.image === 'string' && item.image.trim()) {
+            images = [item.image.trim()];
+          }
+
+          // Build specifications array
+          let specifications = [];
+          if (Array.isArray(item.specifications)) {
+            specifications = item.specifications.map((s, i) => ({
+              id: s.id || `spec-${i}-${Math.random().toString(36).slice(2, 7)}`,
+              label: s.label?.trim() || '',
+              value: s.value?.trim() || '',
+              enabled: s.enabled !== false,
+              order: s.order !== undefined ? Number(s.order) : i
+            })).filter(s => s.label || s.value);
+          } else {
+            // Build specs from legacy fields if provided
+            let sOrder = 0;
+            if (item.metal) specifications.push({ id: 'legacy-metal', label: 'Metal', value: String(item.metal).trim(), enabled: true, order: sOrder++ });
+            if (item.purity) specifications.push({ id: 'legacy-purity', label: 'Purity', value: String(item.purity).trim(), enabled: true, order: sOrder++ });
+            if (item.stone) specifications.push({ id: 'legacy-stone', label: 'Stone', value: String(item.stone).trim(), enabled: true, order: sOrder++ });
+            if (item.weight) specifications.push({ id: 'legacy-weight', label: 'Weight', value: String(item.weight).trim(), enabled: true, order: sOrder++ });
+            if (item.size) specifications.push({ id: 'legacy-size', label: 'Size', value: String(item.size).trim(), enabled: true, order: sOrder++ });
+          }
+
+          // Build product benefits array
+          const productBenefits = Array.isArray(item.productBenefits) && item.productBenefits.length > 0
+            ? item.productBenefits
+            : (DEFAULT_PRODUCT_BENEFITS || []);
+
+          if (existing) {
+            if (matchMode === 'skip') {
+              skippedCount++;
+              continue;
+            }
+
+            if (matchMode === 'update') {
+              if (!hasPermission(admin, 'products.edit')) {
+                errors.push({ index: idx, name, error: 'Permission denied: products.edit required to update existing products' });
+                continue;
+              }
+
+              const finalImages = overwriteImages
+                ? (images.length > 0 ? images : (existing.images || []))
+                : Array.from(new Set([...(existing.images || []), ...images]));
+
+              const updateDoc = {
+                name,
+                category: category || existing.category,
+                collection: collection || existing.collection,
+                gender: gender || existing.gender || 'women',
+                price,
+                mrp,
+                stock,
+                images: finalImages,
+                updatedAt: new Date()
+              };
+
+              if (item.sku) updateDoc.sku = String(item.sku).trim();
+              if (item.description !== undefined) updateDoc.description = String(item.description);
+              if (item.metal) updateDoc.metal = String(item.metal);
+              if (item.stone) updateDoc.stone = String(item.stone);
+              if (item.purity) updateDoc.purity = String(item.purity);
+              if (item.weight) updateDoc.weight = String(item.weight);
+              if (item.size) updateDoc.size = String(item.size);
+              if (item.badge) updateDoc.badge = String(item.badge);
+              if (item.video !== undefined) updateDoc.video = String(item.video);
+              if (item.featured !== undefined) updateDoc.featured = Boolean(item.featured);
+              if (item.bestseller !== undefined) updateDoc.bestseller = Boolean(item.bestseller);
+              if (item.newArrival !== undefined) updateDoc.newArrival = Boolean(item.newArrival);
+              if (item.seoTitle) updateDoc.seoTitle = String(item.seoTitle);
+              if (item.seoDescription) updateDoc.seoDescription = String(item.seoDescription);
+              if (specifications.length > 0) updateDoc.specifications = specifications;
+              if (Array.isArray(item.productBenefits) && item.productBenefits.length > 0) {
+                updateDoc.productBenefits = item.productBenefits;
+              }
+
+              await db.collection('products').updateOne({ id: existing.id }, { $set: updateDoc });
+              updatedCount++;
+              importedProducts.push(clean({ ...existing, ...updateDoc }));
+              continue;
+            }
+          }
+
+          // Create new product (when existing doesn't exist, or matchMode === 'create_new')
+          if (!hasPermission(admin, 'products.create')) {
+            errors.push({ index: idx, name, error: 'Permission denied: products.create required to insert new products' });
+            continue;
+          }
+
+          let baseSlug = (item.slug || name)
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '');
+          if (!baseSlug) baseSlug = 'product-' + Date.now();
+          let finalSlug = baseSlug;
+
+          if (existing && matchMode === 'create_new') {
+            finalSlug = `${baseSlug}-${Date.now().toString(36).slice(-4)}`;
+          } else {
+            const slugClash = await db.collection('products').findOne({ slug: finalSlug });
+            if (slugClash) {
+              finalSlug = `${baseSlug}-${Date.now().toString(36).slice(-4)}`;
+            }
+          }
+
+          const newProd = {
+            id: uuidv4(),
+            slug: finalSlug,
+            name,
+            category,
+            collection,
+            gender,
+            price,
+            mrp,
+            stock,
+            sku: item.sku ? String(item.sku).trim() : `AUR-${name.slice(0, 3).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`,
+            images,
+            description: item.description || '',
+            metal: item.metal || '',
+            stone: item.stone || '',
+            purity: item.purity || '',
+            weight: item.weight || '',
+            size: item.size || '',
+            badge: item.badge || '',
+            video: item.video || '',
+            featured: Boolean(item.featured),
+            bestseller: Boolean(item.bestseller),
+            newArrival: Boolean(item.newArrival || collection === 'new-arrival'),
+            rating: item.rating ? Number(item.rating) : 4.8,
+            reviews: item.reviews ? Number(item.reviews) : 0,
+            seoTitle: item.seoTitle || `${name} | MikuMantra Fine Jewellery`,
+            seoDescription: item.seoDescription || (item.description ? item.description.slice(0, 155) : ''),
+            specifications: specifications.length ? specifications : [],
+            productBenefits: productBenefits,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          };
+
+          await db.collection('products').insertOne(newProd);
+          createdCount++;
+          importedProducts.push(clean(newProd));
+        }
+
+        cacheBust('products:');
+        _cache.delete('admin_products');
+        _cache.delete('admin_dashboard');
+
+        await logAdminActivity(db, {
+          admin,
+          action: 'PRODUCTS_BULK_IMPORT',
+          module: 'PRODUCTS',
+          metadata: {
+            totalProvided: rawProducts.length,
+            created: createdCount,
+            updated: updatedCount,
+            skipped: skippedCount,
+            matchMode
+          },
+          request
+        });
+
+        return ok({
+          ok: true,
+          total: rawProducts.length,
+          createdCount,
+          updatedCount,
+          skippedCount,
+          errors,
+          products: importedProducts
+        });
+      }
+
       if (sub.startsWith('products/') && method === 'PUT') {
         if (!hasPermission(admin, 'products.edit')) return err('Permission denied: products.edit required', 403);
         const id = sub.split('/')[1];
