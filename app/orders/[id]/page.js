@@ -4,7 +4,7 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/use-auth';
 import { formatINR } from '@/lib/products';
-import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft, Star, Edit3, Trash2, Upload, Camera, Image as ImageIcon } from 'lucide-react';
+import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft, Star, Edit3, Trash2, Upload, Camera, Image as ImageIcon, Copy, ExternalLink } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 
@@ -787,6 +787,99 @@ function OrderInner() {
           {order.status !== 'cancelled' && (
             <div className="text-xs text-neutral-500 mb-6">Estimated delivery: <span className="text-[#1A1A1A] font-medium">{new Date(order.estimatedDelivery).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</span></div>
           )}
+
+          {/* Live Courier Tracking Card */}
+          {(order.status === 'shipped' || order.status === 'delivered' || order.courier || order.carrier || order.trackingNumber) && (
+            <div className="mb-6 p-4 sm:p-6 bg-gradient-to-br from-[#FAF6EF] via-white to-[#FAF6EF]/40 border border-[#D4AF37]/50 rounded-xl shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#E8E8E8]">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-[#9C6B30]/10 text-[#9C6B30] flex items-center justify-center shrink-0">
+                    <Truck size={20} className={order.status === 'shipped' ? 'animate-pulse' : ''} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] tracking-widest uppercase font-bold text-[#9C6B30]">
+                        Logistics &amp; Courier Tracking
+                      </span>
+                      <span className={`px-2.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider rounded-full border ${order.status === 'delivered' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-amber-50 text-amber-900 border-amber-200'}`}>
+                        {order.status === 'delivered' ? 'Delivered' : 'In Transit'}
+                      </span>
+                    </div>
+                    <h3 className="font-display text-base sm:text-lg text-neutral-900 mt-0.5">
+                      Shipped via {order.courier?.carrier || order.carrier || 'Insured Courier Partner'}
+                    </h3>
+                  </div>
+                </div>
+
+                {(order.courier?.trackingUrl || order.trackingUrl) && (
+                  <a
+                    href={order.courier?.trackingUrl || order.trackingUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="self-start sm:self-center px-4 py-2 bg-[#9C6B30] hover:bg-[#855B29] text-white text-[11px] font-semibold tracking-wider uppercase rounded-md transition shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                  >
+                    Track Package Live ↗
+                  </a>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <span className="text-neutral-400 block text-[10px] uppercase tracking-wider">Logistics Carrier</span>
+                  <span className="font-semibold text-neutral-800 text-sm mt-0.5 block">
+                    {order.courier?.carrier || order.carrier || 'Standard Courier'}
+                  </span>
+                  {(order.courier?.shippedAt || order.shippedAt) && (
+                    <span className="text-[11px] text-neutral-500 mt-0.5 block">
+                      Dispatched on {new Date(order.courier?.shippedAt || order.shippedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </span>
+                  )}
+                </div>
+
+                <div>
+                  <span className="text-neutral-400 block text-[10px] uppercase tracking-wider">AWB / Consignment No.</span>
+                  {(order.courier?.trackingNumber || order.trackingNumber) ? (
+                    <div className="flex items-center gap-2 mt-1">
+                      <code className="font-mono font-bold text-xs bg-white px-2.5 py-1 rounded border border-neutral-300 text-neutral-800 select-all">
+                        {order.courier?.trackingNumber || order.trackingNumber}
+                      </code>
+                      <button
+                        onClick={() => {
+                          const awb = order.courier?.trackingNumber || order.trackingNumber;
+                          navigator.clipboard?.writeText(awb);
+                          toast.success('AWB number copied to clipboard');
+                        }}
+                        className="text-neutral-500 hover:text-[#9C6B30] transition p-1 cursor-pointer bg-white border border-neutral-200 rounded"
+                        title="Copy AWB Number"
+                      >
+                        <Copy size={13} />
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="italic text-neutral-500 mt-0.5 block">AWB being generated</span>
+                  )}
+                </div>
+
+                <div>
+                  <span className="text-neutral-400 block text-[10px] uppercase tracking-wider">Transit Insurance</span>
+                  <div className="flex items-center gap-1.5 text-neutral-700 font-medium mt-1">
+                    <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                    <span>100% Insured Delivery</span>
+                  </div>
+                  <p className="text-[10px] text-neutral-400 mt-0.5">
+                    Sealed in tamper-evident security pouch.
+                  </p>
+                </div>
+              </div>
+
+              {order.courier?.notes && (
+                <div className="p-2.5 bg-white/80 border border-[#E8E8E8] rounded-md text-xs text-neutral-600 italic">
+                  Note: {order.courier.notes}
+                </div>
+              )}
+            </div>
+          )}
+
 
           {/* Detailed timeline */}
           {(order.statusHistory || []).length > 0 && (
