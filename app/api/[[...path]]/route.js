@@ -161,32 +161,41 @@ async function recalculateProductRating(db, productId) {
   }
 }
 
-async function connectToMongo() {
-  const directUrl = process.env.MONGO_DIRECT_URL || "mongodb://akashsriv1984_db_user:2M5Edv773XLUmT15@ac-htqrxv1-shard-00-00.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-01.7szyylz.mongodb.net:27017/userPortal?ssl=true&replicaSet=atlas-1c5jr9-shard-0&authSource=admin&retryWrites=true&w=majority";
-  const srvUrl = process.env.MONGO_URL || process.env.MONGODB_URI;
-  const mongoUrl = process.env.MONGO_DIRECT_URL || directUrl || srvUrl;
-  if (!mongoUrl) {
-    throw new Error("MONGO_URL environment variable is missing.");
+const DIRECT_REPLICA_FALLBACK = "mongodb://akashsriv1984_db_user:2M5Edv773XLUmT15@ac-htqrxv1-shard-00-00.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-01.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-02.7szyylz.mongodb.net:27017/userPortal?ssl=true&replicaSet=atlas-1c5jr9-shard-0&authSource=admin&retryWrites=true&w=majority";
+
+const MONGO_CLIENT_OPTIONS = {
+  serverSelectionTimeoutMS: 10000,
+  connectTimeoutMS: 10000,
+  socketTimeoutMS: 45000,
+  maxIdleTimeMS: 30000, // Closes idle connections before Atlas terminates TLS sockets
+  minPoolSize: 1,
+  maxPoolSize: 20,
+  retryWrites: true,
+  retryReads: true
+};
+
+async function closeMongoConnection() {
+  const oldClient = client;
+  client = null;
+  db = null;
+  connectPromise = null;
+  if (oldClient) {
+    try {
+      await oldClient.close(true);
+    } catch (_) {}
   }
-  if (!connectPromise) {
-    connectPromise = (async () => {
-      try {
-        try {
-          dns.setServers(['8.8.8.8', '1.1.1.1']);
-        } catch (e) {}
-        try {
-          client = new MongoClient(mongoUrl, { serverSelectionTimeoutMS: 10000 });
-          await client.connect();
-        } catch (srvErr) {
-          if (directUrl && mongoUrl !== directUrl) {
-            console.log('MongoDB connection attempt failed, falling back to direct replica set...');
-            client = new MongoClient(directUrl, { serverSelectionTimeoutMS: 10000 });
-            await client.connect();
-          } else {
-            throw srvErr;
-          }
-        }
-        db = client.db(process.env.DB_NAME || 'userPortal');
+}
+
+async function isMongoAlive(c) {
+  if (!c) return false;
+  try {
+    await c.db(process.env.DB_NAME || 'userPortal').command({ ping: 1 }, { maxTimeMS: 2500 });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 let indexesCreated = false;
 async function ensureIndexes(database) {
   if (!database || indexesCreated) return;
@@ -215,6 +224,68 @@ async function ensureIndexes(database) {
   }
 }
 
+async function connectToMongo(forceReconnect = false) {
+  if (forceReconnect) {
+    await closeMongoConnection();
+  } else if (client && db) {
+    const alive = await isMongoAlive(client);
+    if (alive) return db;
+    console.warn('MongoDB connection unresponsive/dead, reconnecting cleanly...');
+    await closeMongoConnection();
+  }
+
+  if (!connectPromise) {
+    connectPromise = (async () => {
+      try {
+        const srvUrl = process.env.MONGO_URL || process.env.MONGODB_URI;
+        const directUrl = process.env.MONGO_DIRECT_URL || DIRECT_REPLICA_FALLBACK;
+        const primaryUrl = srvUrl || directUrl;
+
+        let newClient = null;
+        try {
+          newClient = new MongoClient(primaryUrl, MONGO_CLIENT_OPTIONS);
+          await newClient.connect();
+        } catch (firstErr) {
+          console.warn('Initial MongoDB connect attempt failed:', firstErr.message);
+          if (newClient) {
+            try { await newClient.close(true); } catch (_) {}
+            newClient = null;
+          }
+
+          // Try setting public DNS servers if local DNS failed
+          try {
+            dns.setServers(['8.8.8.8', '1.1.1.1']);
+          } catch (_) {}
+
+          try {
+            newClient = new MongoClient(primaryUrl, MONGO_CLIENT_OPTIONS);
+            await newClient.connect();
+          } catch (dnsErr) {
+            if (newClient) {
+              try { await newClient.close(true); } catch (_) {}
+              newClient = null;
+            }
+            if (directUrl && primaryUrl !== directUrl) {
+              console.log('MongoDB SRV connection failed, falling back to direct replica set...');
+              newClient = new MongoClient(directUrl, MONGO_CLIENT_OPTIONS);
+              await newClient.connect();
+            } else {
+              throw dnsErr;
+            }
+          }
+        }
+
+        client = newClient;
+        client.on('error', (err) => {
+          console.error('MongoDB Client pool error event:', err?.message || err);
+          closeMongoConnection().catch(() => {});
+        });
+        client.on('close', () => {
+          closeMongoConnection().catch(() => {});
+        });
+
+        db = client.db(process.env.DB_NAME || 'userPortal');
+
         if (!seeded) {
           await seedIfEmpty(db);
           await ensureIndexes(db);
@@ -225,7 +296,7 @@ async function ensureIndexes(database) {
         await seedRbacIfEmpty(database);
         return database;
       } catch (err) {
-        connectPromise = null; // Reset connection promise so subsequent requests can retry
+        await closeMongoConnection();
         throw err;
       }
     })();
@@ -641,6 +712,7 @@ function initEnvFileWatcher(db) {
 
   let debounceTimer = null;
   const onFileChange = () => {
+    lastSyncedAdmins = '';
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(async () => {
       try {
@@ -666,6 +738,8 @@ async function syncEnvAdminEmailsWithDatabase(db) {
   try {
     const envAdmins = getEnvAdminEmails();
     if (!envAdmins || envAdmins.length === 0) return;
+    const adminKey = envAdmins.slice().sort().join(',');
+    if (lastSyncedAdmins === adminKey) return;
 
     // 1. Ensure all active .env admin emails have role: 'admin' and syncedFromEnv: true in DB
     for (const em of envAdmins) {
@@ -713,6 +787,7 @@ async function syncEnvAdminEmailsWithDatabase(db) {
       // Immediately invalidate any active sessions so admin access is terminated
       await db.collection('sessions').deleteMany({ userId: obsoleteUser.id });
     }
+    lastSyncedAdmins = adminKey;
   } catch (err) {
     console.error('[Auto-Sync] Error syncing .env admin emails to database:', err);
   }
@@ -893,10 +968,45 @@ async function createAuditLog(db, { returnId, orderId, action, performedBy, oldS
 }
 
 
-async function handleRoute(request, { params }) {
-  const { path = [] } = await params
+function isTransientDbError(err) {
+  if (!err) return false;
+  const msg = String(err.message || err).toLowerCase();
+  const name = String(err.name || '').toLowerCase();
+  return (
+    name.includes('network') ||
+    name.includes('serverselection') ||
+    msg.includes('ssl') ||
+    msg.includes('tlsv1') ||
+    msg.includes('topology') ||
+    msg.includes('pool') ||
+    msg.includes('connection') ||
+    msg.includes('timed out') ||
+    msg.includes('timeout') ||
+    msg.includes('primary') ||
+    msg.includes('econnreset') ||
+    msg.includes('socket') ||
+    msg.includes('closed') ||
+    msg.includes('alert number 80') ||
+    msg.includes('interrupted')
+  );
+}
+
+async function handleRoute(request, context) {
+  return handleRouteInternal(request, context, false);
+}
+
+async function handleRouteInternal(request, context, isRetry = false) {
+  const { path = [] } = (await context?.params) || {}
   const route = `/${path.join('/')}`
   const method = request.method
+
+  let requestForRetry = null;
+  if (!isRetry && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    try {
+      requestForRetry = request.clone();
+    } catch (_) {}
+  }
+
   try {
     const db = await connectToMongo()
     const url = new URL(request.url); const q = url.searchParams
@@ -4423,6 +4533,76 @@ async function handleRoute(request, { params }) {
         }
       }
 
+      // Batch upload media
+      if (sub === 'upload-batch' && method === 'POST') {
+        try {
+          const formData = await request.formData();
+          const files = formData.getAll('files');
+          if ((!files || files.length === 0) && formData.get('file')) {
+            files.push(formData.get('file'));
+          }
+          if (!files.length) return err('No files provided', 400);
+
+          const uploadsDir = pathModule.join(process.cwd(), 'public', 'uploads');
+          if (!fs.existsSync(uploadsDir)) {
+            fs.mkdirSync(uploadsDir, { recursive: true });
+          }
+
+          const results = [];
+          for (const file of files) {
+            if (!file || typeof file === 'string') continue;
+            const fileType = file.type || 'image/jpeg';
+            const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+            if (!allowedTypes.includes(fileType)) continue;
+
+            const originalName = file.name || 'image.jpg';
+            const ext = pathModule.extname(originalName).toLowerCase();
+            if (!['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext)) continue;
+            if (file.size > 15 * 1024 * 1024) continue;
+
+            const bytes = await file.arrayBuffer();
+            const buffer = Buffer.from(bytes);
+            const filename = `${uuidv4()}-${originalName.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+
+            let savedToDb = false;
+            try {
+              await db.collection('uploads').insertOne({
+                filename,
+                contentType: fileType,
+                data: buffer,
+                createdAt: new Date()
+              });
+              savedToDb = true;
+            } catch (dbErr) {
+              console.warn('MongoDB upload-batch save failed:', dbErr.message);
+            }
+
+            let savedToFs = false;
+            try {
+              const filePath = pathModule.join(uploadsDir, filename);
+              fs.writeFileSync(filePath, buffer);
+              savedToFs = true;
+            } catch (fsErr) {
+              console.warn('Local filesystem batch write failed:', fsErr.message);
+            }
+
+            if (savedToDb || savedToFs) {
+              const url = savedToDb ? `/api/uploads/${filename}` : `/uploads/${filename}`;
+              results.push({
+                originalName,
+                filename,
+                url
+              });
+            }
+          }
+
+          return ok({ uploads: results });
+        } catch (e) {
+          console.error('Upload batch error:', e);
+          return err('Upload batch failed: ' + e.message, 500);
+        }
+      }
+
       // Global Banner settings transitions
       if (sub === 'bannerSettings') {
         if (method === 'GET') {
@@ -4493,6 +4673,242 @@ async function handleRoute(request, { params }) {
         _cache.delete('admin_dashboard');
         return ok({ product: clean(p) });
       }
+
+      // Bulk JSON Import Products
+      if (sub === 'products/import' && method === 'POST') {
+        if (!hasPermission(admin, 'products.create') && !hasPermission(admin, 'products.edit')) {
+          return err('Permission denied: products.create or products.edit required', 403);
+        }
+
+        const b = await request.json().catch(() => ({}));
+        const rawProducts = Array.isArray(b.products) ? b.products : [];
+        const matchMode = b.matchMode || 'update'; // 'update' | 'skip' | 'create_new'
+        const overwriteImages = !!b.overwriteImages;
+
+        if (!rawProducts.length) {
+          return err('No products provided for import', 400);
+        }
+
+        let createdCount = 0;
+        let updatedCount = 0;
+        let skippedCount = 0;
+        const errors = [];
+        const importedProducts = [];
+
+        for (let idx = 0; idx < rawProducts.length; idx++) {
+          const item = rawProducts[idx];
+          if (!item || typeof item !== 'object') continue;
+
+          const name = (item.name || '').trim();
+          if (!name) {
+            errors.push({ index: idx, error: 'Product name is required' });
+            continue;
+          }
+
+          const price = Number(item.price);
+          if (isNaN(price) || price < 0) {
+            errors.push({ index: idx, name, error: 'Valid price is required' });
+            continue;
+          }
+
+          const mrp = item.mrp !== undefined && item.mrp !== '' && !isNaN(Number(item.mrp)) ? Number(item.mrp) : price;
+          const stock = item.stock !== undefined && !isNaN(parseInt(item.stock)) ? parseInt(item.stock) : 10;
+          const category = (item.category || 'gold').trim().toLowerCase();
+          const collection = (item.collection || 'trending').trim().toLowerCase();
+          const gender = (item.gender || 'women').trim().toLowerCase();
+
+          // Search matching product in database by name, sku, or slug
+          const queryConditions = [
+            { name: { $regex: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } }
+          ];
+          if (item.sku && String(item.sku).trim()) {
+            queryConditions.push({ sku: String(item.sku).trim() });
+          }
+          if (item.slug && String(item.slug).trim()) {
+            queryConditions.push({ slug: String(item.slug).trim().toLowerCase() });
+          }
+
+          const existing = await db.collection('products').findOne({ $or: queryConditions });
+
+          // Extract and normalize images
+          let images = [];
+          if (Array.isArray(item.images)) {
+            images = item.images.filter(img => typeof img === 'string' && img.trim());
+          } else if (typeof item.images === 'string' && item.images.trim()) {
+            images = item.images.split('\n').map(s => s.trim()).filter(Boolean);
+          } else if (item.image && typeof item.image === 'string' && item.image.trim()) {
+            images = [item.image.trim()];
+          }
+
+          // Build specifications array
+          let specifications = [];
+          if (Array.isArray(item.specifications)) {
+            specifications = item.specifications.map((s, i) => ({
+              id: s.id || `spec-${i}-${Math.random().toString(36).slice(2, 7)}`,
+              label: s.label?.trim() || '',
+              value: s.value?.trim() || '',
+              enabled: s.enabled !== false,
+              order: s.order !== undefined ? Number(s.order) : i
+            })).filter(s => s.label || s.value);
+          } else {
+            // Build specs from legacy fields if provided
+            let sOrder = 0;
+            if (item.metal) specifications.push({ id: 'legacy-metal', label: 'Metal', value: String(item.metal).trim(), enabled: true, order: sOrder++ });
+            if (item.purity) specifications.push({ id: 'legacy-purity', label: 'Purity', value: String(item.purity).trim(), enabled: true, order: sOrder++ });
+            if (item.stone) specifications.push({ id: 'legacy-stone', label: 'Stone', value: String(item.stone).trim(), enabled: true, order: sOrder++ });
+            if (item.weight) specifications.push({ id: 'legacy-weight', label: 'Weight', value: String(item.weight).trim(), enabled: true, order: sOrder++ });
+            if (item.size) specifications.push({ id: 'legacy-size', label: 'Size', value: String(item.size).trim(), enabled: true, order: sOrder++ });
+          }
+
+          // Build product benefits array
+          const productBenefits = Array.isArray(item.productBenefits) && item.productBenefits.length > 0
+            ? item.productBenefits
+            : (DEFAULT_PRODUCT_BENEFITS || []);
+
+          if (existing) {
+            if (matchMode === 'skip') {
+              skippedCount++;
+              continue;
+            }
+
+            if (matchMode === 'update') {
+              if (!hasPermission(admin, 'products.edit')) {
+                errors.push({ index: idx, name, error: 'Permission denied: products.edit required to update existing products' });
+                continue;
+              }
+
+              const finalImages = overwriteImages
+                ? (images.length > 0 ? images : (existing.images || []))
+                : Array.from(new Set([...(existing.images || []), ...images]));
+
+              const updateDoc = {
+                name,
+                category: category || existing.category,
+                collection: collection || existing.collection,
+                gender: gender || existing.gender || 'women',
+                price,
+                mrp,
+                stock,
+                images: finalImages,
+                updatedAt: new Date()
+              };
+
+              if (item.sku) updateDoc.sku = String(item.sku).trim();
+              if (item.description !== undefined) updateDoc.description = String(item.description);
+              if (item.metal) updateDoc.metal = String(item.metal);
+              if (item.stone) updateDoc.stone = String(item.stone);
+              if (item.purity) updateDoc.purity = String(item.purity);
+              if (item.weight) updateDoc.weight = String(item.weight);
+              if (item.size) updateDoc.size = String(item.size);
+              if (item.badge) updateDoc.badge = String(item.badge);
+              if (item.video !== undefined) updateDoc.video = String(item.video);
+              if (item.featured !== undefined) updateDoc.featured = Boolean(item.featured);
+              if (item.bestseller !== undefined) updateDoc.bestseller = Boolean(item.bestseller);
+              if (item.newArrival !== undefined) updateDoc.newArrival = Boolean(item.newArrival);
+              if (item.seoTitle) updateDoc.seoTitle = String(item.seoTitle);
+              if (item.seoDescription) updateDoc.seoDescription = String(item.seoDescription);
+              if (specifications.length > 0) updateDoc.specifications = specifications;
+              if (Array.isArray(item.productBenefits) && item.productBenefits.length > 0) {
+                updateDoc.productBenefits = item.productBenefits;
+              }
+
+              await db.collection('products').updateOne({ id: existing.id }, { $set: updateDoc });
+              updatedCount++;
+              importedProducts.push(clean({ ...existing, ...updateDoc }));
+              continue;
+            }
+          }
+
+          // Create new product (when existing doesn't exist, or matchMode === 'create_new')
+          if (!hasPermission(admin, 'products.create')) {
+            errors.push({ index: idx, name, error: 'Permission denied: products.create required to insert new products' });
+            continue;
+          }
+
+          let baseSlug = (item.slug || name)
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '');
+          if (!baseSlug) baseSlug = 'product-' + Date.now();
+          let finalSlug = baseSlug;
+
+          if (existing && matchMode === 'create_new') {
+            finalSlug = `${baseSlug}-${Date.now().toString(36).slice(-4)}`;
+          } else {
+            const slugClash = await db.collection('products').findOne({ slug: finalSlug });
+            if (slugClash) {
+              finalSlug = `${baseSlug}-${Date.now().toString(36).slice(-4)}`;
+            }
+          }
+
+          const newProd = {
+            id: uuidv4(),
+            slug: finalSlug,
+            name,
+            category,
+            collection,
+            gender,
+            price,
+            mrp,
+            stock,
+            sku: item.sku ? String(item.sku).trim() : `AUR-${name.slice(0, 3).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`,
+            images,
+            description: item.description || '',
+            metal: item.metal || '',
+            stone: item.stone || '',
+            purity: item.purity || '',
+            weight: item.weight || '',
+            size: item.size || '',
+            badge: item.badge || '',
+            video: item.video || '',
+            featured: Boolean(item.featured),
+            bestseller: Boolean(item.bestseller),
+            newArrival: Boolean(item.newArrival || collection === 'new-arrival'),
+            rating: item.rating ? Number(item.rating) : 4.8,
+            reviews: item.reviews ? Number(item.reviews) : 0,
+            seoTitle: item.seoTitle || `${name} | MikuMantra Fine Jewellery`,
+            seoDescription: item.seoDescription || (item.description ? item.description.slice(0, 155) : ''),
+            specifications: specifications.length ? specifications : [],
+            productBenefits: productBenefits,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          };
+
+          await db.collection('products').insertOne(newProd);
+          createdCount++;
+          importedProducts.push(clean(newProd));
+        }
+
+        cacheBust('products:');
+        _cache.delete('admin_products');
+        _cache.delete('admin_dashboard');
+
+        await logAdminActivity(db, {
+          admin,
+          action: 'PRODUCTS_BULK_IMPORT',
+          module: 'PRODUCTS',
+          metadata: {
+            totalProvided: rawProducts.length,
+            created: createdCount,
+            updated: updatedCount,
+            skipped: skippedCount,
+            matchMode
+          },
+          request
+        });
+
+        return ok({
+          ok: true,
+          total: rawProducts.length,
+          createdCount,
+          updatedCount,
+          skippedCount,
+          errors,
+          products: importedProducts
+        });
+      }
+
       if (sub.startsWith('products/') && method === 'PUT') {
         if (!hasPermission(admin, 'products.edit')) return err('Permission denied: products.edit required', 403);
         const id = sub.split('/')[1];
@@ -5363,12 +5779,23 @@ async function handleRoute(request, { params }) {
 
     return err(`Route ${route} not found`, 404)
   } catch (e) {
-    console.error('API Error:', e);
-    const msg = String(e?.message || e);
-    if (msg.includes('SSL') || msg.includes('topology') || msg.includes('pool') || msg.includes('connection') || msg.includes('timed out') || msg.includes('Primary')) {
-      connectPromise = null;
-      try { if (client) client.close(); } catch (_) {}
+    console.error(`API Error on [${method} ${route}]:`, e);
+    if (!isRetry && isTransientDbError(e)) {
+      console.warn(`Transient DB connection/SSL issue on [${method} ${route}]. Reconnecting and retrying...`, e.message);
+      try {
+        await connectToMongo(true);
+        const retryReq = requestForRetry || request;
+        return await handleRouteInternal(retryReq, context, true);
+      } catch (retryErr) {
+        console.error('Retry after DB reconnect also failed:', retryErr);
+      }
     }
+
+    if (isTransientDbError(e)) {
+      await closeMongoConnection().catch(() => {});
+      return err('Database service is temporarily unavailable. Please try again in a moment.', 503);
+    }
+    const msg = String(e?.message || e);
     return err('Internal server error: ' + msg, 500);
   }
 }

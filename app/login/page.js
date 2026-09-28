@@ -59,10 +59,18 @@ function LoginInner(){
   }, []);
 
   useEffect(() => {
+    if (!loading && user) {
+      if (user.role === 'admin' && (!redirect || redirect === '/account')) {
+        router.replace('/admin');
+      } else {
+        router.replace(redirect);
+      }
+      return;
+    }
     if (redirect && redirect.startsWith('/admin')) {
       router.replace('/admin/login?redirect=' + encodeURIComponent(redirect));
     }
-  }, [redirect, router]);
+  }, [loading, user, redirect, router]);
 
   const handleGoogleCredentialResponse = async (response) => {
     if (!response?.credential) return;
@@ -70,8 +78,12 @@ function LoginInner(){
     setErr('');
     try {
       const u = await loginWithGoogle(response.credential);
-      toast.success(`Welcome, ${u.name || 'valued customer'}!`);
-      router.push(redirect);
+      toast.success(`Welcome, ${u.name || 'valued member'}!`);
+      if (u?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
+        router.push('/admin');
+      } else {
+        router.push(redirect);
+      }
     } catch (ex) {
       console.error('Google sign-in error:', ex);
       setErr(ex.message || 'Google sign-in failed');
@@ -181,8 +193,12 @@ function LoginInner(){
             if (resp?.access_token) {
               try {
                 const u = await loginWithGoogle({ accessToken: resp.access_token });
-                toast.success(`Welcome, ${u.name || 'valued customer'}!`);
-                router.push(redirect);
+                toast.success(`Welcome, ${u.name || 'valued member'}!`);
+                if (u?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
+                  router.push('/admin');
+                } else {
+                  router.push(redirect);
+                }
               } catch (ex) {
                 setErr(ex.message || 'Google sign-in failed');
                 toast.error(ex.message || 'Google sign-in failed');
@@ -267,11 +283,19 @@ function LoginInner(){
     setBusy(true);
     try {
       if (mode === 'login') {
-        await login(cleanEmail, form.password);
-        toast.success('Welcome back');
+        const u = await login(cleanEmail, form.password);
+        toast.success(`Welcome back${u?.name ? `, ${u.name}` : ''}!`);
+        if (u?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
+          router.push('/admin');
+          return;
+        }
       } else {
-        await register(form.name.trim(), cleanEmail, form.password);
-        toast.success('Account created');
+        const u = await register(form.name.trim(), cleanEmail, form.password);
+        toast.success('Account created successfully');
+        if (u?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
+          router.push('/admin');
+          return;
+        }
       }
       router.push(redirect);
     } catch(ex){
@@ -593,6 +617,16 @@ function LoginInner(){
                 </button>
               </>
             )}
+          </div>
+
+          <div className="text-center mt-5 pt-4 border-t border-neutral-100 flex items-center justify-center gap-1.5 text-xs text-neutral-400">
+            <span>Staff or Administrator?</span>
+            <Link
+              href="/admin/login"
+              className="text-[#9C6B30] hover:underline font-medium inline-flex items-center gap-1"
+            >
+              Admin Sign In →
+            </Link>
           </div>
         </div>
       </div>

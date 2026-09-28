@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import SpecificationsBuilder from '@/components/ui/specifications-builder';
 import BenefitsBuilder from '@/components/ui/benefits-builder';
+import ProductJsonImporter from '@/components/admin/product-json-importer';
 
 const EMPTY = {
   name: '', slug: '', sku: '', category: 'gold', collection: 'trending',
@@ -27,6 +28,7 @@ export default function AdminProducts() {
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState(null);
+  const [showImporter, setShowImporter] = useState(false);
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('basic');
@@ -289,12 +291,20 @@ export default function AdminProducts() {
           <div className="font-display text-2xl xs:text-3xl sm:text-4xl text-[#1A1A1A] font-light">Products</div>
           <div className="gold-line w-12 mt-2" />
         </div>
-        <button
-          onClick={openNew}
-          className="flex items-center justify-center gap-2 bg-[#1A1A1A] text-white px-5 py-2.5 text-[11px] tracking-widest uppercase rounded-md hover:bg-[#9C6B30] transition-colors font-semibold w-full xs:w-auto"
-        >
-          <Plus size={14} /> Add Product
-        </button>
+        <div className="flex items-center gap-2.5 w-full xs:w-auto">
+          <button
+            onClick={() => setShowImporter(true)}
+            className="flex items-center justify-center gap-2 bg-white text-neutral-800 border border-neutral-300 px-4 py-2.5 text-[11px] tracking-widest uppercase rounded-md hover:border-[#9C6B30] hover:text-[#9C6B30] transition-colors font-semibold shadow-2xs w-full xs:w-auto cursor-pointer"
+          >
+            <Upload size={14} className="text-[#9C6B30]" /> Import JSON / JS
+          </button>
+          <button
+            onClick={openNew}
+            className="flex items-center justify-center gap-2 bg-[#1A1A1A] text-white px-5 py-2.5 text-[11px] tracking-widest uppercase rounded-md hover:bg-[#9C6B30] transition-colors font-semibold w-full xs:w-auto cursor-pointer"
+          >
+            <Plus size={14} /> Add Product
+          </button>
+        </div>
       </div>
 
       <div className="mt-6 relative max-w-md">
@@ -893,6 +903,20 @@ export default function AdminProducts() {
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* JSON Bulk Importer Modal */}
+      <AnimatePresence>
+        {showImporter && (
+          <ProductJsonImporter
+            isOpen={showImporter}
+            onClose={() => setShowImporter(false)}
+            existingProducts={list}
+            onImportSuccess={() => {
+              load();
+            }}
+          />
         )}
       </AnimatePresence>
     </div>
