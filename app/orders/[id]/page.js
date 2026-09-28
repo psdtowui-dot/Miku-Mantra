@@ -754,6 +754,8 @@ function OrderInner() {
 
   // Cancellation eligibility
   const isCancellable = ['confirmed', 'placed', 'processing', 'packed'].includes(order.status) && order.status !== 'cancelled';
+  const isCancelledByAdmin = (order.cancelledBy === 'admin' || order.cancelledBy === 'mikumantra' || (order.statusHistory || []).some(h => h.status === 'cancelled' && ((h.note || '').toLowerCase().includes('admin') || (h.note || '').toLowerCase().includes('mikumantra'))));
+  const cancellationDisplayText = isCancelledByAdmin ? 'Cancelled by mikumantra' : 'Cancelled by customer';
 
   return (
     <main className="bg-white min-h-screen">
@@ -776,7 +778,7 @@ function OrderInner() {
               <div className="text-xs text-neutral-500 mt-1">Placed {new Date(order.placedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
             </div>
             <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-              <span className={`inline-block px-3 sm:px-4 py-1.5 text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full capitalize font-semibold ${order.status === 'cancelled' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-[#FAF6EF] text-[#9C6B30]'}`}>{order.status}</span>
+              <span className={`inline-block px-3 sm:px-4 py-1.5 text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full capitalize font-semibold ${order.status === 'cancelled' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-[#FAF6EF] text-[#9C6B30]'}`}>{order.status === 'cancelled' ? cancellationDisplayText : order.status}</span>
               <a href={`/api/orders/${order.id}/invoice`} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 border border-[#1A1A1A] text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full hover:bg-[#1A1A1A] hover:text-white transition"><Download size={12} /> Invoice</a>
             </div>
           </div>
@@ -1223,10 +1225,10 @@ function OrderInner() {
             <div className="mb-6 p-4 sm:p-5 bg-red-50/70 border border-red-200 rounded-xl space-y-2 text-xs sm:text-sm">
               <div className="flex items-center gap-2 text-red-800 font-semibold text-sm">
                 <X size={18} className="shrink-0 text-red-600" />
-                Order Cancelled
+                {cancellationDisplayText}
               </div>
               <p className="text-neutral-700">
-                Cancelled by <span className="font-medium capitalize">{order.cancelledBy || 'customer'}</span>
+                Cancelled by <span className="font-medium capitalize">{isCancelledByAdmin ? 'mikumantra' : 'customer'}</span>
                 {order.cancelledAt && <span> on {new Date(order.cancelledAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
               </p>
               {order.cancellationReason && (
@@ -1292,7 +1294,9 @@ function OrderInner() {
                   <li key={i} className="pl-4 sm:pl-5 relative">
                     <div className="absolute -left-[7px] top-1 w-3 h-3 rounded-full bg-[#9C6B30] ring-4 ring-[#FAF6EF]" />
                     <div className="flex items-baseline justify-between flex-wrap gap-2">
-                      <div className="font-medium capitalize text-[#1A1A1A] text-xs sm:text-sm">{h.status}</div>
+                      <div className="font-medium capitalize text-[#1A1A1A] text-xs sm:text-sm">
+                        {h.status === 'cancelled' ? cancellationDisplayText : h.status}
+                      </div>
                       <div className="text-[11px] sm:text-xs text-neutral-500">{new Date(h.at).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
                     </div>
                     {h.note && <div className="text-xs text-neutral-500 mt-0.5">{h.note}</div>}

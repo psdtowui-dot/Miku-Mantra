@@ -2175,7 +2175,7 @@ async function handleRoute(request, { params }) {
           $set: {
             status: 'cancelled',
             cancelledAt: now,
-            cancelledBy: u.role === 'admin' ? 'admin' : 'customer',
+            cancelledBy: u.role === 'admin' ? 'mikumantra' : 'customer',
             cancellationReason: reason,
             cancellationNote: note,
             ...refundDoc
@@ -2184,7 +2184,7 @@ async function handleRoute(request, { params }) {
             statusHistory: {
               status: 'cancelled',
               at: now,
-              note: `Cancelled by ${u.role === 'admin' ? 'admin' : 'customer'}: ${cancellationReasonStr}`
+              note: `Cancelled by ${u.role === 'admin' ? 'mikumantra' : 'customer'}: ${cancellationReasonStr}`
             }
           }
         }
@@ -4727,12 +4727,29 @@ async function handleRoute(request, { params }) {
           packed: 'Order packed & ready to ship.',
           shipped: 'Shipped via courier.',
           delivered: 'Delivered successfully.',
-          cancelled: 'Order cancelled.',
+          cancelled: 'Cancelled by mikumantra',
           confirmed: 'Order confirmed.'
         };
         const setDoc = { status: b.status };
         if (b.status === 'delivered') {
           setDoc.deliveredAt = new Date();
+        }
+        if (b.status === 'cancelled') {
+          const now = new Date();
+          setDoc.cancelledAt = now;
+          setDoc.cancelledBy = 'mikumantra';
+          setDoc.cancellationReason = b.reason || 'Cancelled by mikumantra';
+          if (b.note) setDoc.cancellationNote = b.note;
+
+          const isPaid = existingOrder.paymentStatus === 'paid' || (existingOrder.payment !== 'cod' && existingOrder.paymentStatus !== 'pending');
+          if (isPaid) {
+            setDoc.refundStatus = 'refund_initiated';
+            setDoc.refundAmount = existingOrder.amounts?.total || 0;
+            setDoc.refundId = existingOrder.razorpayPaymentId ? `ref_${existingOrder.razorpayPaymentId}` : `ref_MOCK_${uuidv4().slice(0, 8)}`;
+            setDoc.refundInitiatedAt = now;
+          } else {
+            setDoc.refundStatus = 'not_applicable';
+          }
         }
 
         const updateResult = await db.collection('orders').updateOne(
@@ -4753,7 +4770,28 @@ async function handleRoute(request, { params }) {
           return err('Cancelled orders cannot be updated.', 400);
         }
 
+        if (b.status === 'cancelled' && Array.isArray(existingOrder.items)) {
+          for (const item of existingOrder.items) {
+            if (item.id && item.qty > 0) {
+              await db.collection('products').updateOne(
+                { id: item.id },
+                { $inc: { stock: item.qty } }
+              );
+            }
+          }
+          cacheBust('products:');
+        }
+
         const up = await db.collection('orders').findOne({ id });
+
+        if (b.status === 'cancelled') {
+          try {
+            await sendOrderCancelledNotification({ order: up, user: null, db });
+          } catch (notifErr) {
+            console.error('Failed to send order cancellation notification:', notifErr);
+          }
+        }
+
         return ok({ order: clean(up) });
       }
 
