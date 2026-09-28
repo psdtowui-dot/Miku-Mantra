@@ -163,32 +163,41 @@ async function recalculateProductRating(db, productId) {
   }
 }
 
-async function connectToMongo() {
-  const directUrl = process.env.MONGO_DIRECT_URL || "mongodb://akashsriv1984_db_user:2M5Edv773XLUmT15@ac-htqrxv1-shard-00-00.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-01.7szyylz.mongodb.net:27017/userPortal?ssl=true&replicaSet=atlas-1c5jr9-shard-0&authSource=admin&retryWrites=true&w=majority";
-  const srvUrl = process.env.MONGO_URL || process.env.MONGODB_URI;
-  const mongoUrl = process.env.MONGO_DIRECT_URL || directUrl || srvUrl;
-  if (!mongoUrl) {
-    throw new Error("MONGO_URL environment variable is missing.");
+const DIRECT_REPLICA_FALLBACK = "mongodb://akashsriv1984_db_user:2M5Edv773XLUmT15@ac-htqrxv1-shard-00-00.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-01.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-02.7szyylz.mongodb.net:27017/userPortal?ssl=true&replicaSet=atlas-1c5jr9-shard-0&authSource=admin&retryWrites=true&w=majority";
+
+const MONGO_CLIENT_OPTIONS = {
+  serverSelectionTimeoutMS: 10000,
+  connectTimeoutMS: 10000,
+  socketTimeoutMS: 45000,
+  maxIdleTimeMS: 30000, // Closes idle connections before Atlas terminates TLS sockets
+  minPoolSize: 1,
+  maxPoolSize: 20,
+  retryWrites: true,
+  retryReads: true
+};
+
+async function closeMongoConnection() {
+  const oldClient = client;
+  client = null;
+  db = null;
+  connectPromise = null;
+  if (oldClient) {
+    try {
+      await oldClient.close(true);
+    } catch (_) {}
   }
-  if (!connectPromise) {
-    connectPromise = (async () => {
-      try {
-        try {
-          dns.setServers(['8.8.8.8', '1.1.1.1']);
-        } catch (e) {}
-        try {
-          client = new MongoClient(mongoUrl, { serverSelectionTimeoutMS: 10000 });
-          await client.connect();
-        } catch (srvErr) {
-          if (directUrl && mongoUrl !== directUrl) {
-            console.log('MongoDB connection attempt failed, falling back to direct replica set...');
-            client = new MongoClient(directUrl, { serverSelectionTimeoutMS: 10000 });
-            await client.connect();
-          } else {
-            throw srvErr;
-          }
-        }
-        db = client.db(process.env.DB_NAME || 'userPortal');
+}
+
+async function isMongoAlive(c) {
+  if (!c) return false;
+  try {
+    await c.db(process.env.DB_NAME || 'userPortal').command({ ping: 1 }, { maxTimeMS: 2500 });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 let indexesCreated = false;
 async function ensureIndexes(database) {
   if (!database || indexesCreated) return;
@@ -217,6 +226,68 @@ async function ensureIndexes(database) {
   }
 }
 
+async function connectToMongo(forceReconnect = false) {
+  if (forceReconnect) {
+    await closeMongoConnection();
+  } else if (client && db) {
+    const alive = await isMongoAlive(client);
+    if (alive) return db;
+    console.warn('MongoDB connection unresponsive/dead, reconnecting cleanly...');
+    await closeMongoConnection();
+  }
+
+  if (!connectPromise) {
+    connectPromise = (async () => {
+      try {
+        const srvUrl = process.env.MONGO_URL || process.env.MONGODB_URI;
+        const directUrl = process.env.MONGO_DIRECT_URL || DIRECT_REPLICA_FALLBACK;
+        const primaryUrl = srvUrl || directUrl;
+
+        let newClient = null;
+        try {
+          newClient = new MongoClient(primaryUrl, MONGO_CLIENT_OPTIONS);
+          await newClient.connect();
+        } catch (firstErr) {
+          console.warn('Initial MongoDB connect attempt failed:', firstErr.message);
+          if (newClient) {
+            try { await newClient.close(true); } catch (_) {}
+            newClient = null;
+          }
+
+          // Try setting public DNS servers if local DNS failed
+          try {
+            dns.setServers(['8.8.8.8', '1.1.1.1']);
+          } catch (_) {}
+
+          try {
+            newClient = new MongoClient(primaryUrl, MONGO_CLIENT_OPTIONS);
+            await newClient.connect();
+          } catch (dnsErr) {
+            if (newClient) {
+              try { await newClient.close(true); } catch (_) {}
+              newClient = null;
+            }
+            if (directUrl && primaryUrl !== directUrl) {
+              console.log('MongoDB SRV connection failed, falling back to direct replica set...');
+              newClient = new MongoClient(directUrl, MONGO_CLIENT_OPTIONS);
+              await newClient.connect();
+            } else {
+              throw dnsErr;
+            }
+          }
+        }
+
+        client = newClient;
+        client.on('error', (err) => {
+          console.error('MongoDB Client pool error event:', err?.message || err);
+          closeMongoConnection().catch(() => {});
+        });
+        client.on('close', () => {
+          closeMongoConnection().catch(() => {});
+        });
+
+        db = client.db(process.env.DB_NAME || 'userPortal');
+
         if (!seeded) {
           await seedIfEmpty(db);
           await ensureIndexes(db);
@@ -227,7 +298,7 @@ async function ensureIndexes(database) {
         await seedRbacIfEmpty(database);
         return database;
       } catch (err) {
-        connectPromise = null; // Reset connection promise so subsequent requests can retry
+        await closeMongoConnection();
         throw err;
       }
     })();
@@ -643,6 +714,7 @@ function initEnvFileWatcher(db) {
 
   let debounceTimer = null;
   const onFileChange = () => {
+    lastSyncedAdmins = '';
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(async () => {
       try {
@@ -668,6 +740,8 @@ async function syncEnvAdminEmailsWithDatabase(db) {
   try {
     const envAdmins = getEnvAdminEmails();
     if (!envAdmins || envAdmins.length === 0) return;
+    const adminKey = envAdmins.slice().sort().join(',');
+    if (lastSyncedAdmins === adminKey) return;
 
     // 1. Ensure all active .env admin emails have role: 'admin' and syncedFromEnv: true in DB
     for (const em of envAdmins) {
@@ -715,6 +789,7 @@ async function syncEnvAdminEmailsWithDatabase(db) {
       // Immediately invalidate any active sessions so admin access is terminated
       await db.collection('sessions').deleteMany({ userId: obsoleteUser.id });
     }
+    lastSyncedAdmins = adminKey;
   } catch (err) {
     console.error('[Auto-Sync] Error syncing .env admin emails to database:', err);
   }
@@ -895,10 +970,45 @@ async function createAuditLog(db, { returnId, orderId, action, performedBy, oldS
 }
 
 
-async function handleRoute(request, { params }) {
-  const { path = [] } = await params
+function isTransientDbError(err) {
+  if (!err) return false;
+  const msg = String(err.message || err).toLowerCase();
+  const name = String(err.name || '').toLowerCase();
+  return (
+    name.includes('network') ||
+    name.includes('serverselection') ||
+    msg.includes('ssl') ||
+    msg.includes('tlsv1') ||
+    msg.includes('topology') ||
+    msg.includes('pool') ||
+    msg.includes('connection') ||
+    msg.includes('timed out') ||
+    msg.includes('timeout') ||
+    msg.includes('primary') ||
+    msg.includes('econnreset') ||
+    msg.includes('socket') ||
+    msg.includes('closed') ||
+    msg.includes('alert number 80') ||
+    msg.includes('interrupted')
+  );
+}
+
+async function handleRoute(request, context) {
+  return handleRouteInternal(request, context, false);
+}
+
+async function handleRouteInternal(request, context, isRetry = false) {
+  const { path = [] } = (await context?.params) || {}
   const route = `/${path.join('/')}`
   const method = request.method
+
+  let requestForRetry = null;
+  if (!isRetry && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    try {
+      requestForRetry = request.clone();
+    } catch (_) {}
+  }
+
   try {
     const db = await connectToMongo()
     const url = new URL(request.url); const q = url.searchParams
@@ -5495,12 +5605,23 @@ async function handleRoute(request, { params }) {
 
     return err(`Route ${route} not found`, 404)
   } catch (e) {
-    console.error('API Error:', e);
-    const msg = String(e?.message || e);
-    if (msg.includes('SSL') || msg.includes('topology') || msg.includes('pool') || msg.includes('connection') || msg.includes('timed out') || msg.includes('Primary')) {
-      connectPromise = null;
-      try { if (client) client.close(); } catch (_) {}
+    console.error(`API Error on [${method} ${route}]:`, e);
+    if (!isRetry && isTransientDbError(e)) {
+      console.warn(`Transient DB connection/SSL issue on [${method} ${route}]. Reconnecting and retrying...`, e.message);
+      try {
+        await connectToMongo(true);
+        const retryReq = requestForRetry || request;
+        return await handleRouteInternal(retryReq, context, true);
+      } catch (retryErr) {
+        console.error('Retry after DB reconnect also failed:', retryErr);
+      }
     }
+
+    if (isTransientDbError(e)) {
+      await closeMongoConnection().catch(() => {});
+      return err('Database service is temporarily unavailable. Please try again in a moment.', 503);
+    }
+    const msg = String(e?.message || e);
     return err('Internal server error: ' + msg, 500);
   }
 }
