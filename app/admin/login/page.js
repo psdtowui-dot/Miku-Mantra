@@ -21,8 +21,8 @@ function GoogleIcon({ className = "w-5 h-5" }) {
 function AdminLoginInner() {
   const { user, loading, login, loginWithGoogle, forgotPassword, resetPassword } = useAuth();
   const router = useRouter();
-  const sp = useSearchParams();
-  const redirect = sp.get('redirect') || '/admin';
+  const rawRedirect = sp.get('redirect');
+  const redirect = (!rawRedirect || rawRedirect.startsWith('/admin/login')) ? '/admin' : rawRedirect;
   const urlError = sp.get('error');
 
   const [form, setForm] = useState({ email: '', password: '' });
@@ -78,7 +78,7 @@ function AdminLoginInner() {
       const u = await loginWithGoogle(response.credential, { requireAdmin: true });
       if (u && u.role === 'admin') {
         toast.success(`Welcome back, Administrator ${u.name || ''}!`);
-        router.push(redirect);
+        router.replace(redirect);
       } else {
         throw new Error('This account is not authorized for administrator access.');
       }
@@ -189,7 +189,7 @@ function AdminLoginInner() {
                 const u = await loginWithGoogle({ accessToken: resp.access_token }, { requireAdmin: true });
                 if (u && u.role === 'admin') {
                   toast.success(`Welcome back, Administrator ${u.name || ''}!`);
-                  router.push(redirect);
+                  router.replace(redirect);
                 } else {
                   throw new Error('This account is not authorized for administrator access.');
                 }
@@ -250,7 +250,7 @@ function AdminLoginInner() {
       const u = await login(em, form.password, { requireAdmin: true });
       if (u && u.role === 'admin') {
         toast.success(`Welcome back, ${u.name || 'Admin'}!`);
-        router.push(redirect);
+        router.replace(redirect);
       } else {
         throw new Error('Access Denied: This account does not have administrator privileges.');
       }

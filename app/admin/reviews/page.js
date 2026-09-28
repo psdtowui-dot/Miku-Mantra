@@ -935,6 +935,7 @@ export default function AdminReviewsPage() {
                 {editingReview ? 'Edit Full Review Details' : 'Create Curated Admin Review'}
               </h2>
               <button
+                type="button"
                 onClick={() => setShowModal(false)}
                 className="text-neutral-400 hover:text-neutral-700 p-1 rounded-lg transition cursor-pointer"
               >

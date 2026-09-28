@@ -7,7 +7,7 @@ import fs from 'fs'
 import pathModule from 'path'
 import { cookies } from 'next/headers'
 import crypto from 'crypto'
-import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS as SEED_COLLECTIONS, DEFAULT_PRODUCT_BENEFITS } from '@/lib/products'
+import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS as SEED_COLLECTIONS, DEFAULT_PRODUCT_BENEFITS, DEFAULT_PRODUCT_FILTERS } from '@/lib/products'
 import { buildInvoicePDF } from '@/lib/pdf-invoice'
 import { buildShippingSlipPDF } from '@/lib/pdf-shippingslip'
 import { WAREHOUSE_PINCODE } from '@/lib/constants'
@@ -476,96 +476,6 @@ async function seedIfEmpty(db) {
 
   await seedFiltersIfEmpty(db);
 }
-
-const DEFAULT_PRODUCT_FILTERS = [
-  {
-    id: 'filter-category',
-    name: 'Category',
-    key: 'category',
-    type: 'options',
-    enabled: true,
-    order: 0,
-    options: [
-      { id: 'opt-cat-gold', name: 'Gold', value: 'gold', enabled: true, order: 0 },
-      { id: 'opt-cat-diamond', name: 'Diamond', value: 'diamond', enabled: true, order: 1 },
-      { id: 'opt-cat-wedding', name: 'Wedding', value: 'wedding', enabled: true, order: 2 },
-      { id: 'opt-cat-daily-wear', name: 'Daily Wear', value: 'daily-wear', enabled: true, order: 3 },
-      { id: 'opt-cat-men', name: 'Men', value: 'men', enabled: true, order: 4 },
-      { id: 'opt-cat-women', name: 'Women', value: 'women', enabled: true, order: 5 }
-    ],
-    createdAt: new Date()
-  },
-  {
-    id: 'filter-gender',
-    name: 'Gender',
-    key: 'gender',
-    type: 'options',
-    enabled: true,
-    order: 1,
-    options: [
-      { id: 'opt-gen-women', name: 'Women', value: 'women', enabled: true, order: 0 },
-      { id: 'opt-gen-men', name: 'Men', value: 'men', enabled: true, order: 1 }
-    ],
-    createdAt: new Date()
-  },
-  {
-    id: 'filter-collection',
-    name: 'Collection',
-    key: 'collection',
-    type: 'options',
-    enabled: true,
-    order: 2,
-    options: [
-      { id: 'opt-col-trending', name: 'Trending', value: 'trending', enabled: true, order: 0 },
-      { id: 'opt-col-bestsellers', name: 'Best Sellers', value: 'best-sellers', enabled: true, order: 1 },
-      { id: 'opt-col-newarrival', name: 'New Arrival', value: 'new-arrival', enabled: true, order: 2 },
-      { id: 'opt-col-editorschoice', name: "Editors Choice", value: 'editors-choice', enabled: true, order: 3 }
-    ],
-    createdAt: new Date()
-  },
-  {
-    id: 'filter-metal',
-    name: 'Metal',
-    key: 'metal',
-    type: 'options',
-    enabled: true,
-    order: 3,
-    options: [
-      { id: 'opt-met-yg', name: 'Yellow Gold', value: 'Yellow Gold', enabled: true, order: 0 },
-      { id: 'opt-met-rg', name: 'Rose Gold', value: 'Rose Gold', enabled: true, order: 1 },
-      { id: 'opt-met-wg', name: 'White Gold', value: 'White Gold', enabled: true, order: 2 },
-      { id: 'opt-met-pt', name: 'Platinum', value: 'Platinum', enabled: true, order: 3 }
-    ],
-    createdAt: new Date()
-  },
-  {
-    id: 'filter-stone',
-    name: 'Stone',
-    key: 'stone',
-    type: 'options',
-    enabled: true,
-    order: 4,
-    options: [
-      { id: 'opt-stn-dia', name: 'Diamond', value: 'Diamond', enabled: true, order: 0 },
-      { id: 'opt-stn-polki', name: 'Polki', value: 'Uncut Polki', enabled: true, order: 1 },
-      { id: 'opt-stn-emr', name: 'Emerald', value: 'Emerald', enabled: true, order: 2 },
-      { id: 'opt-stn-onyx', name: 'Onyx', value: 'Onyx', enabled: true, order: 3 },
-      { id: 'opt-stn-none', name: 'None', value: 'None', enabled: true, order: 4 }
-    ],
-    createdAt: new Date()
-  },
-  {
-    id: 'filter-price',
-    name: 'Price',
-    key: 'price',
-    type: 'price',
-    enabled: true,
-    order: 5,
-    priceConfig: { min: 0, max: 1000000, step: 5000 },
-    options: [],
-    createdAt: new Date()
-  }
-];
 
 async function seedFiltersIfEmpty(db) {
   const count = await db.collection('product_filters').countDocuments();
@@ -1718,30 +1628,49 @@ async function handleRoute(request, { params }) {
     if (route === '/wishlist' && method === 'GET') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const list = await db.collection('wishlist').find({ userId: u.id }).sort({ createdAt: -1 }).toArray();
-      const productIds = list.map(w => w.productId).filter(Boolean);
+      const rawProductIds = list.map(w => w.productId).filter(Boolean);
       let prods = [];
-      if (productIds.length > 0) {
-        prods = await db.collection('products').find({ id: { $in: productIds } }).toArray();
+      if (rawProductIds.length > 0) {
+        prods = await db.collection('products').find({
+          $or: [
+            { id: { $in: rawProductIds } },
+            { slug: { $in: rawProductIds } }
+          ]
+        }).toArray();
       }
-      return ok({ wishlist: list.map(clean), products: prods.map(clean) })
+
+      const foundIds = new Set();
+      prods.forEach(p => {
+        if (p.id) foundIds.add(p.id);
+        if (p.slug) foundIds.add(p.slug);
+      });
+
+      const validList = list.filter(w => foundIds.has(w.productId));
+      const orphanIds = rawProductIds.filter(id => !foundIds.has(id));
+
+      if (orphanIds.length > 0) {
+        db.collection('wishlist').deleteMany({ userId: u.id, productId: { $in: orphanIds } }).catch(() => {});
+      }
+
+      return ok({ wishlist: validList.map(clean), products: prods.map(clean) });
     }
     if (route === '/wishlist' && method === 'POST') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const b = await request.json();
       if (!b.productId) return err('Product ID is required.', 400);
-      const p = await db.collection('products').findOne({ id: b.productId });
+      const p = await db.collection('products').findOne({ $or: [{ id: b.productId }, { slug: b.productId }] });
       if (!p) return err('Product not found.', 404);
-      const existing = await db.collection('wishlist').findOne({ userId: u.id, productId: b.productId });
+      const existing = await db.collection('wishlist').findOne({ userId: u.id, productId: p.id });
       if (existing) return ok({ wishlist: clean(existing) });
-      const item = { id: uuidv4(), userId: u.id, productId: b.productId, createdAt: new Date() };
+      const item = { id: uuidv4(), userId: u.id, productId: p.id, createdAt: new Date() };
       await db.collection('wishlist').insertOne(item);
-      return ok({ wishlist: clean(item) })
+      return ok({ wishlist: clean(item) });
     }
     if (route.startsWith('/wishlist/') && method === 'DELETE') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const productId = route.split('/')[2];
-      await db.collection('wishlist').deleteOne({ userId: u.id, productId });
-      return ok({ ok: true })
+      await db.collection('wishlist').deleteMany({ userId: u.id, productId });
+      return ok({ ok: true });
     }
 
     // ============ DATABASE CART PERSISTENCE ============
@@ -4531,6 +4460,7 @@ async function handleRoute(request, { params }) {
         if (!hasPermission(admin, 'products.delete')) return err('Permission denied: products.delete required', 403);
         const id = sub.split('/')[1];
         await db.collection('products').deleteOne({ id });
+        await db.collection('wishlist').deleteMany({ productId: id });
         cacheBust('products:');
         _cache.delete('admin_products');
         _cache.delete('admin_dashboard');
@@ -4556,6 +4486,25 @@ async function handleRoute(request, { params }) {
             if (!b.name || !b.name.trim()) return err('Collection name is required', 400);
             if (!b.slug || !b.slug.trim()) return err('Collection slug is required', 400);
           }
+          if (col === 'coupons') {
+            const rawCode = (b.code || '').trim().toUpperCase();
+            if (!rawCode) return err('Coupon code is required', 400);
+            const existing = await db.collection('coupons').findOne({ code: rawCode });
+            if (existing) return err(`Coupon code '${rawCode}' already exists`, 400);
+
+            const type = b.type === 'flat' ? 'flat' : 'percent';
+            const numVal = Number(b.value);
+            if (isNaN(numVal) || numVal <= 0) return err('Discount value must be a number greater than 0', 400);
+            if (type === 'percent' && numVal > 100) return err('Percentage discount cannot exceed 100%', 400);
+
+            const minOrderNum = Math.max(0, Number(b.minOrder) || 0);
+
+            b.code = rawCode;
+            b.type = type;
+            b.value = numVal;
+            b.minOrder = minOrderNum;
+            b.active = b.active !== false;
+          }
           const doc = { id: uuidv4(), createdAt: new Date(), ...b };
           await db.collection(col).insertOne(doc);
           _cache.delete('admin_' + col);
@@ -4567,6 +4516,27 @@ async function handleRoute(request, { params }) {
           if (col === 'collections') {
             if (b.name !== undefined && !b.name.trim()) return err('Collection name is required', 400);
             if (b.slug !== undefined && !b.slug.trim()) return err('Collection slug is required', 400);
+          }
+          if (col === 'coupons') {
+            if (b.code !== undefined) {
+              const rawCode = (b.code || '').trim().toUpperCase();
+              if (!rawCode) return err('Coupon code is required', 400);
+              const existing = await db.collection('coupons').findOne({ code: rawCode, id: { $ne: id } });
+              if (existing) return err(`Coupon code '${rawCode}' already exists`, 400);
+              b.code = rawCode;
+            }
+            if (b.type !== undefined) {
+              b.type = b.type === 'flat' ? 'flat' : 'percent';
+            }
+            if (b.value !== undefined) {
+              const numVal = Number(b.value);
+              if (isNaN(numVal) || numVal <= 0) return err('Discount value must be a number greater than 0', 400);
+              if (b.type === 'percent' && numVal > 100) return err('Percentage discount cannot exceed 100%', 400);
+              b.value = numVal;
+            }
+            if (b.minOrder !== undefined) {
+              b.minOrder = Math.max(0, Number(b.minOrder) || 0);
+            }
           }
           await db.collection(col).updateOne({ id }, { $set: b });
           _cache.delete('admin_' + col);
