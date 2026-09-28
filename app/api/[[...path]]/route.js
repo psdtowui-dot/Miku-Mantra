@@ -4909,6 +4909,164 @@ async function handleRouteInternal(request, context, isRetry = false) {
         });
       }
 
+      // Bulk Delete Products
+      if (sub === 'products/bulk-delete' && method === 'POST') {
+        if (!hasPermission(admin, 'products.delete')) return err('Permission denied: products.delete required', 403);
+        const b = await request.json().catch(() => ({}));
+        const ids = Array.isArray(b.ids) ? b.ids.filter(Boolean) : [];
+        if (!ids.length) return err('No product IDs provided', 400);
+
+        const res = await db.collection('products').deleteMany({ id: { $in: ids } });
+        cacheBust('products:');
+        _cache.delete('admin_products');
+        _cache.delete('admin_dashboard');
+
+        await logAdminActivity(db, {
+          admin,
+          action: 'PRODUCTS_BULK_DELETE',
+          module: 'PRODUCTS',
+          metadata: { count: res.deletedCount, ids },
+          request
+        });
+
+        return ok({ ok: true, deletedCount: res.deletedCount });
+      }
+
+      // Bulk Actions for Products (Delete, Duplicate, Update Category, Update Collection, Add Stock, Set Flags)
+      if (sub === 'products/bulk-action' && method === 'POST') {
+        const b = await request.json().catch(() => ({}));
+        const { action, ids, data } = b;
+        const validIds = Array.isArray(ids) ? ids.filter(Boolean) : [];
+        if (!validIds.length) return err('No product IDs provided', 400);
+
+        if (action === 'delete') {
+          if (!hasPermission(admin, 'products.delete')) return err('Permission denied: products.delete required', 403);
+          const res = await db.collection('products').deleteMany({ id: { $in: validIds } });
+          cacheBust('products:');
+          _cache.delete('admin_products');
+          _cache.delete('admin_dashboard');
+
+          await logAdminActivity(db, {
+            admin,
+            action: 'PRODUCTS_BULK_DELETE',
+            module: 'PRODUCTS',
+            metadata: { count: res.deletedCount, ids: validIds },
+            request
+          });
+
+          return ok({ ok: true, count: res.deletedCount });
+        }
+
+        if (action === 'duplicate') {
+          if (!hasPermission(admin, 'products.create')) return err('Permission denied: products.create required', 403);
+          const prods = await db.collection('products').find({ id: { $in: validIds } }).toArray();
+          const newProds = [];
+          for (const p of prods) {
+            const newId = uuidv4();
+            const cleanP = { ...p };
+            delete cleanP._id;
+            const copyProd = {
+              ...cleanP,
+              id: newId,
+              name: `${p.name} (Copy)`,
+              slug: `${(p.slug || 'product')}-copy-${Date.now().toString(36).slice(-4)}-${Math.floor(100 + Math.random() * 900)}`,
+              sku: `AUR-${(p.name || 'PRD').slice(0, 3).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`,
+              createdAt: new Date(),
+              updatedAt: new Date()
+            };
+            newProds.push(copyProd);
+          }
+          if (newProds.length > 0) {
+            await db.collection('products').insertMany(newProds);
+          }
+          cacheBust('products:');
+          _cache.delete('admin_products');
+          _cache.delete('admin_dashboard');
+
+          await logAdminActivity(db, {
+            admin,
+            action: 'PRODUCTS_BULK_DUPLICATE',
+            module: 'PRODUCTS',
+            metadata: { count: newProds.length, ids: validIds },
+            request
+          });
+
+          return ok({ ok: true, count: newProds.length });
+        }
+
+        if (action === 'update_category') {
+          if (!hasPermission(admin, 'products.edit')) return err('Permission denied: products.edit required', 403);
+          const category = (data?.category || '').trim().toLowerCase();
+          if (!category) return err('Category is required', 400);
+          const res = await db.collection('products').updateMany(
+            { id: { $in: validIds } },
+            { $set: { category, updatedAt: new Date() } }
+          );
+          cacheBust('products:');
+          _cache.delete('admin_products');
+          _cache.delete('admin_dashboard');
+          return ok({ ok: true, count: res.modifiedCount });
+        }
+
+        if (action === 'update_collection') {
+          if (!hasPermission(admin, 'products.edit')) return err('Permission denied: products.edit required', 403);
+          const collection = (data?.collection || '').trim().toLowerCase();
+          if (!collection) return err('Collection is required', 400);
+          const res = await db.collection('products').updateMany(
+            { id: { $in: validIds } },
+            { $set: { collection, updatedAt: new Date() } }
+          );
+          cacheBust('products:');
+          _cache.delete('admin_products');
+          _cache.delete('admin_dashboard');
+          return ok({ ok: true, count: res.modifiedCount });
+        }
+
+        if (action === 'add_stock') {
+          if (!hasPermission(admin, 'products.edit')) return err('Permission denied: products.edit required', 403);
+          const qty = parseInt(data?.quantity ?? data?.stock ?? 0);
+          if (isNaN(qty)) return err('Valid stock quantity is required', 400);
+          const isIncrement = !!data?.isIncrement;
+          if (isIncrement) {
+            const res = await db.collection('products').updateMany(
+              { id: { $in: validIds } },
+              { $inc: { stock: qty }, $set: { updatedAt: new Date() } }
+            );
+            cacheBust('products:');
+            _cache.delete('admin_products');
+            _cache.delete('admin_dashboard');
+            return ok({ ok: true, count: res.modifiedCount });
+          } else {
+            const res = await db.collection('products').updateMany(
+              { id: { $in: validIds } },
+              { $set: { stock: Math.max(0, qty), updatedAt: new Date() } }
+            );
+            cacheBust('products:');
+            _cache.delete('admin_products');
+            _cache.delete('admin_dashboard');
+            return ok({ ok: true, count: res.modifiedCount });
+          }
+        }
+
+        if (action === 'set_flags') {
+          if (!hasPermission(admin, 'products.edit')) return err('Permission denied: products.edit required', 403);
+          const flagUpdates = {};
+          if (data?.featured !== undefined) flagUpdates.featured = Boolean(data.featured);
+          if (data?.bestseller !== undefined) flagUpdates.bestseller = Boolean(data.bestseller);
+          if (data?.newArrival !== undefined) flagUpdates.newArrival = Boolean(data.newArrival);
+          const res = await db.collection('products').updateMany(
+            { id: { $in: validIds } },
+            { $set: { ...flagUpdates, updatedAt: new Date() } }
+          );
+          cacheBust('products:');
+          _cache.delete('admin_products');
+          _cache.delete('admin_dashboard');
+          return ok({ ok: true, count: res.modifiedCount });
+        }
+
+        return err('Unsupported bulk action', 400);
+      }
+
       if (sub.startsWith('products/') && method === 'PUT') {
         if (!hasPermission(admin, 'products.edit')) return err('Permission denied: products.edit required', 403);
         const id = sub.split('/')[1];
