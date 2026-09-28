@@ -138,20 +138,19 @@ def run_customer_return_tests():
     admin_sess.put(f"{BASE_URL}/admin/orders/{order2['id']}", json={"status": "delivered"})
 
     # Now we simulate an expired 30-minute window by updating deliveredAt directly via MongoDB or testing boundary
-    # Let's use an internal update helper or python script to set deliveredAt to 40 minutes ago
-    import os
-    from pymongo import MongoClient
-    mongo_uri = "mongodb://localhost:27017/maneet-jwell"
-    # read MONGO_URI from .env if possible
     try:
-        with open(".env", "r") as f:
-            for line in f:
-                if line.startswith("MONGODB_URI="):
-                    mongo_uri = line.strip().split("=", 1)[1].strip('"').strip("'")
-    except Exception:
-        pass
+        import os
+        from pymongo import MongoClient
+        mongo_uri = "mongodb://localhost:27017/maneet-jwell"
+        # read MONGO_URI from .env if possible
+        try:
+            with open(".env", "r") as f:
+                for line in f:
+                    if line.startswith("MONGODB_URI="):
+                        mongo_uri = line.strip().split("=", 1)[1].strip('"').strip("'")
+        except Exception:
+            pass
 
-    try:
         client = MongoClient(mongo_uri, serverSelectionTimeoutMS=2000)
         db_name = mongo_uri.split('/')[-1].split('?')[0] or 'maneet-jwell'
         db = client[db_name]

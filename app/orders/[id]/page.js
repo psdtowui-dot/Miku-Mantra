@@ -4,7 +4,7 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/use-auth';
 import { formatINR } from '@/lib/products';
-import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft, Star, Edit3, Trash2, Upload, Camera, Image as ImageIcon } from 'lucide-react';
+import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft, Star, Edit3, Trash2, Upload, Camera, Image as ImageIcon, Building2, Smartphone, ShieldCheck } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 
@@ -37,13 +37,17 @@ const RETURN_REASONS = [
 function getReturnStatusBadge(status) {
   switch (status) {
     case 'REQUESTED':
+    case 'RETURN_REQUESTED':
       return 'bg-amber-50 text-amber-800 border-amber-200';
     case 'APPROVED':
+    case 'RETURN_APPROVED':
       return 'bg-blue-50 text-blue-800 border-blue-200';
+    case 'REFUND_DETAILS_SUBMITTED':
+      return 'bg-teal-50 text-teal-800 border-teal-200';
     case 'PROCESSING':
       return 'bg-purple-50 text-purple-800 border-purple-200';
     case 'REFUND_INITIATED':
-      return 'bg-teal-50 text-teal-800 border-teal-200';
+      return 'bg-indigo-50 text-indigo-800 border-indigo-200';
     case 'REFUNDED':
       return 'bg-emerald-50 text-emerald-800 border-emerald-200';
     case 'REJECTED':
@@ -53,12 +57,16 @@ function getReturnStatusBadge(status) {
   }
 }
 
-function getReturnStatusLabel(status) {
+function getReturnStatusLabel(status, hasRefundDetails = false) {
   switch (status) {
     case 'REQUESTED':
-      return 'Return Requested (Under Review)';
+    case 'RETURN_REQUESTED':
+      return 'Return Requested (Awaiting Approval)';
     case 'APPROVED':
-      return 'Return Approved (Refund in Progress)';
+    case 'RETURN_APPROVED':
+      return hasRefundDetails ? 'Return Approved (Processing Refund)' : 'Return Approved (Action Required: Submit Refund Details)';
+    case 'REFUND_DETAILS_SUBMITTED':
+      return 'Refund Details Submitted (In Progress)';
     case 'PROCESSING':
       return 'Return In Processing';
     case 'REFUND_INITIATED':
@@ -116,8 +124,23 @@ function OrderInner() {
   const [returnItems, setReturnItems] = useState({});
   const [selectedReturnReason, setSelectedReturnReason] = useState('');
   const [returnComment, setReturnComment] = useState('');
+  const [returnImages, setReturnImages] = useState([]);
+  const [uploadingReturnPhoto, setUploadingReturnPhoto] = useState(false);
   const [submittingReturn, setSubmittingReturn] = useState(false);
   const [returnModalErr, setReturnModalErr] = useState('');
+
+  // Refund Details Form State (After Return Approval)
+  const [refundMethod, setRefundMethod] = useState('upi'); // 'upi' | 'bank_transfer'
+  const [refundUpiForm, setRefundUpiForm] = useState({ upiId: '', confirmUpiId: '' });
+  const [refundBankForm, setRefundBankForm] = useState({
+    accountHolderName: '',
+    accountNumber: '',
+    confirmAccountNumber: '',
+    ifscCode: '',
+    bankName: ''
+  });
+  const [submittingRefundDetails, setSubmittingRefundDetails] = useState(false);
+  const [refundDetailsErr, setRefundDetailsErr] = useState('');
 
   // 1-second ticker when order is delivered
   useEffect(() => {
@@ -194,9 +217,68 @@ function OrderInner() {
     setReturnItems(initialItems);
     setSelectedReturnReason(RETURN_REASONS[0]);
     setReturnComment('');
+    setReturnImages([]);
+    setUploadingReturnPhoto(false);
     setReturnStep(1);
     setReturnModalErr('');
     setShowReturnModal(true);
+  };
+
+  const handleReturnPhotoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!['image/jpeg', 'image/png', 'image/webp', 'image/jpg'].includes(file.type)) {
+      setReturnModalErr('Please select a JPG, PNG, or WebP photo.');
+      toast.error('Invalid photo format');
+      return;
+    }
+
+    if (file.size > 8 * 1024 * 1024) {
+      setReturnModalErr('Photo size exceeds 8MB. Please choose a smaller image.');
+      toast.error('Photo size exceeds 8MB');
+      return;
+    }
+
+    if (returnImages.length >= 5) {
+      setReturnModalErr('Maximum of 5 product photos allowed.');
+      toast.error('Maximum 5 photos allowed');
+      return;
+    }
+
+    setUploadingReturnPhoto(true);
+    setReturnModalErr('');
+
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+
+      const r = await fetch('/api/upload', {
+        method: 'POST',
+        credentials: 'include',
+        body: fd
+      });
+
+      const d = await r.json();
+      if (r.ok && d.url) {
+        setReturnImages(prev => [...prev, d.url]);
+        toast.success('Product photo uploaded successfully!');
+      } else {
+        setReturnModalErr(d.error || 'Failed to upload photo. Please try again.');
+        toast.error(d.error || 'Photo upload failed');
+      }
+    } catch (err) {
+      console.error(err);
+      setReturnModalErr('Network error during photo upload.');
+      toast.error('Photo upload error');
+    } finally {
+      setUploadingReturnPhoto(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleRemoveReturnPhoto = (idxToRemove) => {
+    setReturnImages(prev => prev.filter((_, idx) => idx !== idxToRemove));
   };
 
   const handleItemToggle = (itemId) => {
@@ -286,7 +368,8 @@ function OrderInner() {
           orderId: order.id,
           items: selectedList,
           reason: selectedReturnReason,
-          comment: returnComment.trim()
+          comment: returnComment.trim(),
+          images: returnImages
         })
       });
       const d = await r.json();
@@ -309,6 +392,100 @@ function OrderInner() {
       toast.error('Network error');
     } finally {
       setSubmittingReturn(false);
+    }
+  };
+
+  const handleSubmitRefundDetails = async (e) => {
+    e.preventDefault();
+    setRefundDetailsErr('');
+
+    if (!returnRequest) return;
+
+    if (refundMethod === 'upi') {
+      const uId = refundUpiForm.upiId.trim();
+      const cUId = refundUpiForm.confirmUpiId.trim();
+      if (!uId) {
+        setRefundDetailsErr('Please enter your UPI ID.');
+        return;
+      }
+      const upiRegex = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/;
+      if (!upiRegex.test(uId)) {
+        setRefundDetailsErr('Please enter a valid UPI ID (e.g. name@okhdfcbank or 9876543210@paytm).');
+        return;
+      }
+      if (cUId && cUId.toLowerCase() !== uId.toLowerCase()) {
+        setRefundDetailsErr('UPI ID and Confirm UPI ID do not match.');
+        return;
+      }
+    } else if (refundMethod === 'bank_transfer') {
+      const holder = refundBankForm.accountHolderName.trim();
+      const acc = refundBankForm.accountNumber.trim();
+      const cAcc = refundBankForm.confirmAccountNumber.trim();
+      const ifsc = refundBankForm.ifscCode.trim().toUpperCase();
+      const bank = refundBankForm.bankName.trim();
+
+      if (!holder || holder.length < 2) {
+        setRefundDetailsErr('Please enter the full account holder name.');
+        return;
+      }
+      if (!acc || !/^\d{9,18}$/.test(acc)) {
+        setRefundDetailsErr('Please enter a valid bank account number (9 to 18 digits).');
+        return;
+      }
+      if (cAcc !== acc) {
+        setRefundDetailsErr('Account number and Confirm Account number do not match.');
+        return;
+      }
+      const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+      if (!ifsc || !ifscRegex.test(ifsc)) {
+        setRefundDetailsErr('Please enter a valid 11-character IFSC code (e.g. HDFC0001234).');
+        return;
+      }
+      if (!bank || bank.length < 2) {
+        setRefundDetailsErr('Please enter the bank name.');
+        return;
+      }
+    }
+
+    setSubmittingRefundDetails(true);
+    try {
+      const returnId = returnRequest.returnId || returnRequest.id;
+      const payload = refundMethod === 'upi'
+        ? { method: 'upi', upiId: refundUpiForm.upiId.trim(), confirmUpiId: refundUpiForm.confirmUpiId.trim() }
+        : {
+            method: 'bank_transfer',
+            accountHolderName: refundBankForm.accountHolderName.trim(),
+            accountNumber: refundBankForm.accountNumber.trim(),
+            confirmAccountNumber: refundBankForm.confirmAccountNumber.trim(),
+            ifscCode: refundBankForm.ifscCode.trim().toUpperCase(),
+            bankName: refundBankForm.bankName.trim()
+          };
+
+      const r = await fetch(`/api/returns/${returnId}/refund-details`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload)
+      });
+      const d = await r.json();
+      if (r.ok && d.return) {
+        setReturnRequest(d.return);
+        toast.success(d.message || 'Refund details submitted successfully. Your return will now proceed.');
+        const rOrder = await fetch(`/api/orders/${order.id}`, { credentials: 'include' });
+        const dOrder = await rOrder.json();
+        if (rOrder.ok && dOrder.order) {
+          setOrder(dOrder.order);
+        }
+      } else {
+        setRefundDetailsErr(d.error || 'Failed to submit refund details. Please try again.');
+        toast.error(d.error || 'Submission failed');
+      }
+    } catch (err) {
+      console.error(err);
+      setRefundDetailsErr('Network error submitting refund details.');
+      toast.error('Network error');
+    } finally {
+      setSubmittingRefundDetails(false);
     }
   };
 
@@ -541,7 +718,7 @@ function OrderInner() {
   const isReturnWindowOpen = isDelivered && deliveredTime && msRemaining > 0;
   const isReturnWindowExpired = isDelivered && deliveredTime && msRemaining <= 0;
 
-  const hasActiveReturn = !!returnRequest && ['REQUESTED', 'APPROVED', 'PROCESSING', 'REFUND_INITIATED', 'REFUNDED'].includes(returnRequest.returnStatus);
+  const hasActiveReturn = !!returnRequest && ['REQUESTED', 'RETURN_REQUESTED', 'APPROVED', 'RETURN_APPROVED', 'REFUND_DETAILS_SUBMITTED', 'PROCESSING', 'REFUND_INITIATED', 'REFUNDED'].includes(returnRequest.returnStatus);
   const canRequestReturn = isDelivered && isReturnWindowOpen && !hasActiveReturn;
 
   const minutesLeft = Math.floor(msRemaining / 60000);
@@ -616,7 +793,7 @@ function OrderInner() {
                   <p className="text-xs text-neutral-500 mt-0.5">Return ID: <span className="font-mono font-medium text-neutral-700">{returnRequest.returnId || returnRequest.id}</span></p>
                 </div>
                 <span className={`inline-block px-3 py-1 text-[10px] font-semibold tracking-wider uppercase rounded-full border ${getReturnStatusBadge(returnRequest.returnStatus)}`}>
-                  {getReturnStatusLabel(returnRequest.returnStatus)}
+                  {getReturnStatusLabel(returnRequest.returnStatus, !!returnRequest.refundDetails)}
                 </span>
               </div>
 
@@ -638,6 +815,305 @@ function OrderInner() {
                   <span className="font-medium text-neutral-800 truncate block">{returnRequest.reason}</span>
                 </div>
               </div>
+
+              {/* Status 1: REQUESTED / RETURN_REQUESTED (Awaiting Admin Approval Notice) */}
+              {['REQUESTED', 'RETURN_REQUESTED'].includes(returnRequest.returnStatus) && (
+                <div className="p-4 bg-amber-50/90 border border-amber-200/90 rounded-xl flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 shrink-0 mt-0.5">
+                    <Clock size={16} />
+                  </div>
+                  <div className="space-y-1">
+                    <h5 className="font-semibold text-amber-900 text-xs sm:text-sm">
+                      Your return request has been submitted and is awaiting approval.
+                    </h5>
+                    <p className="text-[11px] sm:text-xs text-amber-800/90 leading-relaxed">
+                      Our concierge team is currently reviewing your return request. Once approved by admin, you will be able to submit your UPI ID or Bank Transfer details here to receive your refund.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Status 2: APPROVED / RETURN_APPROVED (Refund Details Form - Action Required) */}
+              {['APPROVED', 'RETURN_APPROVED'].includes(returnRequest.returnStatus) && !returnRequest.refundDetails && (
+                <div className="p-4 sm:p-6 bg-gradient-to-br from-[#FAF6EF] via-white to-amber-50/40 border-2 border-[#9C6B30]/35 rounded-xl space-y-4 shadow-xs">
+                  <div className="flex items-start justify-between gap-3 pb-3 border-b border-[#E8E8E8]">
+                    <div>
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-800 border border-blue-200 text-[10px] font-semibold uppercase tracking-wider mb-1.5">
+                        <CheckCircle2 size={12} className="text-blue-600" /> Return Approved
+                      </div>
+                      <h4 className="font-display text-base sm:text-lg text-[#1A1A1A]">
+                        Provide Refund Details
+                      </h4>
+                      <p className="text-xs text-neutral-600 mt-0.5">
+                        Your return has been approved! Please choose your preferred refund method below to receive your refund of <strong className="text-[#9C6B30] font-semibold">{formatINR(returnRequest.refundAmount || 0)}</strong>.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Method Selection: UPI or Bank Transfer */}
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-800 uppercase tracking-wider mb-2">
+                      Select Refund Method *
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => { setRefundMethod('upi'); setRefundDetailsErr(''); }}
+                        className={`flex items-center gap-3 p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                          refundMethod === 'upi'
+                            ? 'border-[#9C6B30] bg-[#FAF6EF]/90 shadow-2xs ring-1 ring-[#9C6B30]'
+                            : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                        }`}
+                      >
+                        <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${
+                          refundMethod === 'upi' ? 'bg-[#9C6B30] text-white' : 'bg-neutral-100 text-neutral-600'
+                        }`}>
+                          <Smartphone size={18} />
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold text-neutral-900">UPI Transfer</div>
+                          <div className="text-[11px] text-neutral-500">Google Pay, PhonePe, Paytm, BHIM</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => { setRefundMethod('bank_transfer'); setRefundDetailsErr(''); }}
+                        className={`flex items-center gap-3 p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                          refundMethod === 'bank_transfer'
+                            ? 'border-[#9C6B30] bg-[#FAF6EF]/90 shadow-2xs ring-1 ring-[#9C6B30]'
+                            : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                        }`}
+                      >
+                        <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${
+                          refundMethod === 'bank_transfer' ? 'bg-[#9C6B30] text-white' : 'bg-neutral-100 text-neutral-600'
+                        }`}>
+                          <Building2 size={18} />
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold text-neutral-900">Bank Transfer (NEFT / IMPS)</div>
+                          <div className="text-[11px] text-neutral-500">Direct deposit to bank account</div>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {refundDetailsErr && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-2">
+                      <AlertTriangle size={15} className="text-red-500 shrink-0" />
+                      <span>{refundDetailsErr}</span>
+                    </div>
+                  )}
+
+                  <form onSubmit={handleSubmitRefundDetails} className="space-y-4 pt-1">
+                    {refundMethod === 'upi' ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-medium text-neutral-700 mb-1">
+                            UPI ID (VPA) *
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={refundUpiForm.upiId}
+                            onChange={e => {
+                              setRefundUpiForm(prev => ({ ...prev, upiId: e.target.value }));
+                              setRefundDetailsErr('');
+                            }}
+                            placeholder="e.g. name@okhdfcbank or 9876543210@paytm"
+                            className="w-full px-3 py-2.5 border border-[#E8E8E8] rounded-lg text-xs sm:text-sm bg-white focus:outline-none focus:border-[#9C6B30]"
+                          />
+                          <p className="text-[10px] text-neutral-400 mt-1">Accepted: Google Pay, PhonePe, Paytm, BHIM or any Indian banking UPI handle</p>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-neutral-700 mb-1">
+                            Confirm UPI ID *
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={refundUpiForm.confirmUpiId}
+                            onChange={e => {
+                              setRefundUpiForm(prev => ({ ...prev, confirmUpiId: e.target.value }));
+                              setRefundDetailsErr('');
+                            }}
+                            placeholder="Re-enter your UPI ID"
+                            className="w-full px-3 py-2.5 border border-[#E8E8E8] rounded-lg text-xs sm:text-sm bg-white focus:outline-none focus:border-[#9C6B30]"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-3.5">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                          <div>
+                            <label className="block text-xs font-medium text-neutral-700 mb-1">
+                              Account Holder Name *
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              value={refundBankForm.accountHolderName}
+                              onChange={e => {
+                                setRefundBankForm(prev => ({ ...prev, accountHolderName: e.target.value }));
+                                setRefundDetailsErr('');
+                              }}
+                              placeholder="Full name as in bank records"
+                              className="w-full px-3 py-2.5 border border-[#E8E8E8] rounded-lg text-xs sm:text-sm bg-white focus:outline-none focus:border-[#9C6B30]"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-medium text-neutral-700 mb-1">
+                              Bank Name *
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              value={refundBankForm.bankName}
+                              onChange={e => {
+                                setRefundBankForm(prev => ({ ...prev, bankName: e.target.value }));
+                                setRefundDetailsErr('');
+                              }}
+                              placeholder="e.g. HDFC Bank, ICICI Bank, SBI"
+                              className="w-full px-3 py-2.5 border border-[#E8E8E8] rounded-lg text-xs sm:text-sm bg-white focus:outline-none focus:border-[#9C6B30]"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                          <div>
+                            <label className="block text-xs font-medium text-neutral-700 mb-1">
+                              Account Number *
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              value={refundBankForm.accountNumber}
+                              onChange={e => {
+                                const digits = e.target.value.replace(/[^0-9]/g, '');
+                                setRefundBankForm(prev => ({ ...prev, accountNumber: digits }));
+                                setRefundDetailsErr('');
+                              }}
+                              placeholder="9 to 18 digits"
+                              className="w-full px-3 py-2.5 border border-[#E8E8E8] rounded-lg text-xs sm:text-sm bg-white focus:outline-none focus:border-[#9C6B30] font-mono"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-medium text-neutral-700 mb-1">
+                              Confirm Account Number *
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              value={refundBankForm.confirmAccountNumber}
+                              onChange={e => {
+                                const digits = e.target.value.replace(/[^0-9]/g, '');
+                                setRefundBankForm(prev => ({ ...prev, confirmAccountNumber: digits }));
+                                setRefundDetailsErr('');
+                              }}
+                              placeholder="Re-enter account number"
+                              className="w-full px-3 py-2.5 border border-[#E8E8E8] rounded-lg text-xs sm:text-sm bg-white focus:outline-none focus:border-[#9C6B30] font-mono"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-medium text-neutral-700 mb-1">
+                              IFSC Code *
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              maxLength={11}
+                              value={refundBankForm.ifscCode}
+                              onChange={e => {
+                                setRefundBankForm(prev => ({ ...prev, ifscCode: e.target.value.toUpperCase() }));
+                                setRefundDetailsErr('');
+                              }}
+                              placeholder="e.g. HDFC0001234"
+                              className="w-full px-3 py-2.5 border border-[#E8E8E8] rounded-lg text-xs sm:text-sm bg-white focus:outline-none focus:border-[#9C6B30] uppercase font-mono"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="pt-2 flex items-center justify-between flex-wrap gap-3">
+                      <div className="text-[11px] text-neutral-500 flex items-center gap-1.5">
+                        <ShieldCheck size={14} className="text-[#9C6B30]" /> Encrypted & used strictly for refund payout.
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={submittingRefundDetails}
+                        className="px-6 py-2.5 bg-[#1A1A1A] hover:bg-[#9C6B30] text-white text-[11px] tracking-wider uppercase font-semibold rounded-md transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                      >
+                        {submittingRefundDetails ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                        Submit Refund Details
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {/* Status 3: REFUND DETAILS SUBMITTED (Confirmed & Masked Summary) */}
+              {(returnRequest.refundDetails || returnRequest.returnStatus === 'REFUND_DETAILS_SUBMITTED') && (
+                <div className="p-4 sm:p-5 bg-gradient-to-br from-emerald-50/70 via-white to-[#FAF6EF]/50 border border-emerald-200 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2 pb-2.5 border-b border-emerald-100">
+                    <div className="flex items-center gap-2 text-emerald-900 font-semibold text-xs sm:text-sm">
+                      <CheckCircle2 size={16} className="text-emerald-600" />
+                      <span>Refund details submitted successfully. Your return will now proceed.</span>
+                    </div>
+                    {returnRequest.refundDetails?.method && (
+                      <span className="px-2.5 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-semibold uppercase tracking-wider rounded-full">
+                        Method: {returnRequest.refundDetails.method === 'upi' ? 'UPI' : 'Bank Transfer'}
+                      </span>
+                    )}
+                  </div>
+
+                  {returnRequest.refundDetails && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                      {returnRequest.refundDetails.method === 'upi' ? (
+                        <>
+                          <div>
+                            <span className="text-neutral-400 block text-[10px] uppercase tracking-wider">Payout Channel</span>
+                            <span className="font-medium text-neutral-800">UPI Instant Transfer</span>
+                          </div>
+                          <div>
+                            <span className="text-neutral-400 block text-[10px] uppercase tracking-wider">UPI ID (VPA)</span>
+                            <span className="font-mono font-semibold text-neutral-900">{returnRequest.refundDetails.upiId}</span>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div>
+                            <span className="text-neutral-400 block text-[10px] uppercase tracking-wider">Account Holder</span>
+                            <span className="font-medium text-neutral-800">{returnRequest.refundDetails.accountHolderName}</span>
+                          </div>
+                          <div>
+                            <span className="text-neutral-400 block text-[10px] uppercase tracking-wider">Account Number</span>
+                            <span className="font-mono font-semibold text-neutral-900">
+                              {returnRequest.refundDetails.accountNumberMasked || (returnRequest.refundDetails.accountNumber ? `XXXX XXXX ${returnRequest.refundDetails.accountNumber.slice(-4)}` : 'XXXX XXXX')}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-neutral-400 block text-[10px] uppercase tracking-wider">Bank & IFSC</span>
+                            <span className="font-medium text-neutral-800">
+                              {returnRequest.refundDetails.bankName} • <span className="font-mono">{returnRequest.refundDetails.ifscCode}</span>
+                            </span>
+                          </div>
+                        </>
+                      )}
+                      <div>
+                        <span className="text-neutral-400 block text-[10px] uppercase tracking-wider">Submitted On</span>
+                        <span className="font-medium text-neutral-700">
+                          {returnRequest.refundDetails.submittedAt ? new Date(returnRequest.refundDetails.submittedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Verified'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {returnRequest.comment && (
                 <div className="p-3 bg-white border border-[#E8E8E8] rounded-lg text-xs text-neutral-700">
@@ -678,6 +1154,25 @@ function OrderInner() {
                           {it.itemRefundAmount ? formatINR(it.itemRefundAmount) : formatINR((it.price || 0) * (it.returnQty || it.qty))}
                         </div>
                       </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {Array.isArray(returnRequest.images) && returnRequest.images.length > 0 && (
+                <div className="pt-2 border-t border-[#E8E8E8]">
+                  <span className="text-[10px] uppercase tracking-widest text-neutral-400 font-medium block mb-2">
+                    Uploaded Product Photos ({returnRequest.images.length})
+                  </span>
+                  <div className="flex flex-wrap gap-2.5">
+                    {returnRequest.images.map((img, i) => (
+                      <a key={i} href={img} target="_blank" rel="noopener noreferrer" className="relative group block">
+                        <img
+                          src={img}
+                          alt="Product return verification"
+                          className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg object-cover border border-[#E8E8E8] group-hover:opacity-90 transition shadow-xs"
+                        />
+                      </a>
                     ))}
                   </div>
                 </div>
@@ -1179,6 +1674,66 @@ function OrderInner() {
                   </div>
                 </div>
 
+                {/* Product Photos / Evidence Upload */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block font-medium text-xs sm:text-sm text-neutral-800">
+                      Product Photos / Evidence <span className="text-neutral-400 text-xs font-normal">(optional, recommended)</span>
+                    </label>
+                    <span className="text-[11px] text-neutral-500 font-medium">{returnImages.length}/5 uploaded</span>
+                  </div>
+                  <p className="text-[11px] text-neutral-500 mb-2">
+                    Upload clear photos of the product and its packaging to help our team verify and approve your return.
+                  </p>
+
+                  {/* Uploaded thumbnails */}
+                  {returnImages.length > 0 && (
+                    <div className="flex flex-wrap gap-2.5 mb-2.5">
+                      {returnImages.map((imgUrl, idx) => (
+                        <div key={idx} className="relative group w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden border border-[#E8E8E8] bg-neutral-100 shadow-2xs">
+                          <img src={imgUrl} alt={`Uploaded proof ${idx + 1}`} className="w-full h-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveReturnPhoto(idx)}
+                            className="absolute top-1 right-1 p-1 bg-red-600/90 hover:bg-red-700 text-white rounded-full transition cursor-pointer shadow-xs"
+                            title="Remove photo"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {returnImages.length < 5 && (
+                    <label
+                      className={`flex items-center justify-center gap-2 border-2 border-dashed border-neutral-300 rounded-xl p-3 sm:p-4 text-center cursor-pointer transition-all bg-white hover:bg-[#FAF6EF]/50 hover:border-[#9C6B30] ${
+                        uploadingReturnPhoto ? 'opacity-60 pointer-events-none' : ''
+                      }`}
+                    >
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/jpg"
+                        onChange={handleReturnPhotoUpload}
+                        disabled={uploadingReturnPhoto}
+                        className="hidden"
+                      />
+                      {uploadingReturnPhoto ? (
+                        <div className="flex items-center gap-2 text-xs text-[#9C6B30]">
+                          <Loader2 size={16} className="animate-spin" />
+                          <span>Uploading photo…</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-xs text-neutral-700">
+                          <Camera size={16} className="text-[#9C6B30]" />
+                          <span className="font-medium">{returnImages.length === 0 ? 'Upload Product Photo' : '+ Add Another Photo'}</span>
+                          <span className="text-[10px] text-neutral-400 hidden sm:inline">(JPG, PNG, WebP up to 8MB)</span>
+                        </div>
+                      )}
+                    </label>
+                  )}
+                </div>
+
                 {/* Comments / Details */}
                 <div>
                   <label className="block text-xs font-medium text-neutral-700 mb-1">
@@ -1229,7 +1784,24 @@ function OrderInner() {
                         <span className="font-medium text-neutral-800 truncate max-w-[200px]">{returnComment}</span>
                       </div>
                     )}
+                    {returnImages.length > 0 && (
+                      <div className="pt-1.5 flex justify-between items-center">
+                        <span className="text-neutral-500">Photos Attached:</span>
+                        <span className="font-medium text-neutral-800">{returnImages.length} {returnImages.length === 1 ? 'photo' : 'photos'}</span>
+                      </div>
+                    )}
                   </div>
+
+                  {returnImages.length > 0 && (
+                    <div className="pt-2 border-t border-[#E8E8E8]">
+                      <span className="text-[10px] uppercase tracking-wider text-neutral-400 block mb-1.5">Attached Photos:</span>
+                      <div className="flex flex-wrap gap-2">
+                        {returnImages.map((img, idx) => (
+                          <img key={idx} src={img} alt={`Proof ${idx + 1}`} className="w-12 h-12 rounded object-cover border border-[#E8E8E8]" />
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="pt-2 border-t border-[#E8E8E8]">
                     <span className="text-[10px] uppercase tracking-wider text-neutral-400 block mb-1.5">Items to Return:</span>

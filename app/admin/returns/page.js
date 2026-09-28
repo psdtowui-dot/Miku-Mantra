@@ -1,13 +1,14 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { formatINR } from '@/lib/products';
-import { Loader2, Search, X, CheckCircle2, XCircle, RotateCcw, AlertTriangle, ShieldCheck, DollarSign, PackageCheck, History, Eye, ArrowRight } from 'lucide-react';
+import { Loader2, Search, X, CheckCircle2, XCircle, RotateCcw, AlertTriangle, ShieldCheck, DollarSign, PackageCheck, History, Eye, EyeOff, Copy, ArrowRight, Camera, Image as ImageIcon, ExternalLink, CreditCard, Smartphone, Building2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 const STATUS_FILTERS = [
   { key: 'ALL', label: 'All Returns' },
   { key: 'REQUESTED', label: 'Requested' },
   { key: 'APPROVED', label: 'Approved' },
+  { key: 'REFUND_DETAILS_SUBMITTED', label: 'Details Submitted' },
   { key: 'PROCESSING', label: 'Processing' },
   { key: 'REFUNDED', label: 'Refunded' },
   { key: 'REJECTED', label: 'Rejected' },
@@ -31,6 +32,7 @@ export default function AdminReturns() {
   const [activeReturn, setActiveReturn] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
   const [loadingAudit, setLoadingAudit] = useState(false);
+  const [showFullAccountNumber, setShowFullAccountNumber] = useState(false);
 
   // Sub-modal states
   const [showApproveModal, setShowApproveModal] = useState(false);
@@ -90,6 +92,7 @@ export default function AdminReturns() {
 
   const openDetailModal = (ret) => {
     setActiveReturn(ret);
+    setShowFullAccountNumber(false);
     loadAuditLogs(ret.id);
   };
 
@@ -240,13 +243,24 @@ export default function AdminReturns() {
 
   const getStatusBadge = (status) => {
     switch (status) {
-      case 'REQUESTED': return 'bg-amber-50 text-amber-800 border-amber-200';
-      case 'APPROVED': return 'bg-blue-50 text-blue-800 border-blue-200';
-      case 'PROCESSING': return 'bg-purple-50 text-purple-800 border-purple-200';
-      case 'REFUND_INITIATED': return 'bg-indigo-50 text-indigo-800 border-indigo-200';
-      case 'REFUNDED': return 'bg-emerald-50 text-emerald-800 border-emerald-200';
-      case 'REJECTED': return 'bg-red-50 text-red-800 border-red-200';
-      default: return 'bg-neutral-100 text-neutral-700 border-neutral-200';
+      case 'REQUESTED':
+      case 'RETURN_REQUESTED':
+        return 'bg-amber-50 text-amber-800 border-amber-200';
+      case 'APPROVED':
+      case 'RETURN_APPROVED':
+        return 'bg-blue-50 text-blue-800 border-blue-200';
+      case 'REFUND_DETAILS_SUBMITTED':
+        return 'bg-teal-50 text-teal-800 border-teal-200';
+      case 'PROCESSING':
+        return 'bg-purple-50 text-purple-800 border-purple-200';
+      case 'REFUND_INITIATED':
+        return 'bg-indigo-50 text-indigo-800 border-indigo-200';
+      case 'REFUNDED':
+        return 'bg-emerald-50 text-emerald-800 border-emerald-200';
+      case 'REJECTED':
+        return 'bg-red-50 text-red-800 border-red-200';
+      default:
+        return 'bg-neutral-100 text-neutral-700 border-neutral-200';
     }
   };
 
@@ -328,6 +342,11 @@ export default function AdminReturns() {
                     <td className="p-3.5">
                       <div className="font-mono text-xs font-semibold text-neutral-900">{r.returnId || r.id}</div>
                       <div className="text-[11px] text-neutral-500 font-sans">Order #{r.orderNumber}</div>
+                      {Array.isArray(r.images) && r.images.length > 0 && (
+                        <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-[#9C6B30] bg-[#FAF6EF] px-1.5 py-0.5 rounded border border-[#9C6B30]/30 font-medium">
+                          <Camera size={11} /> {r.images.length} {r.images.length === 1 ? 'photo' : 'photos'}
+                        </div>
+                      )}
                     </td>
                     <td className="p-3.5">
                       <div className="font-medium text-neutral-900">{r.customerName}</div>
@@ -351,9 +370,22 @@ export default function AdminReturns() {
                       {formatINR(r.refundAmount || 0)}
                     </td>
                     <td className="p-3.5 text-center">
-                      <span className={`inline-block px-2.5 py-1 text-[10px] font-semibold tracking-wider uppercase rounded-full border ${getStatusBadge(r.returnStatus)}`}>
-                        {r.returnStatus}
-                      </span>
+                      <div className="flex flex-col items-center gap-1">
+                        <span className={`inline-block px-2.5 py-0.5 text-[10px] font-semibold tracking-wider uppercase rounded-full border ${getStatusBadge(r.returnStatus)}`}>
+                          {r.returnStatus}
+                        </span>
+                        <div>
+                          {r.refundDetails || r.refundDetailsStatus === 'SUBMITTED' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-semibold tracking-wider uppercase rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                              <CheckCircle2 size={10} /> Details: Submitted
+                            </span>
+                          ) : (
+                            <span className="inline-block px-2 py-0.5 text-[9px] font-medium tracking-wider uppercase rounded-full bg-neutral-100 text-neutral-600 border border-neutral-200">
+                              Details: Pending
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </td>
                     <td className="p-3.5 text-center">
                       <button
@@ -469,6 +501,154 @@ export default function AdminReturns() {
                 </div>
               </div>
 
+              {/* Customer Uploaded Product Photos & Evidence */}
+              <div className="p-4 border border-neutral-200 rounded-xl bg-neutral-50/60 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Camera size={16} className="text-[#9C6B30]" />
+                    <h4 className="text-xs font-bold text-neutral-900 uppercase tracking-wider">
+                      Customer Product Photos & Evidence
+                    </h4>
+                  </div>
+                  {Array.isArray(activeReturn.images) && activeReturn.images.length > 0 && (
+                    <span className="text-[10px] bg-[#9C6B30]/10 text-[#9C6B30] font-semibold px-2 py-0.5 rounded-full border border-[#9C6B30]/30">
+                      {activeReturn.images.length} {activeReturn.images.length === 1 ? 'Photo' : 'Photos'}
+                    </span>
+                  )}
+                </div>
+
+                {Array.isArray(activeReturn.images) && activeReturn.images.length > 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                    {activeReturn.images.map((imgUrl, i) => (
+                      <div key={i} className="group relative border border-neutral-200 rounded-lg overflow-hidden bg-white shadow-xs">
+                        <img
+                          src={imgUrl}
+                          alt={`Customer proof ${i + 1}`}
+                          className="w-full h-28 sm:h-32 object-cover transition-transform duration-300 group-hover:scale-105"
+                        />
+                        <a
+                          href={imgUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[11px] font-medium gap-1.5 backdrop-blur-[1px]"
+                        >
+                          <Eye size={13} /> View Full
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-3 bg-white border border-neutral-200 rounded-lg text-xs text-neutral-500 italic flex items-center gap-2">
+                    <ImageIcon size={14} className="text-neutral-400 shrink-0" />
+                    <span>No product photos were uploaded by the customer for this return request.</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Customer Refund Payout Details Card */}
+              <div className="border border-neutral-200 rounded-xl p-4 bg-neutral-50/70 space-y-3">
+                <div className="flex justify-between items-center flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <CreditCard size={18} className="text-[#9C6B30]" />
+                    <h4 className="text-xs font-bold text-neutral-900 uppercase tracking-wider">
+                      Customer Refund Payout Details
+                    </h4>
+                  </div>
+                  {activeReturn.refundDetails || activeReturn.refundDetailsStatus === 'SUBMITTED' ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-[10px] font-semibold rounded-full uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      <CheckCircle2 size={11} /> Refund Details: Submitted
+                    </span>
+                  ) : (
+                    <span className="inline-block px-2.5 py-0.5 text-[10px] font-semibold rounded-full uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-300">
+                      Refund Details: Pending
+                    </span>
+                  )}
+                </div>
+
+                {activeReturn.refundDetails ? (
+                  <div className="p-3.5 bg-white border border-neutral-200 rounded-lg space-y-2 text-xs">
+                    <div className="flex items-center gap-2 font-medium text-neutral-900 pb-2 border-b border-neutral-100">
+                      {activeReturn.refundDetails.method === 'upi' ? (
+                        <span className="flex items-center gap-1.5 text-blue-700 font-semibold">
+                          <Smartphone size={14} /> Method: UPI Transfer
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1.5 text-purple-700 font-semibold">
+                          <Building2 size={14} /> Method: Direct Bank Transfer (NEFT/IMPS)
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                      {activeReturn.refundDetails.method === 'upi' ? (
+                        <div>
+                          <span className="text-[10px] uppercase text-neutral-400 font-medium block">UPI ID (VPA)</span>
+                          <span className="font-mono text-sm font-semibold text-neutral-900 select-all">{activeReturn.refundDetails.upiId}</span>
+                        </div>
+                      ) : (
+                        <>
+                          <div>
+                            <span className="text-[10px] uppercase text-neutral-400 font-medium block">Account Holder Name</span>
+                            <span className="font-medium text-neutral-900">{activeReturn.refundDetails.accountHolderName}</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] uppercase text-neutral-400 font-medium block">Bank Account Number</span>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="font-mono text-sm font-semibold text-neutral-900 select-all">
+                                {showFullAccountNumber && activeReturn.refundDetails.accountNumber
+                                  ? activeReturn.refundDetails.accountNumber
+                                  : (activeReturn.refundDetails.accountNumberMasked || (activeReturn.refundDetails.accountNumber ? `XXXX XXXX ${activeReturn.refundDetails.accountNumber.slice(-4)}` : 'XXXX XXXX'))}
+                              </span>
+                              {activeReturn.refundDetails.accountNumber && (
+                                <button
+                                  type="button"
+                                  onClick={() => setShowFullAccountNumber(!showFullAccountNumber)}
+                                  className="p-1 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-md transition cursor-pointer"
+                                  title={showFullAccountNumber ? "Hide full account number" : "Show full account number"}
+                                >
+                                  {showFullAccountNumber ? <EyeOff size={15} /> : <Eye size={15} />}
+                                </button>
+                              )}
+                              {showFullAccountNumber && activeReturn.refundDetails.accountNumber && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(activeReturn.refundDetails.accountNumber);
+                                    toast.success('Account number copied to clipboard');
+                                  }}
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-[#9C6B30] hover:text-[#7A501F] bg-[#FAF6EF] border border-[#9C6B30]/30 rounded font-medium cursor-pointer transition"
+                                  title="Copy full account number"
+                                >
+                                  <Copy size={11} /> Copy
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-[10px] uppercase text-neutral-400 font-medium block">Bank Name</span>
+                            <span className="font-medium text-neutral-900">{activeReturn.refundDetails.bankName}</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] uppercase text-neutral-400 font-medium block">IFSC Code</span>
+                            <span className="font-mono font-semibold text-neutral-900 select-all">{activeReturn.refundDetails.ifscCode}</span>
+                          </div>
+                        </>
+                      )}
+                      <div>
+                        <span className="text-[10px] uppercase text-neutral-400 font-medium block">Submitted At</span>
+                        <span className="text-neutral-700">
+                          {activeReturn.refundDetails.submittedAt ? new Date(activeReturn.refundDetails.submittedAt).toLocaleString('en-IN') : 'N/A'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-white border border-neutral-200 rounded-lg text-xs text-neutral-500 italic">
+                    Customer has not submitted refund details yet. The refund payout form becomes available to the customer once this return request is approved.
+                  </div>
+                )}
+              </div>
+
               {/* Refund Section & Status */}
               <div className="border border-neutral-200 rounded-xl p-4 bg-amber-50/30 space-y-3">
                 <div className="flex justify-between items-center flex-wrap gap-2">
@@ -497,7 +677,7 @@ export default function AdminReturns() {
                 )}
 
                 {/* Refund Buttons */}
-                {['APPROVED', 'PROCESSING', 'REFUND_INITIATED'].includes(activeReturn.returnStatus) && activeReturn.refundStatus !== 'COMPLETED' && (
+                {['APPROVED', 'RETURN_APPROVED', 'REFUND_DETAILS_SUBMITTED', 'PROCESSING', 'REFUND_INITIATED'].includes(activeReturn.returnStatus) && activeReturn.refundStatus !== 'COMPLETED' && (
                   <div className="pt-2 flex items-center gap-3">
                     <button
                       disabled={submitting}
@@ -579,7 +759,7 @@ export default function AdminReturns() {
               </button>
 
               <div className="flex items-center gap-3">
-                {activeReturn.returnStatus === 'REQUESTED' && (
+                {['REQUESTED', 'RETURN_REQUESTED'].includes(activeReturn.returnStatus) && (
                   <>
                     <button
                       onClick={() => setShowRejectModal(true)}
@@ -596,7 +776,7 @@ export default function AdminReturns() {
                   </>
                 )}
 
-                {activeReturn.returnStatus === 'APPROVED' && (
+                {['APPROVED', 'RETURN_APPROVED', 'REFUND_DETAILS_SUBMITTED'].includes(activeReturn.returnStatus) && (
                   <button
                     onClick={() => handleProcessStatus('PROCESSING')}
                     className="px-4 py-2 bg-purple-600 text-white hover:bg-purple-700 text-xs font-semibold rounded-md transition cursor-pointer"
@@ -621,6 +801,44 @@ export default function AdminReturns() {
             <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-xs text-amber-900">
               Refund Amount: <strong className="font-display text-base text-[#9C6B30]">{formatINR(activeReturn.refundAmount)}</strong>
             </div>
+
+            {/* Customer Uploaded Product Photos displayed at approval */}
+            {Array.isArray(activeReturn.images) && activeReturn.images.length > 0 ? (
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-semibold text-neutral-700 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
+                    <Camera size={13} className="text-[#9C6B30]" /> Customer Product Photo{activeReturn.images.length > 1 ? 's' : ''} ({activeReturn.images.length})
+                  </span>
+                  <span className="text-[10px] text-neutral-400">Click to view full size</span>
+                </div>
+                <div className="flex gap-2.5 overflow-x-auto pb-1 pt-0.5">
+                  {activeReturn.images.map((imgUrl, i) => (
+                    <a
+                      key={i}
+                      href={imgUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="relative block w-20 h-20 rounded-lg overflow-hidden border border-neutral-300 group shrink-0 shadow-xs"
+                      title="Click to view full image"
+                    >
+                      <img
+                        src={imgUrl}
+                        alt={`Return proof ${i + 1}`}
+                        className="w-full h-full object-cover group-hover:scale-105 transition"
+                      />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] gap-1 transition">
+                        <Eye size={12} />
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="p-2.5 bg-neutral-50 rounded-lg border border-neutral-200 text-neutral-500 text-xs italic flex items-center gap-1.5">
+                <ImageIcon size={14} className="text-neutral-400 shrink-0" />
+                <span>No customer product photos uploaded.</span>
+              </div>
+            )}
             <div className="flex justify-end gap-3 pt-2">
               <button disabled={submitting} onClick={() => setShowApproveModal(false)} className="px-4 py-2 border border-neutral-300 text-xs rounded-md hover:bg-neutral-50 cursor-pointer">
                 Cancel

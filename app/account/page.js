@@ -404,11 +404,10 @@ export default function AccountPage() {
                   <button
                     key={t.k}
                     onClick={() => setTab(t.k)}
-                    className={`w-full flex items-center gap-3 px-3.5 py-3 text-xs sm:text-sm rounded-xl transition-all duration-200 cursor-pointer group ${
-                      isActive
+                    className={`w-full flex items-center gap-3 px-3.5 py-3 text-xs sm:text-sm rounded-xl transition-all duration-200 cursor-pointer group ${isActive
                         ? 'bg-gradient-to-r from-[#FAF5EB] to-[#FAF8F5] text-[#9C6B30] font-medium border-l-[3px] border-l-[#9C6B30] shadow-sm'
                         : 'text-neutral-600 hover:text-[#1A1A1A] hover:bg-[#FAF8F5] border-l-[3px] border-l-transparent'
-                    }`}
+                      }`}
                   >
                     <t.i size={16} className={`shrink-0 transition-colors ${isActive ? 'text-[#9C6B30]' : 'text-neutral-400 group-hover:text-[#9C6B30]'}`} />
                     <span className="flex-1 text-left">{t.n}</span>
@@ -461,9 +460,8 @@ export default function AccountPage() {
                       if (profileErrors.name) setProfileErrors(prev => ({ ...prev, name: '' }));
                     }}
                     placeholder="Your complete name"
-                    className={`w-full px-4 py-3 bg-[#FAF8F5]/60 hover:bg-white focus:bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${
-                      profileErrors.name ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
-                    }`}
+                    className={`w-full px-4 py-3 bg-[#FAF8F5]/60 hover:bg-white focus:bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${profileErrors.name ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
+                      }`}
                   />
                   {profileErrors.name && <p className="text-xs text-red-500 mt-1.5 font-light">{profileErrors.name}</p>}
                 </div>
@@ -505,9 +503,8 @@ export default function AccountPage() {
                         if (profileErrors.phone) setProfileErrors(prev => ({ ...prev, phone: '' }));
                       }}
                       placeholder="10-digit mobile number"
-                      className={`w-full pl-[5.25rem] pr-4 py-3 bg-[#FAF8F5]/60 hover:bg-white focus:bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${
-                        profileErrors.phone ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
-                      }`}
+                      className={`w-full pl-[5.25rem] pr-4 py-3 bg-[#FAF8F5]/60 hover:bg-white focus:bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${profileErrors.phone ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
+                        }`}
                     />
                   </div>
                   {profileErrors.phone && <p className="text-xs text-red-500 mt-1.5 font-light">{profileErrors.phone}</p>}
@@ -580,9 +577,8 @@ export default function AccountPage() {
                           if (pwdErrors.currentPassword) setPwdErrors(prev => ({ ...prev, currentPassword: '' }));
                         }}
                         placeholder="••••••••"
-                        className={`w-full pr-11 px-4 py-3 bg-[#FAF8F5]/60 hover:bg-white focus:bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${
-                          pwdErrors.currentPassword ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
-                        }`}
+                        className={`w-full pr-11 px-4 py-3 bg-[#FAF8F5]/60 hover:bg-white focus:bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${pwdErrors.currentPassword ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
+                          }`}
                       />
                       <button
                         type="button"
@@ -610,9 +606,8 @@ export default function AccountPage() {
                         if (pwdErrors.newPassword) setPwdErrors(prev => ({ ...prev, newPassword: '' }));
                       }}
                       placeholder="At least 6 characters"
-                      className={`w-full pr-11 px-4 py-3 bg-[#FAF8F5]/60 hover:bg-white focus:bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${
-                        pwdErrors.newPassword ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
-                      }`}
+                      className={`w-full pr-11 px-4 py-3 bg-[#FAF8F5]/60 hover:bg-white focus:bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${pwdErrors.newPassword ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
+                        }`}
                     />
                     <button
                       type="button"
@@ -639,9 +634,8 @@ export default function AccountPage() {
                         if (pwdErrors.confirmPassword) setPwdErrors(prev => ({ ...prev, confirmPassword: '' }));
                       }}
                       placeholder="Repeat new password"
-                      className={`w-full pr-11 px-4 py-3 bg-[#FAF8F5]/60 hover:bg-white focus:bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${
-                        pwdErrors.confirmPassword ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
-                      }`}
+                      className={`w-full pr-11 px-4 py-3 bg-[#FAF8F5]/60 hover:bg-white focus:bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${pwdErrors.confirmPassword ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
+                        }`}
                     />
                     <button
                       type="button"
@@ -719,22 +713,20 @@ export default function AccountPage() {
 
                           <div className="text-right flex flex-col items-end gap-2">
                             <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                              <span className={`inline-block px-3 py-1 text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full capitalize font-semibold border ${
-                                o.status === 'cancelled'
+                              <span className={`inline-block px-3 py-1 text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full capitalize font-semibold border ${o.status === 'cancelled'
                                   ? 'bg-red-50 text-red-700 border-red-200'
                                   : 'bg-[#FAF5EB] text-[#9C6B30] border-[#9C6B30]/30'
-                              }`}>
+                                }`}>
                                 {o.status}
                               </span>
                               {o.returnStatus && (
-                                <span className={`inline-block px-2.5 py-0.5 text-[9px] sm:text-[10px] tracking-wider uppercase rounded-full font-semibold border ${
-                                  o.returnStatus === 'REQUESTED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
-                                  o.returnStatus === 'APPROVED' ? 'bg-blue-50 text-blue-800 border-blue-200' :
-                                  o.returnStatus === 'PROCESSING' ? 'bg-purple-50 text-purple-800 border-purple-200' :
-                                  o.returnStatus === 'REFUNDED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
-                                  o.returnStatus === 'REJECTED' ? 'bg-red-50 text-red-800 border-red-200' :
-                                  'bg-neutral-100 text-neutral-700 border-neutral-200'
-                                }`}>
+                                <span className={`inline-block px-2.5 py-0.5 text-[9px] sm:text-[10px] tracking-wider uppercase rounded-full font-semibold border ${o.returnStatus === 'REQUESTED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                                    o.returnStatus === 'APPROVED' ? 'bg-blue-50 text-blue-800 border-blue-200' :
+                                      o.returnStatus === 'PROCESSING' ? 'bg-purple-50 text-purple-800 border-purple-200' :
+                                        o.returnStatus === 'REFUNDED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                                          o.returnStatus === 'REJECTED' ? 'bg-red-50 text-red-800 border-red-200' :
+                                            'bg-neutral-100 text-neutral-700 border-neutral-200'
+                                  }`}>
                                   Return: {o.returnStatus === 'REQUESTED' ? 'Requested' : o.returnStatus}
                                 </span>
                               )}
@@ -825,20 +817,48 @@ export default function AccountPage() {
                         </div>
                         <div className="text-right">
                           <span className={`inline-block px-3 py-1 text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full font-semibold border ${
-                            ret.returnStatus === 'REQUESTED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
-                            ret.returnStatus === 'APPROVED' ? 'bg-blue-50 text-blue-800 border-blue-200' :
+                            ret.returnStatus === 'REQUESTED' || ret.returnStatus === 'RETURN_REQUESTED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                            ret.returnStatus === 'APPROVED' || ret.returnStatus === 'RETURN_APPROVED' ? 'bg-blue-50 text-blue-800 border-blue-200' :
+                            ret.returnStatus === 'REFUND_DETAILS_SUBMITTED' ? 'bg-teal-50 text-teal-800 border-teal-200' :
                             ret.returnStatus === 'PROCESSING' ? 'bg-purple-50 text-purple-800 border-purple-200' :
                             ret.returnStatus === 'REFUNDED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
                             ret.returnStatus === 'REJECTED' ? 'bg-red-50 text-red-800 border-red-200' :
                             'bg-neutral-100 text-neutral-700 border-neutral-200'
                           }`}>
-                            {ret.returnStatus === 'REQUESTED' ? 'Requested (Under Review)' : ret.returnStatus}
+                            {ret.returnStatus === 'REQUESTED' || ret.returnStatus === 'RETURN_REQUESTED' ? 'Requested (Awaiting Approval)' :
+                             ret.returnStatus === 'APPROVED' || ret.returnStatus === 'RETURN_APPROVED' ? (ret.refundDetails ? 'Approved (Processing)' : 'Approved (Action Required)') :
+                             ret.returnStatus === 'REFUND_DETAILS_SUBMITTED' ? 'Details Submitted' : ret.returnStatus}
                           </span>
                           <div className="font-display text-base sm:text-lg text-[#9C6B30] mt-1 font-semibold">
                             Refund: {formatINR(ret.refundAmount || 0)}
                           </div>
                         </div>
                       </div>
+
+                      {/* Refund Details Action Alert */}
+                      {['APPROVED', 'RETURN_APPROVED'].includes(ret.returnStatus) && !ret.refundDetails && (
+                        <div className="p-3 bg-blue-50/80 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-center justify-between flex-wrap gap-2">
+                          <span>Return approved! Please submit your UPI or Bank Account details to receive your refund.</span>
+                          <Link href={`/orders/${ret.orderId}`} className="font-semibold text-[#9C6B30] hover:underline flex items-center gap-1">
+                            Submit Refund Details <ChevronRight size={12} />
+                          </Link>
+                        </div>
+                      )}
+
+                      {/* Refund Details Submitted Badge */}
+                      {(ret.refundDetails || ret.returnStatus === 'REFUND_DETAILS_SUBMITTED') && (
+                        <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-center justify-between flex-wrap gap-2">
+                          <span className="flex items-center gap-1.5 font-medium">
+                            <CheckCircle2 size={13} className="text-emerald-600" /> Refund Details Submitted ({ret.refundDetails?.method === 'upi' ? 'UPI' : 'Bank Transfer'})
+                          </span>
+                          {ret.refundDetails?.accountNumberMasked && (
+                            <span className="font-mono text-neutral-700">{ret.refundDetails.accountNumberMasked}</span>
+                          )}
+                          {ret.refundDetails?.upiId && (
+                            <span className="font-mono text-neutral-700">{ret.refundDetails.upiId}</span>
+                          )}
+                        </div>
+                      )}
 
                       <div className="p-3 bg-[#FAF8F5] border border-[#EAE3D6] rounded-xl text-xs text-neutral-700">
                         <span className="font-medium text-neutral-900">Reason:</span> {ret.reason}
@@ -868,6 +888,19 @@ export default function AccountPage() {
                               </div>
                             </div>
                           ))}
+                        </div>
+                      )}
+
+                      {Array.isArray(ret.images) && ret.images.length > 0 && (
+                        <div className="pt-1">
+                          <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-semibold mb-1.5">Attached Product Photos ({ret.images.length})</div>
+                          <div className="flex gap-2 overflow-x-auto pb-1">
+                            {ret.images.map((img, i) => (
+                              <a key={i} href={img} target="_blank" rel="noopener noreferrer" className="block w-14 h-14 rounded-lg overflow-hidden border border-[#EAE3D6] shrink-0 hover:opacity-90 transition">
+                                <img src={img} alt="Product condition" className="w-full h-full object-cover" />
+                              </a>
+                            ))}
+                          </div>
                         </div>
                       )}
 
@@ -941,9 +974,8 @@ export default function AccountPage() {
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase bg-emerald-50 text-emerald-800 border border-emerald-200">
                             Verified Buyer
                           </span>
-                          <span className={`inline-block px-2.5 py-0.5 text-[10px] font-semibold tracking-wider uppercase rounded-full border ${
-                            r.status === 'hidden' ? 'bg-neutral-100 text-neutral-600 border-neutral-200' : 'bg-[#FAF5EB] text-[#9C6B30] border-[#9C6B30]/30'
-                          }`}>
+                          <span className={`inline-block px-2.5 py-0.5 text-[10px] font-semibold tracking-wider uppercase rounded-full border ${r.status === 'hidden' ? 'bg-neutral-100 text-neutral-600 border-neutral-200' : 'bg-[#FAF5EB] text-[#9C6B30] border-[#9C6B30]/30'
+                            }`}>
                             {r.status || 'published'}
                           </span>
                         </div>
@@ -1046,9 +1078,8 @@ export default function AccountPage() {
                         if (addrErrors.fullName) validateAddrField('fullName', val);
                       }}
                       onBlur={e => validateAddrField('fullName', e.target.value)}
-                      className={`w-full px-4 py-3 bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${
-                        addrErrors.fullName ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
-                      }`}
+                      className={`w-full px-4 py-3 bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${addrErrors.fullName ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
+                        }`}
                     />
                     {addrErrors.fullName && <p className="text-xs text-red-500 mt-1.5 font-light">{addrErrors.fullName}</p>}
                   </div>
@@ -1071,9 +1102,8 @@ export default function AccountPage() {
                           if (addrErrors.phone) validateAddrField('phone', digits);
                         }}
                         onBlur={e => validateAddrField('phone', e.target.value)}
-                        className={`w-full pl-[5.25rem] pr-4 py-3 bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${
-                          addrErrors.phone ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
-                        }`}
+                        className={`w-full pl-[5.25rem] pr-4 py-3 bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${addrErrors.phone ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
+                          }`}
                       />
                     </div>
                     {addrErrors.phone && <p className="text-xs text-red-500 mt-1.5 font-light">{addrErrors.phone}</p>}
@@ -1090,9 +1120,8 @@ export default function AccountPage() {
                         if (addrErrors.line1) validateAddrField('line1', val);
                       }}
                       onBlur={e => validateAddrField('line1', e.target.value)}
-                      className={`w-full px-4 py-3 bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${
-                        addrErrors.line1 ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
-                      }`}
+                      className={`w-full px-4 py-3 bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${addrErrors.line1 ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
+                        }`}
                     />
                     {addrErrors.line1 && <p className="text-xs text-red-500 mt-1.5 font-light">{addrErrors.line1}</p>}
                   </div>
@@ -1118,9 +1147,8 @@ export default function AccountPage() {
                         if (addrErrors.city) validateAddrField('city', val);
                       }}
                       onBlur={e => validateAddrField('city', e.target.value)}
-                      className={`w-full px-4 py-3 bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${
-                        addrErrors.city ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
-                      }`}
+                      className={`w-full px-4 py-3 bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${addrErrors.city ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
+                        }`}
                     />
                     {addrErrors.city && <p className="text-xs text-red-500 mt-1.5 font-light">{addrErrors.city}</p>}
                   </div>
@@ -1136,9 +1164,8 @@ export default function AccountPage() {
                         if (addrErrors.state) validateAddrField('state', val);
                       }}
                       onBlur={e => validateAddrField('state', e.target.value)}
-                      className={`w-full px-4 py-3 bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${
-                        addrErrors.state ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
-                      }`}
+                      className={`w-full px-4 py-3 bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${addrErrors.state ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
+                        }`}
                     />
                     {addrErrors.state && <p className="text-xs text-red-500 mt-1.5 font-light">{addrErrors.state}</p>}
                   </div>
@@ -1154,9 +1181,8 @@ export default function AccountPage() {
                         if (addrErrors.pincode) validateAddrField('pincode', val);
                       }}
                       onBlur={e => validateAddrField('pincode', e.target.value)}
-                      className={`w-full px-4 py-3 bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${
-                        addrErrors.pincode ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
-                      }`}
+                      className={`w-full px-4 py-3 bg-white border rounded-xl text-sm text-[#1A1A1A] transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-[#9C6B30]/10 ${addrErrors.pincode ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
+                        }`}
                     />
                     {addrErrors.pincode && <p className="text-xs text-red-500 mt-1.5 font-light">{addrErrors.pincode}</p>}
                   </div>
@@ -1196,11 +1222,10 @@ export default function AccountPage() {
                 {addresses.map(a => (
                   <div
                     key={a.id}
-                    className={`border rounded-2xl p-5 sm:p-6 relative bg-gradient-to-br transition shadow-[0_2px_12px_rgba(0,0,0,0.02)] ${
-                      editingAddrId === a.id
+                    className={`border rounded-2xl p-5 sm:p-6 relative bg-gradient-to-br transition shadow-[0_2px_12px_rgba(0,0,0,0.02)] ${editingAddrId === a.id
                         ? 'border-[#9C6B30] bg-[#FAF8F5] ring-2 ring-[#9C6B30]/20'
                         : 'border-[#EAE3D6] from-white to-[#FAF8F5]/60 hover:border-[#9C6B30]'
-                    }`}
+                      }`}
                   >
                     {a.isDefault && (
                       <span className="absolute top-4 right-4 text-[9px] tracking-widest uppercase text-[#9C6B30] bg-[#FAF5EB] border border-[#9C6B30]/30 px-2.5 py-0.5 rounded-full font-semibold">

@@ -2224,14 +2224,19 @@ async function handleRoute(request, { params }) {
       if (o.userId !== u.id && u.role !== 'admin') return err('Unauthorized', 403);
       const returnDoc = await db.collection('returns').findOne({
         orderId: id,
-        returnStatus: { $in: ['REQUESTED', 'APPROVED', 'PROCESSING', 'REFUND_INITIATED', 'REFUNDED', 'REJECTED'] }
+        returnStatus: { $in: ['REQUESTED', 'RETURN_REQUESTED', 'APPROVED', 'RETURN_APPROVED', 'REFUND_DETAILS_SUBMITTED', 'PROCESSING', 'REFUND_INITIATED', 'REFUNDED', 'REJECTED'] }
       });
+      let clientReturnDoc = returnDoc ? clean(returnDoc) : null;
+      if (clientReturnDoc?.refundDetails && u.role !== 'admin') {
+        const { accountNumber, ...safeRefundDetails } = clientReturnDoc.refundDetails;
+        clientReturnDoc.refundDetails = safeRefundDetails;
+      }
       const orderReviews = await db.collection('reviews').find({ orderId: id }).toArray();
       const siteDoc = await db.collection('site_settings').findOne({ id: 'default' });
       const customerReviewsEnabled = siteDoc?.customerReviewsEnabled ?? true;
       return ok({
         order: clean(o),
-        returnRequest: returnDoc ? clean(returnDoc) : null,
+        returnRequest: clientReturnDoc,
         reviews: orderReviews.map(clean),
         customerReviewsEnabled
       });
@@ -2285,7 +2290,7 @@ async function handleRoute(request, { params }) {
       // Check existing active or completed return for duplicate prevention
       const existingReturn = await db.collection('returns').findOne({
         orderId,
-        returnStatus: { $in: ['REQUESTED', 'APPROVED', 'PROCESSING', 'REFUND_INITIATED', 'REFUNDED'] }
+        returnStatus: { $in: ['REQUESTED', 'RETURN_REQUESTED', 'APPROVED', 'RETURN_APPROVED', 'REFUND_DETAILS_SUBMITTED', 'PROCESSING', 'REFUND_INITIATED', 'REFUNDED'] }
       });
       if (existingReturn) {
         return err('An active or completed return request already exists for this order.', 400);
@@ -2305,6 +2310,9 @@ async function handleRoute(request, { params }) {
       // Calculate server-side refund amount
       const { refundAmount, itemsRefund } = calculateReturnRefund({ order, items });
 
+      const rawImages = Array.isArray(body.images) ? body.images : (body.image ? [body.image] : []);
+      const uploadedImages = rawImages.filter(img => typeof img === 'string' && img.trim().length > 0);
+
       const returnId = 'ret_' + uuidv4();
       const returnDoc = {
         id: returnId,
@@ -2315,6 +2323,7 @@ async function handleRoute(request, { params }) {
         items: itemsRefund,
         reason: reason.trim(),
         comment: (comment || '').trim(),
+        images: uploadedImages,
         requestedAt: now,
         deliveredAt: order.deliveredAt,
         returnStatus: 'REQUESTED',
@@ -2357,7 +2366,7 @@ async function handleRoute(request, { params }) {
         oldStatus: 'NONE',
         newStatus: 'REQUESTED',
         reason: reason.trim(),
-        metadata: { refundAmount, itemsCount: itemsRefund.length }
+        metadata: { refundAmount, itemsCount: itemsRefund.length, imageCount: uploadedImages.length }
       });
 
       await sendReturnRequestedNotification({ returnReq: returnDoc, order, user: u, db });
@@ -2369,7 +2378,174 @@ async function handleRoute(request, { params }) {
       const u = await getCurrentUser(db, request);
       if (!u) return err('Not authenticated', 401);
       const list = await db.collection('returns').find({ userId: u.id }).sort({ requestedAt: -1 }).toArray();
-      return ok({ returns: list.map(clean) });
+      const safeList = list.map(clean).map(r => {
+        if (r.refundDetails && u.role !== 'admin') {
+          const { accountNumber, ...safeRefund } = r.refundDetails;
+          return { ...r, refundDetails: safeRefund };
+        }
+        return r;
+      });
+      return ok({ returns: safeList });
+    }
+
+    // ============ SUBMIT REFUND DETAILS (AFTER RETURN APPROVAL) ============
+    if (route.startsWith('/returns/') && route.endsWith('/refund-details') && method === 'POST') {
+      const u = await getCurrentUser(db, request);
+      if (!u) return err('Not authenticated', 401);
+
+      const parts = route.split('/').filter(Boolean); // ['returns', '<id>', 'refund-details']
+      const returnId = parts[1];
+      if (!returnId) return err('Return ID is required.', 400);
+
+      const rDoc = await db.collection('returns').findOne({ $or: [{ id: returnId }, { returnId }] });
+      if (!rDoc) return err('Return request not found.', 404);
+
+      if (rDoc.userId !== u.id && u.role !== 'admin') {
+        return err('Unauthorized access to this return request.', 403);
+      }
+
+      // Check that return request is approved
+      const isApproved = ['APPROVED', 'RETURN_APPROVED', 'REFUND_DETAILS_SUBMITTED'].includes(rDoc.returnStatus);
+      if (!isApproved) {
+        return err('Refund details can only be submitted after return request is approved.', 400);
+      }
+
+      if (rDoc.refundStatus === 'COMPLETED') {
+        return err('Refund has already been completed for this return.', 400);
+      }
+
+      const body = await request.json().catch(() => ({}));
+      const {
+        method: refundMethod,
+        upiId,
+        confirmUpiId,
+        accountHolderName,
+        accountNumber,
+        confirmAccountNumber,
+        ifscCode,
+        bankName
+      } = body;
+
+      if (!refundMethod || !['upi', 'bank_transfer'].includes(refundMethod)) {
+        return err('Invalid refund method. Choose UPI or Bank Transfer.', 400);
+      }
+
+      const now = new Date();
+      let refundDetailsData = {};
+
+      if (refundMethod === 'upi') {
+        const cleanUpi = (upiId || '').trim();
+        const cleanConfirmUpi = (confirmUpiId || '').trim();
+
+        if (!cleanUpi) {
+          return err('UPI ID is required.', 400);
+        }
+
+        // UPI format validation: e.g. name@bank
+        const upiRegex = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/;
+        if (!upiRegex.test(cleanUpi)) {
+          return err('Please enter a valid UPI ID (e.g. name@okhdfcbank or 9876543210@paytm).', 400);
+        }
+
+        if (cleanConfirmUpi && cleanConfirmUpi.toLowerCase() !== cleanUpi.toLowerCase()) {
+          return err('UPI ID and Confirm UPI ID do not match.', 400);
+        }
+
+        refundDetailsData = {
+          method: 'upi',
+          upiId: cleanUpi,
+          submittedAt: now
+        };
+      } else if (refundMethod === 'bank_transfer') {
+        const cleanHolder = (accountHolderName || '').trim();
+        const cleanAcc = (accountNumber || '').toString().trim();
+        const cleanConfirmAcc = (confirmAccountNumber || '').toString().trim();
+        const cleanIfsc = (ifscCode || '').trim().toUpperCase();
+        const cleanBank = (bankName || '').trim();
+
+        if (!cleanHolder || cleanHolder.length < 2) {
+          return err('Account holder name is required.', 400);
+        }
+
+        if (!cleanAcc || !/^\d{9,18}$/.test(cleanAcc)) {
+          return err('Enter a valid bank account number (9 to 18 digits).', 400);
+        }
+
+        if (cleanConfirmAcc && cleanConfirmAcc !== cleanAcc) {
+          return err('Bank account number and confirmation do not match.', 400);
+        }
+
+        // IFSC code format: 4 letters, '0', 6 alphanumeric
+        const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+        if (!cleanIfsc || !ifscRegex.test(cleanIfsc)) {
+          return err('Enter a valid 11-character IFSC code (e.g. HDFC0001234).', 400);
+        }
+
+        if (!cleanBank || cleanBank.length < 2) {
+          return err('Bank name is required.', 400);
+        }
+
+        const last4 = cleanAcc.slice(-4);
+        const accountNumberMasked = `XXXX XXXX ${last4}`;
+
+        refundDetailsData = {
+          method: 'bank_transfer',
+          accountHolderName: cleanHolder,
+          accountNumber: cleanAcc,
+          accountNumberMasked,
+          ifscCode: cleanIfsc,
+          bankName: cleanBank,
+          submittedAt: now
+        };
+      }
+
+      await db.collection('returns').updateOne(
+        { id: rDoc.id },
+        {
+          $set: {
+            returnStatus: 'REFUND_DETAILS_SUBMITTED',
+            refundDetailsStatus: 'SUBMITTED',
+            refundDetails: refundDetailsData,
+            refundDetailsSubmittedAt: now,
+            updatedAt: now
+          }
+        }
+      );
+
+      await db.collection('orders').updateOne(
+        { id: rDoc.orderId },
+        {
+          $set: {
+            returnStatus: 'REFUND_DETAILS_SUBMITTED',
+            updatedAt: now
+          }
+        }
+      );
+
+      await createAuditLog(db, {
+        returnId: rDoc.id,
+        orderId: rDoc.orderId,
+        action: 'refund_details_submitted',
+        performedBy: u.id,
+        oldStatus: rDoc.returnStatus,
+        newStatus: 'REFUND_DETAILS_SUBMITTED',
+        metadata: {
+          method: refundDetailsData.method,
+          accountNumberMasked: refundDetailsData.accountNumberMasked || null,
+          upiId: refundDetailsData.upiId || null
+        }
+      });
+
+      const updatedReturn = await db.collection('returns').findOne({ id: rDoc.id });
+      const clientReturn = clean(updatedReturn);
+      if (clientReturn.refundDetails && u.role !== 'admin') {
+        delete clientReturn.refundDetails.accountNumber;
+      }
+
+      return ok({
+        message: 'Refund details submitted successfully. Your return will now proceed.',
+        return: clientReturn
+      });
     }
 
     if (route.startsWith('/returns/') && method === 'GET') {
@@ -2379,7 +2555,12 @@ async function handleRoute(request, { params }) {
       const rDoc = await db.collection('returns').findOne({ $or: [{ id }, { returnId: id }] });
       if (!rDoc) return err('Return request not found.', 404);
       if (rDoc.userId !== u.id && u.role !== 'admin') return err('Unauthorized access.', 403);
-      return ok({ return: clean(rDoc) });
+      const safeDoc = clean(rDoc);
+      if (safeDoc.refundDetails && u.role !== 'admin') {
+        const { accountNumber, ...safeRefund } = safeDoc.refundDetails;
+        safeDoc.refundDetails = safeRefund;
+      }
+      return ok({ return: safeDoc });
     }
 
     // ============ PAYMENT WEBHOOK ============
@@ -4883,7 +5064,7 @@ async function handleRoute(request, { params }) {
 
         // Approve Return
         if (action === 'approve') {
-          if (rDoc.returnStatus !== 'REQUESTED') {
+          if (rDoc.returnStatus !== 'REQUESTED' && rDoc.returnStatus !== 'RETURN_REQUESTED') {
             return err(`Return request cannot be approved because current status is "${rDoc.returnStatus}".`, 400);
           }
 
@@ -4922,7 +5103,7 @@ async function handleRoute(request, { params }) {
 
         // Reject Return
         if (action === 'reject') {
-          if (rDoc.returnStatus !== 'REQUESTED') {
+          if (rDoc.returnStatus !== 'REQUESTED' && rDoc.returnStatus !== 'RETURN_REQUESTED') {
             return err(`Return request cannot be rejected because current status is "${rDoc.returnStatus}".`, 400);
           }
 
@@ -5003,7 +5184,7 @@ async function handleRoute(request, { params }) {
         // Initiate / Retry Refund
         if (action === 'refund') {
           if (!hasPermission(admin, 'payments.refund')) return err('Permission denied: payments.refund required', 403);
-          if (!['APPROVED', 'PROCESSING', 'REFUND_INITIATED'].includes(rDoc.returnStatus)) {
+          if (!['APPROVED', 'RETURN_APPROVED', 'REFUND_DETAILS_SUBMITTED', 'PROCESSING', 'REFUND_INITIATED'].includes(rDoc.returnStatus)) {
             return err(`Refund cannot be initiated for return with status "${rDoc.returnStatus}". Return must be approved first.`, 400);
           }
 
@@ -5032,7 +5213,8 @@ async function handleRoute(request, { params }) {
             const effectiveKeyId = (currentSettings?.paymentSettings?.razorpay?.keyId && currentSettings.paymentSettings.razorpay.keyId.trim()) || process.env.RAZORPAY_KEY_ID;
             const effectiveKeySecret = (currentSettings?.paymentSettings?.razorpay?.keySecret && currentSettings.paymentSettings.razorpay.keySecret.trim()) || process.env.RAZORPAY_KEY_SECRET;
 
-            if (order && order.payment === 'razorpay' && order.razorpayPaymentId && effectiveKeySecret && effectiveKeyId) {
+            const isMockPayment = !order?.razorpayPaymentId || order.razorpayPaymentId.startsWith('pay_MOCK') || order.razorpayPaymentId.startsWith('pay_TEST');
+            if (order && order.payment === 'razorpay' && order.razorpayPaymentId && !isMockPayment && effectiveKeySecret && effectiveKeyId) {
               const authHeader = 'Basic ' + Buffer.from(`${effectiveKeyId}:${effectiveKeySecret}`).toString('base64');
               const rzpRes = await fetch(`https://api.razorpay.com/v1/payments/${order.razorpayPaymentId}/refund`, {
                 method: 'POST',
