@@ -24,6 +24,8 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
   const historyByStatus = Object.fromEntries((order.statusHistory || []).map(h => [h.status, h]));
   const currentIdx = STEPS.findIndex(s => s.key === order.status);
   const activeIdx = order.status === 'cancelled' ? 0 : (currentIdx === -1 ? 0 : currentIdx);
+  const isCancelledByAdmin = (order.cancelledBy === 'admin' || order.cancelledBy === 'mikumantra' || (order.statusHistory || []).some(h => h.status === 'cancelled' && ((h.note || '').toLowerCase().includes('admin') || (h.note || '').toLowerCase().includes('mikumantra'))));
+  const cancellationDisplayText = isCancelledByAdmin ? 'Cancelled by mikumantra' : 'Cancelled by customer';
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-2 xs:p-4 overflow-y-auto" onClick={onClose}>
@@ -37,7 +39,7 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
             <div className="flex items-center gap-2 xs:gap-3 flex-wrap">
               <span className="text-[9px] xs:text-[10px] tracking-[0.2em] xs:tracking-[0.35em] uppercase text-[#D4AF37] font-semibold">MikuMantra Atelier</span>
               <span className={`px-2 py-0.5 text-[9px] tracking-widest uppercase rounded font-bold ${order.status === 'cancelled' ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/30'}`}>
-                {order.status}
+                {order.status === 'cancelled' ? cancellationDisplayText : order.status}
               </span>
             </div>
             <h2 className="font-display text-lg xs:text-xl sm:text-2xl font-light mt-1 flex items-center gap-2 flex-wrap">
@@ -76,7 +78,7 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
                   {order.status === 'cancelled' ? (
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-red-700 bg-red-50 border border-red-200 rounded">
-                        CANCELLED
+                        {cancellationDisplayText.toUpperCase()}
                       </span>
                       <span className="text-[10px] text-neutral-400 font-mono">(Status cannot be changed after cancellation)</span>
                     </div>
@@ -137,12 +139,12 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
               <div className="bg-red-50 text-red-800 p-4 sm:p-5 rounded-lg border border-red-200 text-xs sm:text-sm space-y-2">
                 <div className="flex items-center gap-2 font-semibold text-red-900 text-sm">
                   <X size={18} className="shrink-0 text-red-600" />
-                  This order was cancelled.
+                  {cancellationDisplayText}
                 </div>
                 <div className="text-neutral-700 space-y-1">
                   <p>
                     <span className="font-semibold text-neutral-800 font-sans">Cancelled By:</span>{' '}
-                    <span className="capitalize font-medium">{order.cancelledBy || 'Customer'}</span>
+                    <span className="capitalize font-medium">{isCancelledByAdmin ? 'mikumantra' : 'customer'}</span>
                     {order.cancelledAt && <span> on {new Date(order.cancelledAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
                   </p>
                   {order.cancellationReason && (

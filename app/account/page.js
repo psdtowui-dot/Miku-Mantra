@@ -717,7 +717,11 @@ export default function AccountPage() {
                                   ? 'bg-red-50 text-red-700 border-red-200'
                                   : 'bg-[#FAF5EB] text-[#9C6B30] border-[#9C6B30]/30'
                                 }`}>
-                                {o.status}
+                                {o.status === 'cancelled'
+                                  ? ((o.cancelledBy === 'admin' || o.cancelledBy === 'mikumantra' || (o.statusHistory || []).some(h => h.status === 'cancelled' && ((h.note || '').toLowerCase().includes('admin') || (h.note || '').toLowerCase().includes('mikumantra'))))
+                                      ? 'Cancelled by mikumantra'
+                                      : 'Cancelled by customer')
+                                  : o.status}
                               </span>
 
                               {/* Compact Courier Tracking Badge */}
