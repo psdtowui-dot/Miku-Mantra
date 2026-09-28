@@ -19,7 +19,7 @@ function GoogleIcon({ className = "w-5 h-5" }) {
 }
 
 function LoginInner(){
-  const { login, register, loginWithGoogle, forgotPassword, resetPassword } = useAuth();
+  const { user, loading, login, register, loginWithGoogle, forgotPassword, resetPassword } = useAuth();
   const router = useRouter();
   const sp = useSearchParams();
   const redirect = sp.get('redirect') || '/account';
