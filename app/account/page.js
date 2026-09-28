@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { useWishlist } from '@/lib/cart-store';
 import { PRODUCTS, formatINR } from '@/lib/products';
-import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound, RotateCcw, Clock, Star, Sparkles, CheckCircle2, Pencil } from 'lucide-react';
+import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound, RotateCcw, Clock, Star, Sparkles, CheckCircle2, Pencil, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function AccountPage() {
@@ -719,6 +719,31 @@ export default function AccountPage() {
                                 }`}>
                                 {o.status}
                               </span>
+
+                              {/* Compact Courier Tracking Badge */}
+                              {(o.courier?.carrier || o.carrier) && (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-[9px] sm:text-[10px] font-semibold tracking-wider rounded-full bg-[#FAF5EB] text-[#9C6B30] border border-[#D4AF37]/30">
+                                  <Truck size={11} className="shrink-0" />
+                                  <span>{o.courier?.carrier || o.carrier}:</span>
+                                  <span className="font-mono font-bold">
+                                    {o.courier?.trackingNumber || o.trackingNumber ? `#${o.courier?.trackingNumber || o.trackingNumber}` : 'Pending AWB'}
+                                  </span>
+                                  {(o.courier?.trackingUrl || o.trackingUrl) && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        window.open(o.courier?.trackingUrl || o.trackingUrl, '_blank', 'noopener,noreferrer');
+                                      }}
+                                      className="ml-0.5 text-[#9C6B30] underline hover:text-[#7A501F] font-bold cursor-pointer"
+                                      title="Open live carrier tracking portal"
+                                    >
+                                      [Track]
+                                    </button>
+                                  )}
+                                </span>
+                              )}
                               {o.returnStatus && (
                                 <span className={`inline-block px-2.5 py-0.5 text-[9px] sm:text-[10px] tracking-wider uppercase rounded-full font-semibold border ${o.returnStatus === 'REQUESTED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
                                     o.returnStatus === 'APPROVED' ? 'bg-blue-50 text-blue-800 border-blue-200' :

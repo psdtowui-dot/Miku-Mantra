@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Globe, Upload, Save, Loader2, Image as ImageIcon, Link as LinkIcon, Check, Eye, Truck, Star, CreditCard, ArrowRight } from 'lucide-react';
+import { Globe, Upload, Save, Loader2, Image as ImageIcon, Link as LinkIcon, Check, Eye, Truck, Star, CreditCard, ArrowRight, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function AdminSiteSettings() {
@@ -9,9 +9,11 @@ export default function AdminSiteSettings() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [uploadingFavicon, setUploadingFavicon] = useState(false);
   const [form, setForm] = useState({
     siteName: '',
     logo: '',
+    favicon: '/favicon.ico',
     seoTitle: '',
     titleTemplate: '',
     seoDescription: '',
@@ -37,6 +39,7 @@ export default function AdminSiteSettings() {
         setForm({
           siteName: d.siteName || '',
           logo: d.logo || '/logo.png',
+          favicon: d.favicon || '/favicon.ico',
           seoTitle: d.seoTitle || '',
           titleTemplate: d.titleTemplate || '',
           seoDescription: d.seoDescription || '',
@@ -94,6 +97,36 @@ export default function AdminSiteSettings() {
       toast.error('Upload error');
     }
     setUploadingLogo(false);
+  };
+
+  const handleUploadFavicon = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingFavicon(true);
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const r = await fetch('/api/admin/upload', {
+        method: 'POST',
+        credentials: 'include',
+        body: formData,
+      });
+      if (r.ok) {
+        const d = await r.json();
+        setForm(prev => ({
+          ...prev,
+          favicon: d.url
+        }));
+        toast.success('Favicon uploaded successfully! Click Save Changes to apply everywhere.');
+      } else {
+        const d = await r.json().catch(() => ({}));
+        toast.error(d.error || 'Favicon upload failed');
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Upload error');
+    }
+    setUploadingFavicon(false);
   };
 
   const handleUploadBanner = async (e) => {
@@ -296,6 +329,72 @@ export default function AdminSiteSettings() {
                   <p className="text-[11px] text-neutral-400">
                     💡 Changing this logo updates it globally: header navigation (desktop &amp; mobile), footer, admin portal sidebar/header, login/recovery screens, and invoice PDFs.
                   </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Website Favicon (Browser Tab Icon) */}
+            <div className="pt-4 border-t border-neutral-100">
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-[11px] font-bold text-neutral-600 uppercase tracking-wider block">
+                  Website Favicon (Browser Tab Icon)
+                </label>
+                {form.favicon && form.favicon !== '/favicon.ico' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm(prev => ({ ...prev, favicon: '/favicon.ico' }));
+                      toast.info('Favicon reset to default (/favicon.ico). Remember to Save Changes.');
+                    }}
+                    className="text-[11px] text-[#9C6B30] hover:text-[#7d5424] font-medium flex items-center gap-1 transition"
+                  >
+                    <RotateCcw size={12} />
+                    Reset to Default
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+                <div className="w-16 h-16 rounded-xl border border-neutral-200 bg-neutral-50 flex items-center justify-center p-2 shrink-0 shadow-inner overflow-hidden relative group">
+                  {form.favicon ? (
+                    <img
+                      src={form.favicon}
+                      alt="Favicon Preview"
+                      className="w-8 h-8 object-contain"
+                      onError={(e) => {
+                        e.target.src = '/favicon.ico';
+                      }}
+                    />
+                  ) : (
+                    <Globe size={24} className="text-neutral-400" />
+                  )}
+                  <span className="absolute bottom-0 inset-x-0 bg-neutral-900/80 text-[8px] text-white text-center py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    TAB ICON
+                  </span>
+                </div>
+                <div className="flex-1 w-full space-y-2">
+                  <div className="flex flex-col xs:flex-row gap-2">
+                    <input
+                      type="text"
+                      value={form.favicon || ''}
+                      onChange={e => setForm({ ...form, favicon: e.target.value })}
+                      placeholder="e.g. /favicon.ico or /uploads/... or https://..."
+                      className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:border-[#9C6B30]"
+                    />
+                    <label className="bg-neutral-100 hover:bg-neutral-200 text-neutral-700 px-4 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 shrink-0 border border-neutral-200 transition-colors">
+                      {uploadingFavicon ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                      <span>{uploadingFavicon ? 'Uploading...' : 'Upload Favicon'}</span>
+                      <input
+                        type="file"
+                        accept=".ico,.png,.svg,.webp,image/x-icon,image/vnd.microsoft.icon,image/png,image/svg+xml,image/webp"
+                        onChange={handleUploadFavicon}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-neutral-400">
+                    <span>💡 Appears in browser tabs, bookmarks, and mobile home screen shortcuts.</span>
+                    <span className="text-neutral-500 font-medium">Formats: .ico, .png, .svg, .webp (Recommended: 32×32 or 48×48 px)</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -508,15 +607,65 @@ export default function AdminSiteSettings() {
           </div>
         </div>
 
-        {/* Right Column: Live Social Card Preview Simulator */}
-        <div className="space-y-6">
-          <div className="bg-white p-4 xs:p-6 rounded-xl border border-neutral-200 shadow-xs lg:sticky top-6">
+        {/* Right Column: Live Previews */}
+        <div className="space-y-6 lg:sticky top-6">
+          {/* Live Browser Tab Preview Simulator */}
+          <div className="bg-white p-4 xs:p-6 rounded-xl border border-neutral-200 shadow-xs">
+            <h2 className="text-xs font-bold text-neutral-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+              <Globe size={16} className="text-[#9C6B30]" />
+              Live Browser Tab Preview
+            </h2>
+            <div className="rounded-xl border border-neutral-200 bg-[#E3E5E8] overflow-hidden shadow-xs">
+              {/* Browser window controls and tab header */}
+              <div className="flex items-center gap-2 px-3 pt-2.5 pb-0">
+                <div className="flex items-center gap-1.5 shrink-0 mr-1">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#EC6A5E] inline-block" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#F4BF4F] inline-block" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#62C554] inline-block" />
+                </div>
+                {/* Active Tab */}
+                <div className="flex-1 max-w-[240px] bg-white rounded-t-lg px-2.5 py-1.5 flex items-center gap-2 shadow-xs border-t border-x border-neutral-200/80">
+                  <div className="w-4 h-4 shrink-0 flex items-center justify-center">
+                    {form.favicon ? (
+                      <img
+                        src={form.favicon}
+                        alt="Tab Favicon"
+                        className="w-4 h-4 object-contain"
+                        onError={(e) => { e.target.src = '/favicon.ico'; }}
+                      />
+                    ) : (
+                      <Globe size={13} className="text-[#9C6B30]" />
+                    )}
+                  </div>
+                  <span className="text-[11px] font-medium text-neutral-800 truncate select-none">
+                    {form.seoTitle || form.siteName || 'MikuMantra Fine Jewellery'}
+                  </span>
+                  <span className="text-[11px] text-neutral-400 hover:text-neutral-600 ml-auto cursor-default">×</span>
+                </div>
+              </div>
+
+              {/* Browser Address Bar */}
+              <div className="bg-white px-3 py-2 border-t border-neutral-200 flex items-center gap-2 text-neutral-500">
+                <div className="flex-1 bg-neutral-100 rounded-md px-2.5 py-1 flex items-center gap-2 text-[11px] font-mono text-neutral-600 truncate border border-neutral-200/60">
+                  <span className="text-emerald-600 text-[10px]">🔒</span>
+                  <span className="truncate">
+                    {form.siteUrl ? form.siteUrl.replace(/^https?:\/\//, '') : 'mikumantra.vercel.app'}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <p className="text-[11px] text-neutral-500 mt-2.5 leading-relaxed">
+              Real-time preview of how your brand favicon and title look on desktop &amp; mobile browser tabs.
+            </p>
+          </div>
+
+          {/* Simulated WhatsApp / Facebook Link Card */}
+          <div className="bg-white p-4 xs:p-6 rounded-xl border border-neutral-200 shadow-xs">
             <h2 className="text-xs font-bold text-neutral-400 uppercase tracking-widest mb-4 flex items-center gap-2">
               <Eye size={16} className="text-[#9C6B30]" />
               Live Social Share Preview
             </h2>
 
-            {/* Simulated WhatsApp / Facebook Link Card */}
             <div className="border border-neutral-200 rounded-xl overflow-hidden shadow-md bg-[#F4F4F5]">
               {form.shareBanner ? (
                 <div className="aspect-[1.91/1] overflow-hidden bg-neutral-900 relative">

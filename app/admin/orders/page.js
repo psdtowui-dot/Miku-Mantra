@@ -4,11 +4,13 @@ import { formatINR } from '@/lib/products';
 import { Loader2, Eye, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import OrderDetailModal from '@/components/ui/order-detail-modal';
+import ShipmentModal from '@/components/ui/shipment-modal';
 
 export default function AdminOrders(){
   const [list,setList] = useState([]);
   const [loading,setLoading] = useState(true);
   const [activeOrder, setActiveOrder] = useState(null);
+  const [shipmentModalOrder, setShipmentModalOrder] = useState(null);
   const [searchVal, setSearchVal] = useState('');
   const [search, setSearch] = useState('');
 
@@ -45,16 +47,20 @@ export default function AdminOrders(){
     load(search);
   }, [search]);
 
-  const updateStatus = async(id,status)=>{ 
-    const r = await fetch(`/api/admin/orders/${id}`,{ 
-      method:'PUT', 
-      credentials:'include', 
-      headers:{'Content-Type':'application/json'}, 
-      body:JSON.stringify({status})
+  const updateStatus = async(id, status, courier = null) => { 
+    const payload = {};
+    if (status) payload.status = status;
+    if (courier) payload.courier = courier;
+
+    const r = await fetch(`/api/admin/orders/${id}`, { 
+      method: 'PUT', 
+      credentials: 'include', 
+      headers: { 'Content-Type': 'application/json' }, 
+      body: JSON.stringify(payload)
     }); 
     if(r.ok){ 
       const data = await r.json();
-      toast.success('Updated'); 
+      toast.success(courier && (!status || status === activeOrder?.status) ? 'Courier tracking updated' : 'Order status updated'); 
       
       // If we are currently viewing this order in the modal, update its details
       if (activeOrder && activeOrder.id === id && data.order) {
@@ -63,7 +69,10 @@ export default function AdminOrders(){
       }
       
       load(search); 
-    } 
+    } else {
+      const errData = await r.json().catch(() => ({}));
+      toast.error(errData.error || 'Failed to update order');
+    }
   };
 
   return (
@@ -130,23 +139,37 @@ export default function AdminOrders(){
                           Cancelled
                         </span>
                       ) : (
-                        <select 
-                          value={o.status} 
-                          onChange={e=>updateStatus(o.id,e.target.value)} 
-                          className="border border-neutral-200 rounded px-2 py-1 text-xs uppercase cursor-pointer bg-white focus:outline-none focus:border-[#9C6B30]"
-                        >
-                          <option value="confirmed">Confirmed</option>
-                          <option value="packed">Packed</option>
-                          <option value="shipped">Shipped</option>
-                          <option value="delivered">Delivered</option>
-                          <option value="cancelled">Cancelled</option>
-                        </select>
+                        <div>
+                          <select 
+                            value={o.status} 
+                            onChange={e => {
+                              const newStatus = e.target.value;
+                              if (newStatus === 'shipped') {
+                                setShipmentModalOrder(o);
+                              } else {
+                                updateStatus(o.id, newStatus);
+                              }
+                            }} 
+                            className="border border-neutral-200 rounded px-2 py-1 text-xs uppercase cursor-pointer bg-white focus:outline-none focus:border-[#9C6B30]"
+                          >
+                            <option value="confirmed">Confirmed</option>
+                            <option value="packed">Packed</option>
+                            <option value="shipped">Shipped</option>
+                            <option value="delivered">Delivered</option>
+                            <option value="cancelled">Cancelled</option>
+                          </select>
+                          {(o.courier?.carrier || o.carrier) && (
+                            <div className="text-[10px] text-neutral-500 mt-1 font-mono truncate max-w-[130px]" title={`${o.courier?.carrier || o.carrier}: ${o.courier?.trackingNumber || o.trackingNumber || 'Pending AWB'}`}>
+                              🚚 {o.courier?.carrier || o.carrier}{o.courier?.trackingNumber || o.trackingNumber ? `: #${o.courier?.trackingNumber || o.trackingNumber}` : ''}
+                            </div>
+                          )}
+                        </div>
                       )}
                     </td>
                     <td className="p-3 text-center">
                       <button 
                         onClick={() => setActiveOrder(o)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#FAF6EF] border border-[#D4AF37]/30 text-[#9C6B30] text-xs font-semibold rounded hover:bg-[#9C6B30] hover:text-white transition-all shadow-xs"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#FAF6EF] border border-[#D4AF37]/30 text-[#9C6B30] text-xs font-semibold rounded hover:bg-[#9C6B30] hover:text-white transition-all shadow-xs cursor-pointer"
                       >
                         <Eye size={12} /> View Details
                       </button>
@@ -164,6 +187,18 @@ export default function AdminOrders(){
           order={activeOrder} 
           onClose={() => setActiveOrder(null)} 
           onUpdateStatus={updateStatus}
+        />
+      )}
+
+      {shipmentModalOrder && (
+        <ShipmentModal 
+          order={shipmentModalOrder}
+          isOpen={Boolean(shipmentModalOrder)}
+          onClose={() => setShipmentModalOrder(null)}
+          onConfirm={async ({ status, courier }) => {
+            await updateStatus(shipmentModalOrder.id, status || 'shipped', courier);
+            setShipmentModalOrder(null);
+          }}
         />
       )}
     </div>

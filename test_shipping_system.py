@@ -10,7 +10,7 @@ def run_tests():
     print("=========================================\n")
 
     # 0. Admin Login
-    admin_emails = ["admin@mikumantra.com", "akash@unictechnology.com"]
+    admin_emails = ["akash@unictechnology.com", "admin@mikumantra.com"]
     passwords = ["12341234", "admin123", "password123"]
     logged_in = False
     for em in admin_emails:

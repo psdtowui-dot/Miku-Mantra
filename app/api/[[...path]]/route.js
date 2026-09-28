@@ -11,7 +11,8 @@ import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS a
 import { buildInvoicePDF } from '@/lib/pdf-invoice'
 import { buildShippingSlipPDF } from '@/lib/pdf-shippingslip'
 import { WAREHOUSE_PINCODE } from '@/lib/constants'
-import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification } from '@/lib/notifications'
+import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendOrderShippedNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification } from '@/lib/notifications'
+import { generateTrackingUrl } from '@/lib/courier'
 import { sendPasswordResetEmail } from '@/lib/email-service'
 import { seedRbacIfEmpty, resolveUserPermissions, hasPermission, logAdminActivity, validatePrivilegeEscalation, PERMISSIONS, DEFAULT_ROLES } from '@/lib/rbac'
 import { invalidateSiteDataCache } from '@/lib/db-site-settings'
@@ -213,6 +214,9 @@ async function ensureIndexes(database) {
       database.collection('orders').createIndex({ orderNumber: 1 }),
       database.collection('orders').createIndex({ placedAt: -1 }),
       database.collection('orders').createIndex({ status: 1 }),
+      database.collection('orders').createIndex({ trackingNumber: 1 }),
+      database.collection('orders').createIndex({ carrier: 1 }),
+      database.collection('orders').createIndex({ 'courier.trackingNumber': 1 }),
       database.collection('reviews').createIndex({ productId: 1, status: 1 }),
       database.collection('categories').createIndex({ id: 1 }),
       database.collection('collections').createIndex({ id: 1 }),
@@ -1259,6 +1263,7 @@ async function handleRouteInternal(request, context, isRetry = false) {
         ...DEFAULT_SITE_SETTINGS,
         ...settings,
         logo: settings?.logo || DEFAULT_SITE_SETTINGS.logo || '/logo.png',
+        favicon: settings?.favicon || DEFAULT_SITE_SETTINGS.favicon || '/favicon.ico',
         shipping: {
           ...DEFAULT_SITE_SETTINGS.shipping,
           ...((settings && settings.shipping) || {})
@@ -4261,6 +4266,7 @@ async function handleRouteInternal(request, context, isRetry = false) {
             ...DEFAULT_SITE_SETTINGS,
             ...settings,
             logo: settings?.logo || DEFAULT_SITE_SETTINGS.logo || '/logo.png',
+            favicon: settings?.favicon || DEFAULT_SITE_SETTINGS.favicon || '/favicon.ico',
             shipping: {
               ...DEFAULT_SITE_SETTINGS.shipping,
               ...((settings && settings.shipping) || {})
@@ -4378,6 +4384,8 @@ async function handleRouteInternal(request, context, isRetry = false) {
           return ok(clean({
             ...DEFAULT_SITE_SETTINGS,
             ...updated,
+            logo: updated?.logo || DEFAULT_SITE_SETTINGS.logo || '/logo.png',
+            favicon: updated?.favicon || DEFAULT_SITE_SETTINGS.favicon || '/favicon.ico',
             shipping: {
               ...DEFAULT_SITE_SETTINGS.shipping,
               ...((updated && updated.shipping) || {})
@@ -4473,17 +4481,17 @@ async function handleRouteInternal(request, context, isRetry = false) {
           const file = formData.get('file');
           if (!file) return err('No file provided');
 
-          // Image/SVG upload validations
+          // Image/SVG/Favicon upload validations
           const fileType = file.type || 'image/jpeg';
-          const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+          const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon', 'image/ico'];
           if (!allowedTypes.includes(fileType)) {
-            return err('Invalid MIME type. Only image/jpeg, image/png, image/webp, and image/svg+xml are allowed.', 400);
+            return err('Invalid MIME type. Only image/jpeg, image/png, image/webp, image/svg+xml, and .ico files are allowed.', 400);
           }
 
           const originalName = file.name || 'image.jpg';
           const ext = pathModule.extname(originalName).toLowerCase();
-          if (!['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext)) {
-            return err('Invalid file extension. Only .jpg, .jpeg, .png, .webp, and .svg are allowed.', 400);
+          if (!['.jpg', '.jpeg', '.png', '.webp', '.svg', '.ico'].includes(ext)) {
+            return err('Invalid file extension. Only .jpg, .jpeg, .png, .webp, .svg, and .ico are allowed.', 400);
           }
 
           if (file.size > 5 * 1024 * 1024) {
@@ -4552,12 +4560,12 @@ async function handleRouteInternal(request, context, isRetry = false) {
           for (const file of files) {
             if (!file || typeof file === 'string') continue;
             const fileType = file.type || 'image/jpeg';
-            const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+            const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon', 'image/ico'];
             if (!allowedTypes.includes(fileType)) continue;
 
             const originalName = file.name || 'image.jpg';
             const ext = pathModule.extname(originalName).toLowerCase();
-            if (!['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext)) continue;
+            if (!['.jpg', '.jpeg', '.png', '.webp', '.svg', '.ico'].includes(ext)) continue;
             if (file.size > 15 * 1024 * 1024) continue;
 
             const bytes = await file.arrayBuffer();
@@ -5225,7 +5233,11 @@ async function handleRouteInternal(request, context, isRetry = false) {
               { 'address.phone': reg },
               { 'items.name': reg },
               { guestEmail: reg },
-              { userId: { $in: matchingUserIds } }
+              { userId: { $in: matchingUserIds } },
+              { trackingNumber: reg },
+              { carrier: reg },
+              { 'courier.trackingNumber': reg },
+              { 'courier.carrier': reg }
             ]
           };
         }
@@ -5268,7 +5280,11 @@ async function handleRouteInternal(request, context, isRetry = false) {
                   { 'address.phone': reg },
                   { 'items.name': reg },
                   { guestEmail: reg },
-                  { userId: { $in: matchingUserIds } }
+                  { userId: { $in: matchingUserIds } },
+                  { trackingNumber: reg },
+                  { carrier: reg },
+                  { 'courier.trackingNumber': reg },
+                  { 'courier.carrier': reg }
                 ]
               }
             ]
@@ -5288,7 +5304,7 @@ async function handleRouteInternal(request, context, isRetry = false) {
       if (sub.startsWith('orders/') && method === 'PUT') {
         if (!hasPermission(admin, 'orders.update')) return err('Permission denied: orders.update required', 403);
         const id = sub.split('/')[1];
-        const b = await request.json();
+        const b = await request.json().catch(() => ({}));
 
         const existingOrder = await db.collection('orders').findOne({ id });
         if (!existingOrder) return err('Order not found', 404);
@@ -5304,30 +5320,125 @@ async function handleRouteInternal(request, context, isRetry = false) {
           cancelled: 'Order cancelled.',
           confirmed: 'Order confirmed.'
         };
-        const setDoc = { status: b.status };
-        if (b.status === 'delivered') {
+
+        const setDoc = {};
+        const isStatusChanging = Boolean(b.status && b.status !== existingOrder.status);
+        const targetStatus = b.status || existingOrder.status;
+
+        // Check if courier data was submitted
+        const hasCourierInput = Boolean(
+          b.courier !== undefined ||
+          b.carrier !== undefined ||
+          b.trackingNumber !== undefined ||
+          b.trackingUrl !== undefined ||
+          b.notes !== undefined
+        );
+
+        let courierDoc = null;
+        if (hasCourierInput || targetStatus === 'shipped') {
+          const rawCarrier = b.courier?.carrier !== undefined ? b.courier.carrier : (b.carrier !== undefined ? b.carrier : (existingOrder.courier?.carrier || existingOrder.carrier || ''));
+          const rawTrackingNum = b.courier?.trackingNumber !== undefined ? b.courier.trackingNumber : (b.trackingNumber !== undefined ? b.trackingNumber : (existingOrder.courier?.trackingNumber || existingOrder.trackingNumber || ''));
+          let rawTrackingUrl = b.courier?.trackingUrl !== undefined ? b.courier.trackingUrl : (b.trackingUrl !== undefined ? b.trackingUrl : (existingOrder.courier?.trackingUrl || existingOrder.trackingUrl || ''));
+          const rawNotes = b.courier?.notes !== undefined ? b.courier.notes : (b.notes !== undefined ? b.notes : (existingOrder.courier?.notes || ''));
+
+          const carrier = (rawCarrier || '').trim();
+          const trackingNumber = (rawTrackingNum || '').trim();
+          let trackingUrl = (rawTrackingUrl || '').trim();
+          if (!trackingUrl && carrier && trackingNumber) {
+            trackingUrl = generateTrackingUrl(carrier, trackingNumber);
+          }
+          const shippedAt = b.courier?.shippedAt ? new Date(b.courier.shippedAt) : (existingOrder.shippedAt || existingOrder.courier?.shippedAt || new Date());
+
+          courierDoc = {
+            carrier,
+            trackingNumber,
+            trackingUrl,
+            shippedAt,
+            notes: (rawNotes || '').trim()
+          };
+
+          setDoc.courier = courierDoc;
+          setDoc.carrier = carrier;
+          setDoc.trackingNumber = trackingNumber;
+          setDoc.trackingUrl = trackingUrl;
+          if (!existingOrder.shippedAt) {
+            setDoc.shippedAt = shippedAt;
+          }
+        }
+
+        if (b.status) {
+          setDoc.status = b.status;
+        }
+
+        if (targetStatus === 'delivered' && !existingOrder.deliveredAt) {
           setDoc.deliveredAt = new Date();
+        }
+
+        const updateOps = { $set: setDoc };
+        let historyEntry = null;
+
+        if (isStatusChanging) {
+          let historyNote = b.note || notes[b.status] || '';
+          if (b.status === 'shipped') {
+            const carrier = courierDoc?.carrier || existingOrder.carrier || '';
+            const trackingNum = courierDoc?.trackingNumber || existingOrder.trackingNumber || '';
+            if (carrier && trackingNum) {
+              historyNote = b.note || `Shipped via ${carrier} (AWB: ${trackingNum})`;
+            } else if (carrier) {
+              historyNote = b.note || `Shipped via ${carrier}`;
+            }
+          }
+          historyEntry = {
+            status: b.status,
+            at: new Date(),
+            note: historyNote
+          };
+        } else if (hasCourierInput) {
+          // Tracking updated without changing status (e.g. edit tracking on shipped or delivered order)
+          const carrier = courierDoc?.carrier || existingOrder.carrier || '';
+          const trackingNum = courierDoc?.trackingNumber || existingOrder.trackingNumber || '';
+          historyEntry = {
+            status: existingOrder.status,
+            at: new Date(),
+            note: b.note || `Courier tracking updated: ${carrier || 'Courier'}${trackingNum ? ` (AWB: ${trackingNum})` : ''}`
+          };
+        }
+
+        if (historyEntry) {
+          updateOps.$push = { statusHistory: historyEntry };
         }
 
         const updateResult = await db.collection('orders').updateOne(
           { id, status: { $ne: 'cancelled' } },
-          {
-            $set: setDoc,
-            $push: {
-              statusHistory: {
-                status: b.status,
-                at: new Date(),
-                note: b.note || notes[b.status] || ''
-              }
-            }
-          }
+          updateOps
         );
 
-        if (updateResult.modifiedCount === 0) {
+        if (updateResult.modifiedCount === 0 && updateResult.matchedCount === 0) {
           return err('Cancelled orders cannot be updated.', 400);
         }
 
         const up = await db.collection('orders').findOne({ id });
+
+        // Trigger notifications if shipped or if courier details updated on a shipped/delivered order
+        if (targetStatus === 'shipped' || (existingOrder.status === 'shipped' && hasCourierInput)) {
+          const customerUser = up.userId ? await db.collection('users').findOne({ id: up.userId }) : null;
+          try {
+            await sendOrderShippedNotification({ order: up, user: customerUser, db });
+          } catch (notifErr) {
+            console.error('[Notification error] Order shipped notification:', notifErr);
+          }
+        }
+
+        try {
+          await logAdminActivity(db, admin, 'orders.update', {
+            orderId: id,
+            orderNumber: up.orderNumber,
+            status: up.status,
+            carrier: up.carrier,
+            trackingNumber: up.trackingNumber
+          }, request);
+        } catch (_) {}
+
         return ok({ order: clean(up) });
       }
 

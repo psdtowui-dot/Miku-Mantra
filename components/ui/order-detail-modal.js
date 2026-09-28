@@ -1,8 +1,9 @@
 'use client';
-import React from 'react';
-import { X, Download, Calendar, User, Mail, Phone, MapPin, Wallet, CreditCard, Clock, FileText, CheckCircle2, Package, Truck, Home } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, Download, Calendar, User, Mail, Phone, MapPin, Wallet, CreditCard, Clock, FileText, CheckCircle2, Package, Truck, Home, ExternalLink, Copy, Check, Edit2 } from 'lucide-react';
 import { formatINR } from '@/lib/products';
 import ShippingSlip from './shipping-slip';
+import ShipmentModal from './shipment-modal';
 
 const STEPS = [
   { key: 'confirmed', label: 'Confirmed', icon: CheckCircle2 },
@@ -13,6 +14,9 @@ const STEPS = [
 
 export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
   const [showShippingSlip, setShowShippingSlip] = React.useState(false);
+  const [showShipmentModal, setShowShipmentModal] = React.useState(false);
+  const [isEditOnlyShipment, setIsEditOnlyShipment] = React.useState(false);
+  const [copiedAwb, setCopiedAwb] = React.useState(false);
   if (!order) return null;
 
   const address = order.address || {};
@@ -79,7 +83,15 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
                   ) : (
                     <select 
                       value={order.status} 
-                      onChange={(e) => onUpdateStatus(order.id, e.target.value)}
+                      onChange={(e) => {
+                        const newStatus = e.target.value;
+                        if (newStatus === 'shipped') {
+                          setIsEditOnlyShipment(false);
+                          setShowShipmentModal(true);
+                        } else {
+                          onUpdateStatus(order.id, newStatus);
+                        }
+                      }}
                       className="border border-neutral-200 bg-[#F7F5F0] rounded-md px-2.5 py-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-700 focus:outline-none focus:border-[#9C6B30] cursor-pointer"
                     >
                       <option value="confirmed">Confirmed</option>
@@ -156,6 +168,121 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
               </div>
             )}
           </div>
+
+          {/* Dedicated Logistics & Courier Tracking panel */}
+          {(order.status === 'shipped' || order.status === 'delivered' || order.courier || order.carrier) && (
+            <div className="bg-white rounded-xl border border-neutral-200 p-4 sm:p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-neutral-100">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-[#FAF5EB] border border-[#D4AF37]/30 flex items-center justify-center text-[#9C6B30]">
+                    <Truck size={16} />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold tracking-widest uppercase text-neutral-800">
+                      Logistics &amp; Courier Tracking
+                    </h3>
+                    <p className="text-[11px] text-neutral-400">
+                      Live dispatch tracking, logistics partner, and AWB details
+                    </p>
+                  </div>
+                </div>
+
+                {onUpdateStatus && order.status !== 'cancelled' && (
+                  <button
+                    onClick={() => {
+                      setIsEditOnlyShipment(true);
+                      setShowShipmentModal(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#9C6B30] bg-[#FAF6EF] border border-[#D4AF37]/40 rounded-lg hover:bg-[#9C6B30] hover:text-white transition-all shadow-xs cursor-pointer"
+                  >
+                    <Edit2 size={12} /> Edit Tracking
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-xs sm:text-sm">
+                {/* Carrier Partner */}
+                <div>
+                  <span className="text-[10px] text-neutral-400 uppercase font-semibold block">Courier Partner</span>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="px-2.5 py-1 text-xs font-bold text-neutral-900 bg-neutral-100 border border-neutral-200 rounded-md">
+                      {order.courier?.carrier || order.carrier || 'Standard Courier'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* AWB Tracking Number */}
+                <div>
+                  <span className="text-[10px] text-neutral-400 uppercase font-semibold block">AWB / Consignment No.</span>
+                  <div className="flex items-center gap-2 mt-1">
+                    {order.courier?.trackingNumber || order.trackingNumber ? (
+                      <>
+                        <span className="font-mono font-bold text-sm tracking-wider text-neutral-900">
+                          {order.courier?.trackingNumber || order.trackingNumber}
+                        </span>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(order.courier?.trackingNumber || order.trackingNumber);
+                            setCopiedAwb(true);
+                            setTimeout(() => setCopiedAwb(false), 2000);
+                          }}
+                          className="p-1 text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 rounded transition cursor-pointer"
+                          title="Copy AWB Number"
+                        >
+                          {copiedAwb ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                        </button>
+                        {copiedAwb && <span className="text-[10px] text-emerald-600 font-medium">Copied!</span>}
+                      </>
+                    ) : (
+                      <span className="italic text-neutral-400 text-xs">Pending AWB assignment</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Live Portal Link */}
+                <div>
+                  <span className="text-[10px] text-neutral-400 uppercase font-semibold block">Live Tracking Link</span>
+                  <div className="mt-1">
+                    {order.courier?.trackingUrl || order.trackingUrl ? (
+                      <a
+                        href={order.courier?.trackingUrl || order.trackingUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#9C6B30] hover:underline"
+                      >
+                        Track Package <ExternalLink size={12} />
+                      </a>
+                    ) : (
+                      <span className="text-neutral-400 text-xs italic">No URL provided</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Extra details (Shipped at date & notes) */}
+              {(order.courier?.shippedAt || order.shippedAt || order.courier?.notes) && (
+                <div className="pt-2 border-t border-neutral-100 flex flex-col sm:flex-row justify-between gap-2 text-xs text-neutral-500">
+                  {(order.courier?.shippedAt || order.shippedAt) && (
+                    <div>
+                      <span className="font-medium text-neutral-600">Dispatched:</span>{' '}
+                      {new Date(order.courier?.shippedAt || order.shippedAt).toLocaleString('en-IN', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </div>
+                  )}
+                  {order.courier?.notes && (
+                    <div className="italic text-neutral-500">
+                      "{order.courier.notes}"
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Customer & Address + Payment Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
@@ -411,6 +538,18 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
         <ShippingSlip 
           order={order} 
           onClose={() => setShowShippingSlip(false)} 
+        />
+      )}
+      {showShipmentModal && (
+        <ShipmentModal
+          order={order}
+          isOpen={showShipmentModal}
+          isEditOnly={isEditOnlyShipment}
+          onClose={() => setShowShipmentModal(false)}
+          onConfirm={async ({ status, courier }) => {
+            await onUpdateStatus(order.id, status || order.status, courier);
+            setShowShipmentModal(false);
+          }}
         />
       )}
     </div>
