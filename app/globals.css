@@ -1,0 +1,269 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --luxe-bg: #ffffff;
+  --luxe-primary: #9C6B30;
+  --luxe-dark: #1A1A1A;
+  --luxe-gold: #D4AF37;
+  --luxe-text: #333333;
+  --luxe-border: #E8E8E8;
+  --luxe-accent: #C79B3B;
+}
+
+html,
+body {
+  background: var(--luxe-bg);
+  color: var(--luxe-text);
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  max-width: 100%;
+}
+
+*,
+::before,
+::after {
+  box-sizing: border-box;
+}
+
+img,
+video,
+canvas,
+svg {
+  max-width: 100%;
+}
+
+.font-serif-luxe {
+  font-family: 'Cormorant Garamond', serif;
+  letter-spacing: .01em;
+}
+
+.font-display {
+  font-family: 'Playfair Display', serif;
+  letter-spacing: .005em;
+}
+
+.gold-gradient {
+  background: linear-gradient(90deg, #9C6B30 0%, #D4AF37 50%, #C79B3B 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.gold-line {
+  background: linear-gradient(90deg, transparent, #C79B3B, transparent);
+  height: 1px;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none
+}
+
+.luxe-shadow {
+  box-shadow: 0 20px 60px -20px rgba(156, 107, 48, .15), 0 8px 24px -12px rgba(26, 26, 26, .06);
+}
+
+.luxe-shadow-lg {
+  box-shadow: 0 40px 80px -30px rgba(156, 107, 48, .25), 0 16px 40px -20px rgba(26, 26, 26, .08);
+}
+
+.marquee {
+  display: flex;
+  gap: 3rem;
+  animation: marquee 30s linear infinite;
+}
+
+@keyframes marquee {
+  0% {
+    transform: translateX(0)
+  }
+
+  100% {
+    transform: translateX(-50%)
+  }
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 20%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 10%;
+    --primary: 30 53% 40%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 40 30% 96%;
+    --secondary-foreground: 0 0% 10%;
+    --muted: 40 20% 96%;
+    --muted-foreground: 0 0% 45%;
+    --accent: 42 55% 51%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 91%;
+    --input: 0 0% 91%;
+    --ring: 30 53% 40%;
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@media (max-width: 350px) {
+
+  html,
+  body {
+    font-size: 14px;
+  }
+}
+
+/* Global Luxe Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: #FAF6EF;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #9C6B30;
+  border-radius: 999px;
+  border: 1px solid #FAF6EF;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #D4AF37;
+}
+
+/* Firefox Global Scrollbar */
+* {
+  scrollbar-width: none;
+  scrollbar-color: #9C6B30 #FAF6EF;
+}
+
+/* Dark Theme & Admin Sidebar Custom Scrollbar */
+.dark-scrollbar::-webkit-scrollbar,
+.bg-\[\#0F0F10\] ::-webkit-scrollbar,
+aside ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.dark-scrollbar::-webkit-scrollbar-track,
+.bg-\[\#0F0F10\] ::-webkit-scrollbar-track,
+aside ::-webkit-scrollbar-track {
+  background: #0F0F10;
+}
+
+.dark-scrollbar::-webkit-scrollbar-thumb,
+.bg-\[\#0F0F10\] ::-webkit-scrollbar-thumb,
+aside ::-webkit-scrollbar-thumb {
+  background: #9C6B30;
+  border-radius: 999px;
+  border: 1px solid #0F0F10;
+}
+
+.dark-scrollbar::-webkit-scrollbar-thumb:hover,
+.bg-\[\#0F0F10\] ::-webkit-scrollbar-thumb:hover,
+aside ::-webkit-scrollbar-thumb:hover {
+  background: #D4AF37;
+}
+
+.dark-scrollbar,
+aside nav {
+  scrollbar-width: none;
+  /* scrollbar-color: #d4af37 #0F0F10; */
+}
+
+/* Premium thin scrollbar for Refine sidebar container */
+.refine-scroll-container::-webkit-scrollbar {
+  width: 4px;
+}
+
+.refine-scroll-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.refine-scroll-container::-webkit-scrollbar-thumb {
+  background: #9C6B30;
+  border-radius: 999px;
+}
+
+.refine-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: #D4AF37;
+}
+
+.refine-scroll-container {
+  max-height: calc(100vh - 140px);
+  scrollbar-width: thin;
+  scrollbar-color: #9C6B30 transparent;
+}
+
+@keyframes adjust-refine-height {
+  from {
+    max-height: calc(100vh - 340px);
+  }
+
+  to {
+    max-height: calc(100vh - 140px);
+  }
+}
+
+@supports (animation-timeline: scroll()) {
+  .refine-scroll-container {
+    animation: adjust-refine-height linear both;
+    animation-timeline: scroll(root);
+    animation-range: 0px 200px;
+  }
+}
+
+/* Premium minimalist scrollbar for reviews */
+.reviews-scroll-container {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(156, 107, 48, 0.25) transparent;
+  overscroll-behavior-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.reviews-scroll-container::-webkit-scrollbar {
+  width: 4px;
+}
+
+.reviews-scroll-container::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.reviews-scroll-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.reviews-scroll-container::-webkit-scrollbar-thumb {
+  background: rgba(156, 107, 48, 0.25);
+  border-radius: 999px;
+  transition: background 0.2s ease;
+}
+
+.reviews-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 107, 48, 0.6);
+}
