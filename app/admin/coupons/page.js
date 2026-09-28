@@ -1,3 +1,0 @@
-'use client';
-import CrudPage from '../_crud';
-export default function Page(){ return <CrudPage title="Coupons" endpoint="coupons" fields={[{k:'code',label:'Code',default:''},{k:'type',label:'Type (percent/flat)',default:'percent'},{k:'value',label:'Value',type:'number'},{k:'minOrder',label:'Min Order (₹)',type:'number',default:0},{k:'active',label:'Active',type:'checkbox',default:true}]} listRender={(i)=>(<div><div className="font-medium">{i.code} — <span className="text-[#9C6B30]">{i.type==='percent'?i.value+'%':'₹'+i.value} off</span></div><div className="text-xs text-neutral-500">Min order: ₹{i.minOrder||0} · {i.active?'Active':'Inactive'}</div></div>)}/>; }
