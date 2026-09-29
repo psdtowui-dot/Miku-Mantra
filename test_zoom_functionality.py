@@ -22,9 +22,10 @@ def run():
         zs = data['zoomSettings']
         print(f"✓ zoomSettings found: mode={zs.get('mode')}, zoomLevel={zs.get('zoomLevel')}, showCrosshair={zs.get('showCrosshair')}")
 
-    # Test 2: Public GET /api/products/halo-spark-pendant-set includes zoomSettings
-    print("\n--- Test 2: GET /api/products/halo-spark-pendant-set ---")
-    req = urllib.request.Request(f"{BASE_URL}/api/products/halo-spark-pendant-set")
+    # Test 2: Public GET /api/products/[slug] includes zoomSettings
+    test_slug = 'celestine-diamond-pendant'
+    print(f"\n--- Test 2: GET /api/products/{test_slug} ---")
+    req = urllib.request.Request(f"{BASE_URL}/api/products/{test_slug}")
     with opener.open(req) as res:
         assert res.status == 200
         pdata = json.loads(res.read().decode())
@@ -119,7 +120,7 @@ def run():
 
     # Test 8: Verify product page responds with 200 and WhatsApp CTA is removed
     print("\n--- Test 8: Storefront product page HTML check ---")
-    req = urllib.request.Request(f"{BASE_URL}/product/halo-spark-pendant-set")
+    req = urllib.request.Request(f"{BASE_URL}/product/{test_slug}")
     with opener.open(req) as res:
         assert res.status == 200
         html = res.read().decode('utf-8', errors='ignore')

@@ -77,7 +77,7 @@ export default function CartPage() {
     if (!coupon.trim()) return;
     setApplying(true);
     try {
-      const r = await authFetch('/api/coupons/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: coupon, subtotal }) });
+      const r = await authFetch('/api/coupons/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: coupon.trim(), subtotal }) });
       const d = await r.json();
       if (r.ok) { setDiscount(d.discount); setCouponCode(d.code); toast.success(`${d.code} applied — ${d.type === 'percent' ? d.value + '%' : '₹' + d.value} off`); }
       else { setDiscount(0); setCouponCode(''); toast.error(d.error || 'Invalid coupon'); }

@@ -257,6 +257,12 @@ async function seedIfEmpty(db) {
     { id: uuidv4(), code: 'MIKUMANTRA10', type: 'percent', value: 10, minOrder: 0, active: true, createdAt: new Date() },
     { id: uuidv4(), code: 'WELCOME2000', type: 'flat', value: 2000, minOrder: 10000, active: true, createdAt: new Date() },
   ])
+  try {
+    await db.collection('coupons').createIndex(
+      { code: 1 },
+      { unique: true, collation: { locale: 'en', strength: 2 }, name: 'uniq_coupon_code' }
+    );
+  } catch (_) {}
   const fc = await db.collection('footer').countDocuments()
   if (fc === 0) {
     await db.collection('footer').insertOne({
@@ -1720,12 +1726,19 @@ async function handleRoute(request, { params }) {
 
     // ============ COUPONS (public validate) ============
     if (route === '/coupons/validate' && method === 'POST') {
-      const { code, subtotal } = await request.json()
-      const c = await db.collection('coupons').findOne({ code: (code || '').toUpperCase(), active: true })
-      if (!c) return err('Invalid coupon', 404)
-      if ((c.minOrder || 0) > subtotal) return err(`Minimum order ₹${c.minOrder} required`)
-      const discount = c.type === 'percent' ? Math.round(subtotal * c.value / 100) : c.value
-      return ok({ code: c.code, discount, type: c.type, value: c.value })
+      const { code, subtotal } = await request.json().catch(() => ({}));
+      const rawCode = (code || '').trim().toUpperCase();
+      if (!rawCode) return err('Please enter a coupon code', 400);
+      const escaped = rawCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const c = await db.collection('coupons').findOne({
+        code: { $regex: new RegExp(`^${escaped}$`, 'i') },
+        active: true
+      });
+      if (!c) return err('Invalid or inactive coupon code', 404);
+      const minReq = Number(c.minOrder || 0);
+      if (minReq > (subtotal || 0)) return err(`Minimum order ₹${minReq.toLocaleString('en-IN')} required for coupon ${c.code}`, 400);
+      const discount = c.type === 'percent' ? Math.round(subtotal * c.value / 100) : c.value;
+      return ok({ code: c.code, discount, type: c.type, value: c.value });
     }
 
     // ============ CART VALIDATION ============
@@ -1858,15 +1871,21 @@ async function handleRoute(request, { params }) {
       let calculatedDiscount = 0;
       let couponCode = null;
       if (body.coupon && typeof body.coupon === 'string') {
-        const code = body.coupon.trim().toUpperCase();
-        const couponDoc = await db.collection('coupons').findOne({ code, active: true });
-        if (couponDoc) {
-          if (calculatedSubtotal >= (couponDoc.minOrder || 0)) {
-            couponCode = couponDoc.code;
-            calculatedDiscount = couponDoc.type === 'percent'
-              ? Math.round(calculatedSubtotal * couponDoc.value / 100)
-              : couponDoc.value;
-            calculatedDiscount = Math.min(calculatedDiscount, calculatedSubtotal);
+        const rawCode = body.coupon.trim().toUpperCase();
+        if (rawCode) {
+          const escaped = rawCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const couponDoc = await db.collection('coupons').findOne({
+            code: { $regex: new RegExp(`^${escaped}$`, 'i') },
+            active: true
+          });
+          if (couponDoc) {
+            if (calculatedSubtotal >= (couponDoc.minOrder || 0)) {
+              couponCode = couponDoc.code;
+              calculatedDiscount = couponDoc.type === 'percent'
+                ? Math.round(calculatedSubtotal * couponDoc.value / 100)
+                : couponDoc.value;
+              calculatedDiscount = Math.min(calculatedDiscount, calculatedSubtotal);
+            }
           }
         }
       }
@@ -2044,7 +2063,7 @@ async function handleRoute(request, { params }) {
       };
 
       const pdf = await buildInvoicePDF(order, companyConfig);
-      return handleCORS(new NextResponse(pdf, { status: 200, headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="Invoice-${order.orderNumber}.pdf"` } }));
+      return handleCORS(new NextResponse(pdf, { status: 200, headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="MikuMantra-Invoice-${order.orderNumber}.pdf"` } }));
     }
     if (route.startsWith('/orders/') && route.endsWith('/shippingslip') && method === 'GET') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
@@ -4344,15 +4363,15 @@ async function handleRoute(request, { params }) {
 
           // Image/SVG upload validations
           const fileType = file.type || 'image/jpeg';
-          const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+          const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon'];
           if (!allowedTypes.includes(fileType)) {
-            return err('Invalid MIME type. Only image/jpeg, image/png, image/webp, and image/svg+xml are allowed.', 400);
+            return err('Invalid MIME type. Only image/jpeg, image/png, image/webp, image/svg+xml, and image/x-icon are allowed.', 400);
           }
 
           const originalName = file.name || 'image.jpg';
           const ext = pathModule.extname(originalName).toLowerCase();
-          if (!['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext)) {
-            return err('Invalid file extension. Only .jpg, .jpeg, .png, .webp, and .svg are allowed.', 400);
+          if (!['.jpg', '.jpeg', '.png', '.webp', '.svg', '.ico'].includes(ext)) {
+            return err('Invalid file extension. Only .jpg, .jpeg, .png, .webp, .svg, and .ico are allowed.', 400);
           }
 
           if (file.size > 5 * 1024 * 1024) {
@@ -4408,7 +4427,7 @@ async function handleRoute(request, { params }) {
           const files = formData.getAll('files');
           if (!files || !files.length) return err('No files provided', 400);
 
-          const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+          const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon'];
           const uploads = [];
           const uploadsDir = pathModule.join(process.cwd(), 'public', 'uploads');
           if (!fs.existsSync(uploadsDir)) {
@@ -4420,7 +4439,7 @@ async function handleRoute(request, { params }) {
               const fileType = file.type || 'image/jpeg';
               const originalName = file.name || 'image.jpg';
               const ext = pathModule.extname(originalName).toLowerCase();
-              if (!['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext)) {
+              if (!['.jpg', '.jpeg', '.png', '.webp', '.svg', '.ico'].includes(ext)) {
                 continue;
               }
               if (file.size > 10 * 1024 * 1024) continue;
@@ -5022,7 +5041,11 @@ async function handleRoute(request, { params }) {
           if (col === 'coupons') {
             const rawCode = (b.code || '').trim().toUpperCase();
             if (!rawCode) return err('Coupon code is required', 400);
-            const existing = await db.collection('coupons').findOne({ code: rawCode });
+            if (rawCode.length < 3) return err('Coupon code must be at least 3 characters', 400);
+            const escaped = rawCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const existing = await db.collection('coupons').findOne({
+              code: { $regex: new RegExp(`^${escaped}$`, 'i') }
+            });
             if (existing) return err(`Coupon code '${rawCode}' already exists`, 400);
 
             const type = b.type === 'flat' ? 'flat' : 'percent';
@@ -5039,7 +5062,14 @@ async function handleRoute(request, { params }) {
             b.active = b.active !== false;
           }
           const doc = { id: uuidv4(), createdAt: new Date(), ...b };
-          await db.collection(col).insertOne(doc);
+          try {
+            await db.collection(col).insertOne(doc);
+          } catch (dbErr) {
+            if (dbErr.code === 11000) {
+              return err(`Coupon code '${b.code || ''}' already exists`, 400);
+            }
+            throw dbErr;
+          }
           _cache.delete('admin_' + col);
           return ok({ item: clean(doc) });
         }
@@ -5054,7 +5084,12 @@ async function handleRoute(request, { params }) {
             if (b.code !== undefined) {
               const rawCode = (b.code || '').trim().toUpperCase();
               if (!rawCode) return err('Coupon code is required', 400);
-              const existing = await db.collection('coupons').findOne({ code: rawCode, id: { $ne: id } });
+              if (rawCode.length < 3) return err('Coupon code must be at least 3 characters', 400);
+              const escaped = rawCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const existing = await db.collection('coupons').findOne({
+                code: { $regex: new RegExp(`^${escaped}$`, 'i') },
+                id: { $ne: id }
+              });
               if (existing) return err(`Coupon code '${rawCode}' already exists`, 400);
               b.code = rawCode;
             }
@@ -5071,7 +5106,14 @@ async function handleRoute(request, { params }) {
               b.minOrder = Math.max(0, Number(b.minOrder) || 0);
             }
           }
-          await db.collection(col).updateOne({ id }, { $set: b });
+          try {
+            await db.collection(col).updateOne({ id }, { $set: b });
+          } catch (dbErr) {
+            if (dbErr.code === 11000) {
+              return err(`Coupon code '${b.code || ''}' already exists`, 400);
+            }
+            throw dbErr;
+          }
           _cache.delete('admin_' + col);
           const up = await db.collection(col).findOne({ id });
           return ok({ item: clean(up) });
@@ -5154,6 +5196,10 @@ async function handleRoute(request, { params }) {
               { 'address.phone': reg },
               { 'items.name': reg },
               { guestEmail: reg },
+              { carrier: reg },
+              { trackingNumber: reg },
+              { 'courier.carrier': reg },
+              { 'courier.trackingNumber': reg },
               { userId: { $in: matchingUserIds } }
             ]
           };
@@ -5197,6 +5243,10 @@ async function handleRoute(request, { params }) {
                   { 'address.phone': reg },
                   { 'items.name': reg },
                   { guestEmail: reg },
+                  { carrier: reg },
+                  { trackingNumber: reg },
+                  { 'courier.carrier': reg },
+                  { 'courier.trackingNumber': reg },
                   { userId: { $in: matchingUserIds } }
                 ]
               }
@@ -5233,10 +5283,40 @@ async function handleRoute(request, { params }) {
           cancelled: 'Cancelled by mikumantra',
           confirmed: 'Order confirmed.'
         };
-        const setDoc = { status: b.status };
+        const setDoc = {};
+        if (b.status !== undefined) {
+          setDoc.status = b.status;
+        }
+
+        const effectiveStatus = b.status || existingOrder.status || 'confirmed';
+
         if (b.status === 'delivered') {
           setDoc.deliveredAt = new Date();
         }
+
+        let courierDoc = null;
+        if (b.courier && typeof b.courier === 'object') {
+          const shippedAt = b.courier.shippedAt || (b.status === 'shipped' || existingOrder.status === 'shipped' ? new Date() : (existingOrder.shippedAt || new Date()));
+          courierDoc = {
+            carrier: (b.courier.carrier || '').trim(),
+            trackingNumber: (b.courier.trackingNumber || '').trim(),
+            trackingUrl: (b.courier.trackingUrl || '').trim(),
+            notes: (b.courier.notes || '').trim(),
+            shippedAt: shippedAt
+          };
+          setDoc.courier = courierDoc;
+          setDoc.carrier = courierDoc.carrier;
+          setDoc.trackingNumber = courierDoc.trackingNumber;
+          setDoc.trackingUrl = courierDoc.trackingUrl;
+          if (courierDoc.shippedAt) setDoc.shippedAt = courierDoc.shippedAt;
+        } else if (b.status === 'shipped') {
+          const shippedAt = existingOrder.shippedAt || new Date();
+          setDoc.shippedAt = shippedAt;
+          if (existingOrder.courier) {
+            setDoc['courier.shippedAt'] = existingOrder.courier.shippedAt || shippedAt;
+          }
+        }
+
         if (b.status === 'cancelled') {
           const now = new Date();
           setDoc.cancelledAt = now;
@@ -5255,18 +5335,38 @@ async function handleRoute(request, { params }) {
           }
         }
 
-        const updateResult = await db.collection('orders').updateOne(
-          { id, status: { $ne: 'cancelled' } },
-          {
-            $set: setDoc,
-            $push: {
-              statusHistory: {
-                status: b.status,
-                at: new Date(),
-                note: b.note || notes[b.status] || ''
-              }
+        let historyEntry = null;
+        if (b.status && b.status !== existingOrder.status) {
+          let note = b.note;
+          if (!note) {
+            if (b.status === 'shipped' && courierDoc?.carrier) {
+              const awbPart = courierDoc.trackingNumber ? ` (AWB: ${courierDoc.trackingNumber})` : '';
+              note = `Shipped via ${courierDoc.carrier}${awbPart}.${courierDoc.notes ? ' ' + courierDoc.notes : ''}`.trim();
+            } else {
+              note = notes[b.status] || '';
             }
           }
+          historyEntry = {
+            status: b.status,
+            at: new Date(),
+            note
+          };
+        } else if (courierDoc) {
+          historyEntry = {
+            status: effectiveStatus,
+            at: new Date(),
+            note: b.note || `Courier tracking updated: ${courierDoc.carrier || 'Carrier'}${courierDoc.trackingNumber ? ' (AWB: ' + courierDoc.trackingNumber + ')' : ''}`
+          };
+        }
+
+        const updateOperation = { $set: setDoc };
+        if (historyEntry) {
+          updateOperation.$push = { statusHistory: historyEntry };
+        }
+
+        const updateResult = await db.collection('orders').updateOne(
+          { id, status: { $ne: 'cancelled' } },
+          updateOperation
         );
 
         if (updateResult.modifiedCount === 0) {

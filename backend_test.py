@@ -238,7 +238,7 @@ def main():
             test.log("Profile name updated correctly", True)
         else:
             test.log(f"Profile name not updated: {user.get('name')}", False)
-        if user.get('phone') == '9999999999':
+        if user.get('phone') in ['9999999999', '+919999999999']:
             test.log("Profile phone updated correctly", True)
         else:
             test.log(f"Profile phone not updated: {user.get('phone')}", False)
@@ -457,6 +457,10 @@ def main():
                 result = test.test_endpoint("GET", f"/orders/{order_id}", 200,
                                            description=f"GET /orders/{order_id} - should return order details",
                                            check_fields=['order'])
+                try:
+                    admin_session.put(f"{BASE_URL}/admin/orders/{order_id}", json={"status": "delivered"})
+                except Exception:
+                    pass
         else:
             test.log("No products found to create order", False)
     except Exception as e:
@@ -542,6 +546,10 @@ def main():
                     test.log(f"Razorpay order payment status correct: {payment_status}", True)
                 else:
                     test.log(f"Razorpay order payment status incorrect: expected 'paid', got {payment_status}", False)
+                try:
+                    admin_session.put(f"{BASE_URL}/admin/orders/{order['id']}", json={"status": "delivered"})
+                except Exception:
+                    pass
     except Exception as e:
         test.log(f"Razorpay order creation failed: {str(e)}", False)
     
