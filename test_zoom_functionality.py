@@ -117,14 +117,15 @@ def run():
         assert updated['zoomSettings']['lensSize'] == 160
         print(f"✓ Successfully updated to side-by-side mode: {updated['zoomSettings']}")
 
-    # Test 8: Verify product page responds with 200 and contains WhatsApp CTA & Zoom markup
+    # Test 8: Verify product page responds with 200 and WhatsApp CTA is removed
     print("\n--- Test 8: Storefront product page HTML check ---")
     req = urllib.request.Request(f"{BASE_URL}/product/halo-spark-pendant-set")
     with opener.open(req) as res:
         assert res.status == 200
         html = res.read().decode('utf-8', errors='ignore')
-        assert "Order Now on WhatsApp" in html or "whatsapp" in html.lower(), "WhatsApp CTA missing from product page"
-        print(f"✓ Product page loaded successfully with 200 OK and contains WhatsApp CTA")
+        assert "Order Now on WhatsApp" not in html, "WhatsApp CTA should be removed from product page"
+        assert "Add to Bag" in html, "Add to Bag button missing from product page"
+        print(f"✓ Product page loaded successfully with 200 OK (WhatsApp button removed as requested)")
 
     print("\n=======================================================")
     print("ALL 8 TESTS PASSED! Both zoom functionalities and backend admin control are fully operational.")
