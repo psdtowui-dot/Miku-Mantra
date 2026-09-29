@@ -79,15 +79,15 @@ export default function AdminLayout({ children }) {
   const [showAdminNew, setShowAdminNew] = useState(false);
   const [showAdminConf, setShowAdminConf] = useState(false);
 
-  const isLoginPage = pathname === '/admin/login';
+  const isLoginPage = pathname === '/admin/login' || pathname?.startsWith('/admin/login');
 
   useEffect(() => {
     if (isLoginPage) return;
     if (!loading) {
       if (!user) {
-        router.push('/admin/login?redirect=' + encodeURIComponent(pathname));
+        router.replace('/admin/login?redirect=' + encodeURIComponent(pathname));
       } else if (user.role !== 'admin') {
-        router.push('/admin/login?error=forbidden&redirect=' + encodeURIComponent(pathname));
+        router.replace('/admin/login?error=forbidden&redirect=' + encodeURIComponent(pathname));
       }
     }
   }, [loading, user, router, pathname, isLoginPage]);

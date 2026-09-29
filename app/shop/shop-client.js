@@ -4,7 +4,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import ProductCard from '@/components/site/product-card';
 import CompareBar from '@/components/site/compare-bar';
-import { PRODUCTS as SEED, getNormalizedSpecs } from '@/lib/products';
+import { PRODUCTS as SEED, getNormalizedSpecs, DEFAULT_PRODUCT_FILTERS } from '@/lib/products';
 import { SlidersHorizontal, X, Loader2, ChevronDown } from 'lucide-react';
 
 function ShopInner() {
@@ -14,9 +14,10 @@ function ShopInner() {
   const [all, setAll] = useState(SEED);
   const [loading, setLoading] = useState(false);
 
-  // Dynamic Product Filter Groups from Backend API
-  const [filterGroups, setFilterGroups] = useState([]);
+  // Dynamic Product Filter Groups from Backend API (initialized with default filters for immediate render)
+  const [filterGroups, setFilterGroups] = useState(DEFAULT_PRODUCT_FILTERS);
   const [filterLoading, setFilterLoading] = useState(false);
+  const [hasLoadedFilters, setHasLoadedFilters] = useState(false);
 
   // Price Range & Sort state
   const [range, setRange] = useState([0, 1000000]);
@@ -64,6 +65,7 @@ function ShopInner() {
       } finally {
         setLoading(false);
         setFilterLoading(false);
+        setHasLoadedFilters(true);
       }
     })();
   }, []);
@@ -76,12 +78,12 @@ function ShopInner() {
     } else {
       q.delete(key);
     }
-    router.push(`/shop?${q.toString()}`);
+    router.push(`/shop?${q.toString()}`, { scroll: false });
   };
 
   // Clear All Filters helper
   const clearAll = () => {
-    router.push('/shop');
+    router.push('/shop', { scroll: false });
     const pg = (filterGroups || []).find(g => (g.type === 'price' || g.key === 'price') && g.enabled !== false);
     const minB = pg?.priceConfig?.min ?? 0;
     const maxB = pg?.priceConfig?.max ?? 1000000;
@@ -108,26 +110,80 @@ function ShopInner() {
         // Standard Options Filter Handling
         const selectedVal = sp.get(key);
         if (selectedVal) {
-          const selValLower = selectedVal.toLowerCase();
+          const selValLower = selectedVal.trim().toLowerCase();
 
           result = result.filter(p => {
-            // 1. Direct property match (e.g. p.category, p.gender, p.metal, p.stone, p.collection)
-            const directVal = p[key];
-            if (directVal !== undefined && directVal !== null) {
-              if (String(directVal).toLowerCase() === selValLower) return true;
-              if (String(directVal).toLowerCase().includes(selValLower)) return true;
+            // 1. Gender filter: STRICT exact match (never use substring includes because 'women' contains 'men')
+            if (key === 'gender') {
+              const prodGender = (p.gender || '').trim().toLowerCase();
+              if (!prodGender) return false;
+              return prodGender === selValLower || prodGender === 'unisex';
             }
 
-            // 2. Specifications array match (e.g. [{ label: 'Occasion', value: 'Party' }])
-            const specs = getNormalizedSpecs(p);
-            const matchingSpec = specs.find(s =>
-              (s.label?.toLowerCase() === group.name.toLowerCase() || s.id?.toLowerCase() === key) &&
-              s.value?.toLowerCase().includes(selValLower)
-            );
-            if (matchingSpec) return true;
+            // 2. Category filter: STRICT exact match (handling hyphens and spaces)
+            if (key === 'category') {
+              const prodCat = (p.category || '').trim().toLowerCase();
+              return (
+                prodCat === selValLower ||
+                prodCat.replace(/\s+/g, '-') === selValLower.replace(/\s+/g, '-')
+              );
+            }
 
-            // 3. Fallback tags / search check
-            if (p.tags && Array.isArray(p.tags) && p.tags.some(t => String(t).toLowerCase() === selValLower)) {
+            // 3. Collection filter: STRICT exact match
+            if (key === 'collection') {
+              const prodCol = (p.collection || '').trim().toLowerCase();
+              return (
+                prodCol === selValLower ||
+                prodCol.replace(/\s+/g, '-') === selValLower.replace(/\s+/g, '-')
+              );
+            }
+
+            // 4. Stone filter: handles None, Polki, Diamond, etc.
+            if (key === 'stone') {
+              const prodStone = (p.stone || p.stoneDetails || '').trim().toLowerCase();
+              const isNone = !prodStone || prodStone === '—' || prodStone === '-' || prodStone === 'none' || prodStone === 'n/a';
+              if (selValLower === 'none') {
+                return isNone;
+              }
+              if (isNone) {
+                return false;
+              }
+              if (prodStone === selValLower || prodStone.includes(selValLower)) return true;
+              const terms = selValLower.split(/\s+/).filter(t => t.length > 2);
+              if (terms.some(t => prodStone.includes(t))) return true;
+              return false;
+            }
+
+            // 5. Metal filter: handles Yellow Gold, Rose Gold, White Gold, Platinum
+            if (key === 'metal') {
+              const prodMetal = (p.metal || p.metalComposition || '').trim().toLowerCase();
+              if (!prodMetal) return false;
+              return prodMetal === selValLower || prodMetal.includes(selValLower);
+            }
+
+            // 6. Generic direct property match
+            const directVal = p[key];
+            if (directVal !== undefined && directVal !== null) {
+              const strVal = String(directVal).trim().toLowerCase();
+              if (strVal === selValLower) return true;
+              if (strVal.length > 10 && strVal.includes(selValLower)) return true;
+            }
+
+            // 7. Specifications array match
+            const specs = getNormalizedSpecs(p);
+            const matchingSpec = specs.find(s => {
+              const specKey = (s.id || '').toLowerCase();
+              const specLabel = (s.label || '').toLowerCase();
+              return specKey === key.toLowerCase() || specLabel === (group.name || '').toLowerCase();
+            });
+            if (matchingSpec && matchingSpec.value) {
+              const specVal = String(matchingSpec.value).trim().toLowerCase();
+              if (specVal === selValLower) return true;
+              if (specVal.includes(selValLower)) return true;
+            }
+
+            // 8. Fallback tags check (exact tag match)
+            if (p.tags && Array.isArray(p.tags) && p.tags.some(t => String(t).trim().toLowerCase() === selValLower)) {
               return true;
             }
 
@@ -140,9 +196,9 @@ function ShopInner() {
       const cat = sp.get('category');
       const col = sp.get('collection');
       const gen = sp.get('gender');
-      if (cat) result = result.filter(p => p.category === cat);
-      if (col) result = result.filter(p => p.collection === col);
-      if (gen) result = result.filter(p => p.gender === gen);
+      if (cat) result = result.filter(p => (p.category || '').toLowerCase() === cat.toLowerCase());
+      if (col) result = result.filter(p => (p.collection || '').toLowerCase() === col.toLowerCase());
+      if (gen) result = result.filter(p => (p.gender || '').toLowerCase() === gen.toLowerCase() || (p.gender || '').toLowerCase() === 'unisex');
       result = result.filter(p => p.price >= range[0] && p.price <= range[1]);
     }
 
@@ -205,7 +261,7 @@ function ShopInner() {
           </button>
         </div>
 
-        {filterLoading ? (
+        {filterLoading || (!hasLoadedFilters && renderGroups.length === 0) ? (
           <div className="py-8 space-y-4">
             {[1, 2, 3].map(i => (
               <div key={i} className="border-t border-[#E8E8E8] py-4 space-y-2 animate-pulse">
