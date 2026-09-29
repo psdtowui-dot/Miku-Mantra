@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useCompare } from '@/lib/browsing';
 import { useCart } from '@/lib/cart-store';
-import { formatINR, getNormalizedSpecs } from '@/lib/products';
+import { formatINR, formatRating, getNormalizedSpecs } from '@/lib/products';
 import { toast } from 'sonner';
 import { GitCompare, X, ShoppingBag, Star, Loader2 } from 'lucide-react';
 
@@ -59,7 +59,7 @@ export default function ComparePage(){
     ['Rating', p => (
       <span className="flex items-center gap-1">
         <Star size={12} className={p.reviews > 0 ? "fill-[#D4AF37] stroke-[#D4AF37]" : "text-neutral-300"}/> 
-        <span className="font-medium text-neutral-700">{p.rating > 0 ? p.rating : '0.0'}</span>
+        <span className="font-medium text-neutral-700">{formatRating(p.rating)}</span>
         <span className="text-neutral-400">({p.reviews || 0})</span>
       </span>
     )],

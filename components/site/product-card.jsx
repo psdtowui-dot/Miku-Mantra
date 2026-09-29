@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { Heart, ShoppingBag, Eye, Star, GitCompare } from 'lucide-react';
 import { useCart, useWishlist } from '@/lib/cart-store';
 import { useCompare } from '@/lib/browsing';
-import { formatINR } from '@/lib/products';
+import { formatINR, formatRating } from '@/lib/products';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
 
@@ -40,7 +40,7 @@ export default function ProductCard({ p, index=0 }){
       <div className="pt-3 sm:pt-4 text-center px-0.5 sm:px-0">
         <Link href={`/product/${p.slug}`}><h3 className="font-serif-luxe text-base sm:text-lg text-[#1A1A1A] leading-tight hover:text-[#9C6B30] transition break-words line-clamp-2">{p.name}</h3></Link>
         <div className="text-[10px] sm:text-[11px] text-neutral-500 tracking-wider uppercase mt-1 truncate">{p.metal}</div>
-        <div className="flex items-center justify-center gap-1 mt-1 text-[10px] sm:text-[11px] text-neutral-500"><Star size={11} className={p.reviews > 0 ? "fill-[#D4AF37] stroke-[#D4AF37]" : "text-neutral-300"}/> <span>{p.rating > 0 ? p.rating : '0.0'}</span><span className="opacity-60">({p.reviews || 0})</span></div>
+        <div className="flex items-center justify-center gap-1 mt-1 text-[10px] sm:text-[11px] text-neutral-500"><Star size={11} className={p.reviews > 0 ? "fill-[#D4AF37] stroke-[#D4AF37]" : "text-neutral-300"}/> <span>{formatRating(p.rating)}</span><span className="opacity-60">({p.reviews || 0})</span></div>
         <div className="mt-1.5 flex flex-wrap items-baseline justify-center gap-1 sm:gap-2">
           <span className="font-medium text-xs sm:text-sm text-[#1A1A1A]">{formatINR(p.price)}</span>
           {p.mrp>p.price && <span className="text-[11px] sm:text-xs text-neutral-400 line-through">{formatINR(p.mrp)}</span>}

@@ -134,9 +134,21 @@ function calculateShippingCharge(subtotal, shippingConfig = {}) {
 async function recalculateProductRating(db, productId) {
   if (!db || !productId) return;
   try {
+    const prod = await db.collection('products').findOne({ $or: [{ id: productId }, { slug: productId }] });
+    const targetIds = [productId];
+    if (prod) {
+      if (prod.id && !targetIds.includes(prod.id)) targetIds.push(prod.id);
+      if (prod.slug && !targetIds.includes(prod.slug)) targetIds.push(prod.slug);
+    }
+
     const publishedReviews = await db.collection('reviews').find({
-      productId,
-      $or: [{ status: 'published' }, { status: { $exists: false }, approved: true }]
+      $or: [
+        { productId: { $in: targetIds } },
+        { productSlug: { $in: targetIds } }
+      ],
+      $and: [
+        { $or: [{ status: 'published' }, { status: { $exists: false }, approved: true }] }
+      ]
     }).toArray();
 
     const totalReviews = publishedReviews.length;
@@ -156,8 +168,60 @@ async function recalculateProductRating(db, productId) {
       { $or: [{ id: productId }, { slug: productId }] },
       { $set: { rating: averageRating, reviews: totalReviews, breakdown } }
     );
+
+    // Dynamic cache busting
+    cacheBust('products:');
+    _cache.delete('admin_products');
+    _cache.delete('admin_dashboard');
+    _cache.delete('homepage_data');
+    invalidateSiteDataCache('homepage_data');
+    invalidateSiteDataCache('site_settings');
   } catch (err) {
     console.error('Failed to recalculate product rating:', err);
+  }
+}
+
+async function syncAllProductRatings(db) {
+  if (!db) return;
+  try {
+    const products = await db.collection('products').find({}).toArray();
+    for (const p of products) {
+      const targetIds = [p.id, p.slug].filter(Boolean);
+      const reviews = await db.collection('reviews').find({
+        $or: [
+          { productId: { $in: targetIds } },
+          { productSlug: { $in: targetIds } }
+        ],
+        $and: [
+          { $or: [{ status: 'published' }, { status: { $exists: false }, approved: true }] }
+        ]
+      }).toArray();
+
+      const totalReviews = reviews.length;
+      let averageRating = 0;
+      const breakdown = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+      if (totalReviews > 0) {
+        const sum = reviews.reduce((acc, r) => {
+          const ratingVal = Math.min(5, Math.max(1, Number(r.rating) || 5));
+          breakdown[ratingVal] = (breakdown[ratingVal] || 0) + 1;
+          return acc + ratingVal;
+        }, 0);
+        averageRating = Math.round((sum / totalReviews) * 10) / 10;
+      }
+
+      await db.collection('products').updateOne(
+        { _id: p._id },
+        { $set: { rating: averageRating, reviews: totalReviews, breakdown } }
+      );
+    }
+    cacheBust('products:');
+    _cache.delete('admin_products');
+    _cache.delete('admin_dashboard');
+    _cache.delete('homepage_data');
+    invalidateSiteDataCache('homepage_data');
+    invalidateSiteDataCache('site_settings');
+  } catch (err) {
+    console.error('Failed to sync all product ratings:', err);
   }
 }
 
@@ -223,6 +287,7 @@ async function ensureIndexes(database) {
         const database = db;
         await syncEnvAdminEmailsWithDatabase(database);
         await seedRbacIfEmpty(database);
+        await syncAllProductRatings(database);
         return database;
       } catch (err) {
         connectPromise = null; // Reset connection promise so subsequent requests can retry
@@ -487,6 +552,71 @@ async function seedFiltersIfEmpty(db) {
   const count = await db.collection('product_filters').countDocuments();
   if (count === 0) {
     await db.collection('product_filters').insertMany(DEFAULT_PRODUCT_FILTERS);
+  }
+}
+
+async function syncCategoryAndCollectionFilterOptions(db) {
+  if (!db) return;
+  try {
+    // 1. Sync Categories from categories collection into product_filters
+    const dbCats = await db.collection('categories').find({}).sort({ order: 1, createdAt: 1 }).toArray();
+    const existingCatGroup = await db.collection('product_filters').findOne({ key: 'category' });
+    if (existingCatGroup) {
+      const existingOpts = existingCatGroup.options || [];
+      const existingOptsByVal = new Map(existingOpts.map(o => [String(o.value || o.name).toLowerCase(), o]));
+      const existingOptsById = new Map(existingOpts.filter(o => o.id).map(o => [String(o.id), o]));
+
+      const catOptions = dbCats.map((c, idx) => {
+        const val = c.slug || c.name.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '-');
+        const existingOpt = existingOptsById.get(String(c.id)) || existingOptsByVal.get(val.toLowerCase()) || existingOptsByVal.get(c.name.toLowerCase());
+        const isCatActive = c.active !== false && c.enabled !== false;
+        const isOptEnabled = existingOpt ? (existingOpt.enabled !== false && isCatActive) : isCatActive;
+
+        return {
+          id: c.id || existingOpt?.id || `opt-cat-${val}`,
+          name: c.name,
+          value: val,
+          enabled: isOptEnabled,
+          order: existingOpt?.order !== undefined ? existingOpt.order : (c.order !== undefined ? Number(c.order) : idx)
+        };
+      });
+
+      await db.collection('product_filters').updateOne(
+        { key: 'category' },
+        { $set: { options: catOptions, updatedAt: new Date() } }
+      );
+    }
+
+    // 2. Sync Collections from collections collection into product_filters
+    const dbCols = await db.collection('collections').find({}).sort({ order: 1, createdAt: 1 }).toArray();
+    const existingColGroup = await db.collection('product_filters').findOne({ key: 'collection' });
+    if (existingColGroup) {
+      const existingOpts = existingColGroup.options || [];
+      const existingOptsByVal = new Map(existingOpts.map(o => [String(o.value || o.name).toLowerCase(), o]));
+      const existingOptsById = new Map(existingOpts.filter(o => o.id).map(o => [String(o.id), o]));
+
+      const colOptions = dbCols.map((c, idx) => {
+        const val = c.slug || c.name.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '-');
+        const existingOpt = existingOptsById.get(String(c.id)) || existingOptsByVal.get(val.toLowerCase()) || existingOptsByVal.get(c.name.toLowerCase());
+        const isColActive = c.active !== false && c.enabled !== false;
+        const isOptEnabled = existingOpt ? (existingOpt.enabled !== false && isColActive) : isColActive;
+
+        return {
+          id: c.id || existingOpt?.id || `opt-col-${val}`,
+          name: c.name,
+          value: val,
+          enabled: isOptEnabled,
+          order: existingOpt?.order !== undefined ? existingOpt.order : (c.order !== undefined ? Number(c.order) : idx)
+        };
+      });
+
+      await db.collection('product_filters').updateOne(
+        { key: 'collection' },
+        { $set: { options: colOptions, updatedAt: new Date() } }
+      );
+    }
+  } catch (err) {
+    console.error('Failed to syncCategoryAndCollectionFilterOptions:', err);
   }
 }
 
@@ -1037,8 +1167,8 @@ async function handleRoute(request, { params }) {
       };
       return ok({ product: clean(p), related: related.map(clean), zoomSettings: mergedZoom })
     }
-    if (route === '/categories' && method === 'GET') { const c = cacheGet('cats'); if (c) return ok(c); const list = await db.collection('categories').find({}).toArray(); const r = { categories: list.map(clean) }; cacheSet('cats', r, 300000); return ok(r) }
-    if (route === '/collections' && method === 'GET') { const c = cacheGet('cols'); if (c) return ok(c); const list = await db.collection('collections').find({}).toArray(); const r = { collections: list.map(clean) }; cacheSet('cols', r, 300000); return ok(r) }
+    if (route === '/categories' && method === 'GET') { const c = cacheGet('cats'); if (c) return ok(c); const list = await db.collection('categories').find({}).toArray(); const r = { categories: list.map(clean) }; cacheSet('cats', r, 3000); return ok(r) }
+    if (route === '/collections' && method === 'GET') { const c = cacheGet('cols'); if (c) return ok(c); const list = await db.collection('collections').find({}).toArray(); const r = { collections: list.map(clean) }; cacheSet('cols', r, 3000); return ok(r) }
     if (route === '/banners' && method === 'GET') {
       const c = cacheGet('bans');
       if (c) return ok(c);
@@ -1128,9 +1258,10 @@ async function handleRoute(request, { params }) {
       const c = cacheGet('product_filters');
       if (c) return ok(c);
       await seedFiltersIfEmpty(db);
+      await syncCategoryAndCollectionFilterOptions(db);
       const list = await db.collection('product_filters').find({}).sort({ order: 1 }).toArray();
       const r = { groups: list.map(clean) };
-      cacheSet('product_filters', r, 300000);
+      cacheSet('product_filters', r, 5000);
       return ok(r);
     }
 
@@ -3922,11 +4053,13 @@ async function handleRoute(request, { params }) {
 
       if (sub.startsWith('product-filters')) {
         _cache.delete('product_filters');
+        cacheBust('product_filters');
         const parts = sub.split('/');
 
         // GET /api/admin/product-filters
         if (parts.length === 1 && method === 'GET') {
           await seedFiltersIfEmpty(db);
+          await syncCategoryAndCollectionFilterOptions(db);
           const list = await db.collection('product_filters').find({}).sort({ order: 1 }).toArray();
           return ok({ groups: list.map(clean) });
         }
@@ -3967,6 +4100,8 @@ async function handleRoute(request, { params }) {
           if (body.groupId && Array.isArray(body.options)) {
             await db.collection('product_filters').updateOne({ id: body.groupId }, { $set: { options: body.options } });
           }
+          _cache.delete('product_filters');
+          cacheBust('product_filters');
           return ok({ ok: true });
         }
 
@@ -3985,6 +4120,8 @@ async function handleRoute(request, { params }) {
           updateDoc.updatedAt = new Date();
 
           await db.collection('product_filters').updateOne({ id }, { $set: updateDoc });
+          _cache.delete('product_filters');
+          cacheBust('product_filters');
           const updated = await db.collection('product_filters').findOne({ id });
           return ok({ group: clean(updated) });
         }
@@ -3993,6 +4130,8 @@ async function handleRoute(request, { params }) {
         if (parts.length === 2 && method === 'DELETE') {
           const id = parts[1];
           await db.collection('product_filters').deleteOne({ id });
+          _cache.delete('product_filters');
+          cacheBust('product_filters');
           return ok({ ok: true });
         }
 
@@ -4017,6 +4156,48 @@ async function handleRoute(request, { params }) {
           };
 
           await db.collection('product_filters').updateOne({ id }, { $push: { options: newOpt } });
+
+          // If added to Category filter group, also ensure it exists in categories collection
+          if (group.key === 'category') {
+            const catSlug = val.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+            const catExists = await db.collection('categories').findOne({ $or: [{ slug: catSlug }, { name: body.name.trim() }] });
+            if (!catExists) {
+              await db.collection('categories').insertOne({
+                id: newOpt.id,
+                name: body.name.trim(),
+                slug: catSlug,
+                img: 'https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?crop=entropy&cs=srgb&fm=jpg&q=85',
+                active: newOpt.enabled,
+                enabled: newOpt.enabled,
+                order: newOpt.order,
+                createdAt: new Date()
+              });
+            }
+            _cache.delete('cats');
+            cacheBust('cats');
+          }
+
+          // If added to Collection filter group, also ensure it exists in collections collection
+          if (group.key === 'collection') {
+            const colSlug = val.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+            const colExists = await db.collection('collections').findOne({ $or: [{ slug: colSlug }, { name: body.name.trim() }] });
+            if (!colExists) {
+              await db.collection('collections').insertOne({
+                id: newOpt.id,
+                name: body.name.trim(),
+                slug: colSlug,
+                active: newOpt.enabled,
+                enabled: newOpt.enabled,
+                order: newOpt.order,
+                createdAt: new Date()
+              });
+            }
+            _cache.delete('cols');
+            cacheBust('cols');
+          }
+
+          _cache.delete('product_filters');
+          cacheBust('product_filters');
           return ok({ option: newOpt });
         }
 
@@ -4029,20 +4210,57 @@ async function handleRoute(request, { params }) {
           const group = await db.collection('product_filters').findOne({ id });
           if (!group) return err('Filter group not found', 404);
 
+          let updatedOpt = null;
           const updatedOptions = (group.options || []).map(opt => {
             if (opt.id === optionId) {
-              return {
+              updatedOpt = {
                 ...opt,
                 name: body.name !== undefined ? body.name.trim() : opt.name,
                 value: body.value !== undefined ? body.value.trim() : opt.value,
                 enabled: body.enabled !== undefined ? !!body.enabled : opt.enabled,
                 order: body.order !== undefined ? parseInt(body.order) : opt.order
               };
+              return updatedOpt;
             }
             return opt;
           });
 
           await db.collection('product_filters').updateOne({ id }, { $set: { options: updatedOptions } });
+
+          // If this is Category filter, sync enabled/name changes with categories collection
+          if (group.key === 'category' && updatedOpt) {
+            const catQuery = { $or: [{ id: optionId }, { slug: updatedOpt.value }, { name: updatedOpt.name }] };
+            const catUpdate = {};
+            if (body.enabled !== undefined) {
+              catUpdate.active = !!body.enabled;
+              catUpdate.enabled = !!body.enabled;
+            }
+            if (body.name !== undefined) catUpdate.name = body.name.trim();
+            if (Object.keys(catUpdate).length > 0) {
+              await db.collection('categories').updateMany(catQuery, { $set: catUpdate });
+            }
+            _cache.delete('cats');
+            cacheBust('cats');
+          }
+
+          // If this is Collection filter, sync enabled/name changes with collections collection
+          if (group.key === 'collection' && updatedOpt) {
+            const colQuery = { $or: [{ id: optionId }, { slug: updatedOpt.value }, { name: updatedOpt.name }] };
+            const colUpdate = {};
+            if (body.enabled !== undefined) {
+              colUpdate.active = !!body.enabled;
+              colUpdate.enabled = !!body.enabled;
+            }
+            if (body.name !== undefined) colUpdate.name = body.name.trim();
+            if (Object.keys(colUpdate).length > 0) {
+              await db.collection('collections').updateMany(colQuery, { $set: colUpdate });
+            }
+            _cache.delete('cols');
+            cacheBust('cols');
+          }
+
+          _cache.delete('product_filters');
+          cacheBust('product_filters');
           return ok({ ok: true });
         }
 
@@ -4050,7 +4268,27 @@ async function handleRoute(request, { params }) {
         if (parts.length === 4 && parts[2] === 'options' && method === 'DELETE') {
           const id = parts[1];
           const optionId = parts[3];
+          const group = await db.collection('product_filters').findOne({ id });
+          const targetOpt = (group?.options || []).find(o => o.id === optionId);
+
           await db.collection('product_filters').updateOne({ id }, { $pull: { options: { id: optionId } } });
+
+          // If category group, also remove or deactivate from categories collection
+          if (group?.key === 'category' && targetOpt) {
+            await db.collection('categories').deleteMany({ $or: [{ id: optionId }, { slug: targetOpt.value }] });
+            _cache.delete('cats');
+            cacheBust('cats');
+          }
+
+          // If collection group, also remove or deactivate from collections collection
+          if (group?.key === 'collection' && targetOpt) {
+            await db.collection('collections').deleteMany({ $or: [{ id: optionId }, { slug: targetOpt.value }] });
+            _cache.delete('cols');
+            cacheBust('cols');
+          }
+
+          _cache.delete('product_filters');
+          cacheBust('product_filters');
           return ok({ ok: true });
         }
       }
@@ -5001,7 +5239,13 @@ async function handleRoute(request, { params }) {
           updateData.images = b.images.split('\n').map(s => s.trim()).filter(Boolean);
         }
 
+        // Ratings & reviews are computed dynamically from actual reviews
+        delete updateData.rating;
+        delete updateData.reviews;
+        delete updateData.breakdown;
+
         await db.collection('products').updateOne({ id }, { $set: updateData });
+        await recalculateProductRating(db, id);
         cacheBust('products:');
         _cache.delete('admin_products');
         _cache.delete('admin_dashboard');
@@ -5071,6 +5315,13 @@ async function handleRoute(request, { params }) {
             throw dbErr;
           }
           _cache.delete('admin_' + col);
+          if (col === 'categories' || col === 'collections') {
+            await syncCategoryAndCollectionFilterOptions(db);
+            _cache.delete('product_filters');
+            cacheBust('product_filters');
+            _cache.delete('cats');
+            _cache.delete('cols');
+          }
           return ok({ item: clean(doc) });
         }
         if (sub.startsWith(col + '/') && method === 'PUT') {
@@ -5115,6 +5366,13 @@ async function handleRoute(request, { params }) {
             throw dbErr;
           }
           _cache.delete('admin_' + col);
+          if (col === 'categories' || col === 'collections') {
+            await syncCategoryAndCollectionFilterOptions(db);
+            _cache.delete('product_filters');
+            cacheBust('product_filters');
+            _cache.delete('cats');
+            _cache.delete('cols');
+          }
           const up = await db.collection(col).findOne({ id });
           return ok({ item: clean(up) });
         }
@@ -5165,6 +5423,13 @@ async function handleRoute(request, { params }) {
             }
           }
           await db.collection(col).deleteOne({ id });
+          if (col === 'categories' || col === 'collections') {
+            await syncCategoryAndCollectionFilterOptions(db);
+            _cache.delete('product_filters');
+            cacheBust('product_filters');
+            _cache.delete('cats');
+            _cache.delete('cols');
+          }
           return ok({ ok: true });
         }
       }

@@ -9,6 +9,7 @@ import {
   Upload, Camera
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatRating } from '@/lib/products';
 
 export default function AdminReviewsPage() {
   const [reviews, setReviews] = useState([]);
@@ -819,7 +820,7 @@ export default function AdminReviewsPage() {
                             className={star <= r.rating ? 'fill-[#D4AF37] stroke-[#D4AF37]' : 'text-neutral-300'}
                           />
                         ))}
-                        <span className="font-bold ml-1 text-neutral-700">{r.rating}.0 / 5</span>
+                        <span className="font-bold ml-1 text-neutral-700">{formatRating(r.rating)} / 5.0</span>
                       </div>
                       <span className="text-neutral-300">•</span>
                       <Link
@@ -1021,7 +1022,7 @@ export default function AdminReviewsPage() {
                       />
                     </button>
                   ))}
-                  <span className="text-sm font-semibold text-neutral-700 ml-2">{form.rating} / 5</span>
+                  <span className="text-sm font-semibold text-neutral-700 ml-2">{formatRating(form.rating)} / 5.0</span>
                 </div>
               </div>
 
@@ -1244,7 +1245,7 @@ export default function AdminReviewsPage() {
                 {[1, 2, 3, 4, 5].map(s => (
                   <Star key={s} size={12} className={s <= replyingReview.rating ? 'fill-[#D4AF37] stroke-[#D4AF37]' : 'text-neutral-300'} />
                 ))}
-                <span className="text-neutral-700 font-semibold ml-1">{replyingReview.rating}.0 / 5</span>
+                <span className="text-neutral-700 font-semibold ml-1">{formatRating(replyingReview.rating)} / 5.0</span>
               </div>
               {replyingReview.title && <div className="font-semibold text-neutral-900">{replyingReview.title}</div>}
               <p className="text-neutral-600 italic leading-relaxed">&ldquo;{replyingReview.comment}&rdquo;</p>

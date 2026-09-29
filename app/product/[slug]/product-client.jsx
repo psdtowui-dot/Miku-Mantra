@@ -5,7 +5,7 @@ import Link from 'next/link';
 import ProductCard from '@/components/site/product-card';
 import RecentlyViewed from '@/components/site/recently-viewed';
 import CompareBar from '@/components/site/compare-bar';
-import { getRelated, formatINR, getNormalizedSpecs, getNormalizedBenefits } from '@/lib/products';
+import { getRelated, formatINR, formatRating, getNormalizedSpecs, getNormalizedBenefits } from '@/lib/products';
 import { useCart, useWishlist } from '@/lib/cart-store';
 import { useCompare, useRecentlyViewed } from '@/lib/browsing';
 import { Heart, Share2, Truck, Minus, Plus, ChevronRight, ChevronDown, ChevronUp, Star, MapPin, Loader2, GitCompare, ShieldCheck } from 'lucide-react';
@@ -155,7 +155,7 @@ export default function ProductClient({ initialProduct, slug, siteSettings }) {
               <div className="flex items-center gap-1 text-xs sm:text-sm">
                 <Star size={14} className={(reviewData.totalReviews > 0 || p.rating > 0) ? "fill-[#D4AF37] stroke-[#D4AF37]" : "text-neutral-300 stroke-neutral-400"} />
                 <span className="font-medium">
-                  {reviewData.totalReviews > 0 ? reviewData.averageRating.toFixed(1) : (p.rating > 0 ? p.rating : '0.0')}
+                  {reviewData.totalReviews > 0 ? formatRating(reviewData.averageRating) : formatRating(p.rating)}
                 </span>
                 <span className="text-neutral-500">
                   ({reviewData.totalReviews > 0 ? reviewData.totalReviews : (p.reviews || 0)} {(reviewData.totalReviews || p.reviews) === 1 ? 'review' : 'reviews'})
@@ -290,7 +290,7 @@ export default function ProductClient({ initialProduct, slug, siteSettings }) {
                       <div className="sm:col-span-5 text-center sm:text-left space-y-2 sm:border-r border-[#E8E8E8] sm:pr-8">
                         <div className="flex items-baseline justify-center sm:justify-start gap-2">
                           <span className="text-4xl sm:text-5xl font-display font-light text-[#1A1A1A]">
-                            {reviewData.averageRating > 0 ? reviewData.averageRating.toFixed(1) : '0.0'}
+                            {formatRating(reviewData.averageRating)}
                           </span>
                           <span className="text-sm text-neutral-400 font-light">/ 5.0</span>
                         </div>

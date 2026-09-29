@@ -1,17 +1,15 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { formatINR, getNormalizedSpecs, getNormalizedBenefits } from '@/lib/products';
+import { formatINR, formatRating, getNormalizedSpecs, getNormalizedBenefits } from '@/lib/products';
 import {
   Plus, Pencil, Trash2, X, Loader2, Search, Upload,
   Link as LinkIcon, Trash, Check, ArrowLeft, ArrowRight,
-  FileText, Sparkles, Settings, Image as ImageIcon, Eye, Award,
-  Copy, FolderPlus, Layers, Tag, CheckSquare, AlertCircle, ZoomIn
+  FileText, Sparkles, Settings, Image as ImageIcon, Eye, Award, Star
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import SpecificationsBuilder from '@/components/ui/specifications-builder';
 import BenefitsBuilder from '@/components/ui/benefits-builder';
-import ProductJsonImporter from '@/components/admin/product-json-importer';
 
 const EMPTY = {
   name: '', slug: '', sku: '', category: 'gold', collection: 'trending',
@@ -21,8 +19,7 @@ const EMPTY = {
   featured: false, bestseller: false, newArrival: false,
   seoTitle: '', seoDescription: '',
   specifications: [],
-  productBenefits: [],
-  zoomMode: 'default'
+  productBenefits: []
 };
 
 export default function AdminProducts() {
@@ -30,7 +27,6 @@ export default function AdminProducts() {
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState(null);
-  const [showImporter, setShowImporter] = useState(false);
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('basic');
@@ -39,16 +35,6 @@ export default function AdminProducts() {
 
   const [categories, setCategories] = useState([]);
   const [collections, setCollections] = useState([]);
-
-  // Product Selection & Bulk Actions
-  const [selectedIds, setSelectedIds] = useState([]);
-  const [bulkAction, setBulkAction] = useState(null); // 'delete' | 'duplicate' | 'category' | 'collection' | 'stock' | 'flags' | null
-  const [bulkSubmitting, setBulkSubmitting] = useState(false);
-  const [bulkCategoryVal, setBulkCategoryVal] = useState('');
-  const [bulkCollectionVal, setBulkCollectionVal] = useState('');
-  const [bulkStockVal, setBulkStockVal] = useState(10);
-  const [bulkStockMode, setBulkStockMode] = useState('add'); // 'add' | 'set'
-  const [bulkFlagsVal, setBulkFlagsVal] = useState({ featured: false, bestseller: false, newArrival: false });
 
   const load = async () => {
     try {
@@ -262,9 +248,7 @@ export default function AdminProducts() {
       size: sizeVal || form.size || '',
       price: +form.price,
       mrp: +form.mrp || +form.price,
-      stock: +form.stock || 0,
-      rating: Number.isFinite(+form.rating) ? +form.rating : 0,
-      reviews: +form.reviews || 0
+      stock: +form.stock || 0
     };
     const url = editing === 'new' ? '/api/admin/products' : `/api/admin/products/${editing}`;
     const method = editing === 'new' ? 'POST' : 'PUT';
@@ -296,198 +280,6 @@ export default function AdminProducts() {
 
   const filtered = q ? list.filter(p => p.name.toLowerCase().includes(q.toLowerCase()) || p.sku?.toLowerCase().includes(q.toLowerCase())) : list;
 
-  const isAllFilteredSelected = filtered.length > 0 && filtered.every(p => selectedIds.includes(p.id));
-  const isSomeFilteredSelected = filtered.some(p => selectedIds.includes(p.id)) && !isAllFilteredSelected;
-
-  const handleToggleSelectAll = () => {
-    if (isAllFilteredSelected) {
-      const filteredSet = new Set(filtered.map(p => p.id));
-      setSelectedIds(prev => prev.filter(id => !filteredSet.has(id)));
-    } else {
-      const next = new Set(selectedIds);
-      filtered.forEach(p => next.add(p.id));
-      setSelectedIds(Array.from(next));
-    }
-  };
-
-  const handleToggleRow = (id) => {
-    setSelectedIds(prev =>
-      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
-    );
-  };
-
-  const executeBulkDelete = async () => {
-    if (!selectedIds.length) return;
-    setBulkSubmitting(true);
-    try {
-      const r = await fetch('/api/admin/products/bulk-delete', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: selectedIds })
-      });
-      if (r.ok) {
-        const d = await r.json();
-        toast.success(`Deleted ${d.deletedCount || selectedIds.length} product(s)`);
-        setSelectedIds([]);
-        setBulkAction(null);
-        load();
-      } else {
-        const d = await r.json().catch(() => ({}));
-        toast.error(d.error || 'Failed to delete selected products');
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error('Network error during bulk delete');
-    } finally {
-      setBulkSubmitting(false);
-    }
-  };
-
-  const executeBulkDuplicate = async () => {
-    if (!selectedIds.length) return;
-    setBulkSubmitting(true);
-    try {
-      const r = await fetch('/api/admin/products/bulk-action', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'duplicate', ids: selectedIds })
-      });
-      if (r.ok) {
-        const d = await r.json();
-        toast.success(`Duplicated ${d.count || selectedIds.length} product(s) as new items`);
-        setSelectedIds([]);
-        setBulkAction(null);
-        load();
-      } else {
-        const d = await r.json().catch(() => ({}));
-        toast.error(d.error || 'Failed to duplicate selected products');
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error('Network error during duplicate action');
-    } finally {
-      setBulkSubmitting(false);
-    }
-  };
-
-  const executeBulkCategory = async () => {
-    if (!selectedIds.length || !bulkCategoryVal) return;
-    setBulkSubmitting(true);
-    try {
-      const r = await fetch('/api/admin/products/bulk-action', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'update_category', ids: selectedIds, data: { category: bulkCategoryVal } })
-      });
-      if (r.ok) {
-        const d = await r.json();
-        toast.success(`Updated category for ${d.count || selectedIds.length} product(s)`);
-        setSelectedIds([]);
-        setBulkAction(null);
-        load();
-      } else {
-        const d = await r.json().catch(() => ({}));
-        toast.error(d.error || 'Failed to update category');
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error('Network error during category update');
-    } finally {
-      setBulkSubmitting(false);
-    }
-  };
-
-  const executeBulkCollection = async () => {
-    if (!selectedIds.length || !bulkCollectionVal) return;
-    setBulkSubmitting(true);
-    try {
-      const r = await fetch('/api/admin/products/bulk-action', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'update_collection', ids: selectedIds, data: { collection: bulkCollectionVal } })
-      });
-      if (r.ok) {
-        const d = await r.json();
-        toast.success(`Updated collection for ${d.count || selectedIds.length} product(s)`);
-        setSelectedIds([]);
-        setBulkAction(null);
-        load();
-      } else {
-        const d = await r.json().catch(() => ({}));
-        toast.error(d.error || 'Failed to update collection');
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error('Network error during collection update');
-    } finally {
-      setBulkSubmitting(false);
-    }
-  };
-
-  const executeBulkStock = async () => {
-    if (!selectedIds.length) return;
-    setBulkSubmitting(true);
-    try {
-      const r = await fetch('/api/admin/products/bulk-action', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'add_stock',
-          ids: selectedIds,
-          data: { quantity: Number(bulkStockVal) || 0, isIncrement: bulkStockMode === 'add' }
-        })
-      });
-      if (r.ok) {
-        const d = await r.json();
-        toast.success(`Stock updated for ${d.count || selectedIds.length} product(s)`);
-        setSelectedIds([]);
-        setBulkAction(null);
-        load();
-      } else {
-        const d = await r.json().catch(() => ({}));
-        toast.error(d.error || 'Failed to update stock');
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error('Network error during stock update');
-    } finally {
-      setBulkSubmitting(false);
-    }
-  };
-
-  const executeBulkFlags = async () => {
-    if (!selectedIds.length) return;
-    setBulkSubmitting(true);
-    try {
-      const r = await fetch('/api/admin/products/bulk-action', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'set_flags', ids: selectedIds, data: bulkFlagsVal })
-      });
-      if (r.ok) {
-        const d = await r.json();
-        toast.success(`Flags updated for ${d.count || selectedIds.length} product(s)`);
-        setSelectedIds([]);
-        setBulkAction(null);
-        load();
-      } else {
-        const d = await r.json().catch(() => ({}));
-        toast.error(d.error || 'Failed to set flags');
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error('Network error during flags update');
-    } finally {
-      setBulkSubmitting(false);
-    }
-  };
-
   return (
     <div className="pb-10">
       <div className="flex justify-between items-start xs:items-center flex-col xs:flex-row gap-3">
@@ -495,20 +287,12 @@ export default function AdminProducts() {
           <div className="font-display text-2xl xs:text-3xl sm:text-4xl text-[#1A1A1A] font-light">Products</div>
           <div className="gold-line w-12 mt-2" />
         </div>
-        <div className="flex items-center gap-2.5 w-full xs:w-auto">
-          <button
-            onClick={() => setShowImporter(true)}
-            className="flex items-center justify-center gap-2 bg-white text-neutral-800 border border-neutral-300 px-4 py-2.5 text-[11px] tracking-widest uppercase rounded-md hover:border-[#9C6B30] hover:text-[#9C6B30] transition-colors font-semibold shadow-2xs w-full xs:w-auto cursor-pointer"
-          >
-            <Upload size={14} className="text-[#9C6B30]" /> Import JSON / JS
-          </button>
-          <button
-            onClick={openNew}
-            className="flex items-center justify-center gap-2 bg-[#1A1A1A] text-white px-5 py-2.5 text-[11px] tracking-widest uppercase rounded-md hover:bg-[#9C6B30] transition-colors font-semibold w-full xs:w-auto cursor-pointer"
-          >
-            <Plus size={14} /> Add Product
-          </button>
-        </div>
+        <button
+          onClick={openNew}
+          className="flex items-center justify-center gap-2 bg-[#1A1A1A] text-white px-5 py-2.5 text-[11px] tracking-widest uppercase rounded-md hover:bg-[#9C6B30] transition-colors font-semibold w-full xs:w-auto"
+        >
+          <Plus size={14} /> Add Product
+        </button>
       </div>
 
       <div className="mt-6 relative max-w-md">
@@ -521,121 +305,6 @@ export default function AdminProducts() {
         />
       </div>
 
-      {/* Bulk Selection Bar */}
-      <AnimatePresence>
-        {selectedIds.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            className="mt-4 bg-[#FAF6EF] border border-[#9C6B30]/30 rounded-xl p-3 sm:p-4 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-3"
-          >
-            <div className="flex items-center gap-2.5 flex-wrap">
-              <span className="flex items-center justify-center min-w-[22px] h-[22px] px-1.5 rounded-full bg-[#9C6B30] text-white text-[11px] font-bold">
-                {selectedIds.length}
-              </span>
-              <span className="text-xs sm:text-sm font-medium text-neutral-800">
-                <strong className="text-[#9C6B30]">{selectedIds.length}</strong> {selectedIds.length === 1 ? 'product' : 'products'} selected
-              </span>
-              <span className="text-neutral-300">|</span>
-              <button
-                type="button"
-                onClick={handleToggleSelectAll}
-                className="text-xs text-[#9C6B30] hover:underline font-medium cursor-pointer"
-              >
-                {isAllFilteredSelected ? 'Deselect visible' : `Select all visible (${filtered.length})`}
-              </button>
-              {list.length > filtered.length && (
-                <button
-                  type="button"
-                  onClick={() => setSelectedIds(list.map(p => p.id))}
-                  className="text-xs text-[#9C6B30] hover:underline font-medium cursor-pointer"
-                >
-                  Select all in store ({list.length})
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => setSelectedIds([])}
-                className="text-xs text-neutral-500 hover:text-neutral-800 underline cursor-pointer ml-1"
-              >
-                Clear
-              </button>
-            </div>
-
-            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap w-full md:w-auto justify-start md:justify-end">
-              {/* Bulk Delete */}
-              <button
-                type="button"
-                onClick={() => setBulkAction('delete')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-red-50 text-red-700 border border-red-200 hover:bg-red-600 hover:text-white transition-all cursor-pointer shadow-2xs"
-              >
-                <Trash2 size={13} /> Delete ({selectedIds.length})
-              </button>
-
-              {/* Bulk Duplicate / Add Copies */}
-              <button
-                type="button"
-                onClick={() => setBulkAction('duplicate')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-white text-neutral-700 border border-neutral-200 hover:border-[#9C6B30] hover:text-[#9C6B30] transition-all cursor-pointer shadow-2xs"
-                title="Duplicate selected products as new items"
-              >
-                <Copy size={13} /> Duplicate / Add Copy
-              </button>
-
-              {/* Add to Category */}
-              <button
-                type="button"
-                onClick={() => {
-                  setBulkCategoryVal(categories[0]?.slug || 'gold');
-                  setBulkAction('category');
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-white text-neutral-700 border border-neutral-200 hover:border-[#9C6B30] hover:text-[#9C6B30] transition-all cursor-pointer shadow-2xs"
-              >
-                <FolderPlus size={13} /> Add to Category
-              </button>
-
-              {/* Add to Collection */}
-              <button
-                type="button"
-                onClick={() => {
-                  setBulkCollectionVal(collections[0]?.slug || 'trending');
-                  setBulkAction('collection');
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-white text-neutral-700 border border-neutral-200 hover:border-[#9C6B30] hover:text-[#9C6B30] transition-all cursor-pointer shadow-2xs"
-              >
-                <Layers size={13} /> Add to Collection
-              </button>
-
-              {/* Add Stock */}
-              <button
-                type="button"
-                onClick={() => {
-                  setBulkStockVal(10);
-                  setBulkStockMode('add');
-                  setBulkAction('stock');
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-white text-neutral-700 border border-neutral-200 hover:border-[#9C6B30] hover:text-[#9C6B30] transition-all cursor-pointer shadow-2xs"
-              >
-                <Sparkles size={13} /> Add Stock
-              </button>
-
-              {/* Add Flags */}
-              <button
-                type="button"
-                onClick={() => {
-                  setBulkFlagsVal({ featured: false, bestseller: false, newArrival: false });
-                  setBulkAction('flags');
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-white text-neutral-700 border border-neutral-200 hover:border-[#9C6B30] hover:text-[#9C6B30] transition-all cursor-pointer shadow-2xs"
-              >
-                <Tag size={13} /> Add Flags
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       <div className="mt-6 bg-white rounded-xl border border-neutral-200 overflow-hidden shadow-sm">
         {loading ? (
           <div className="p-12 text-center">
@@ -646,18 +315,6 @@ export default function AdminProducts() {
             <table className="w-full text-xs sm:text-sm">
               <thead className="bg-neutral-50 text-[10px] tracking-widest uppercase text-neutral-500 border-b border-neutral-200">
                 <tr>
-                  <th className="p-3 w-10 text-center">
-                    <input
-                      type="checkbox"
-                      checked={isAllFilteredSelected}
-                      ref={el => {
-                        if (el) el.indeterminate = isSomeFilteredSelected;
-                      }}
-                      onChange={handleToggleSelectAll}
-                      className="w-4 h-4 rounded border-neutral-300 text-[#9C6B30] focus:ring-[#9C6B30] accent-[#9C6B30] cursor-pointer"
-                      title={isAllFilteredSelected ? "Deselect all visible products" : "Select all visible products"}
-                    />
-                  </th>
                   <th className="text-left p-3 min-w-[180px]">Product</th>
                   <th className="text-left p-3 min-w-[100px]">Category</th>
                   <th className="text-right p-3 min-w-[90px]">Price</th>
@@ -667,27 +324,9 @@ export default function AdminProducts() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
-                {filtered.map(p => {
-                  const isSelected = selectedIds.includes(p.id);
-                  return (
-                    <tr
-                      key={p.id}
-                      className={`transition-colors ${
-                        isSelected
-                          ? 'bg-[#FAF6EF]/70 hover:bg-[#FAF6EF]'
-                          : 'hover:bg-neutral-50/50'
-                      }`}
-                    >
-                      <td className="p-3 w-10 text-center" onClick={e => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => handleToggleRow(p.id)}
-                          className="w-4 h-4 rounded border-neutral-300 text-[#9C6B30] focus:ring-[#9C6B30] accent-[#9C6B30] cursor-pointer"
-                          title={`Select ${p.name}`}
-                        />
-                      </td>
-                      <td className="p-3">
+                {filtered.map(p => (
+                  <tr key={p.id} className="hover:bg-neutral-50/50 transition-colors">
+                    <td className="p-3">
                       <div className="flex items-center gap-3">
                         {p.images?.[0] ? (
                           <img src={p.images[0]} className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg object-cover border border-neutral-100 shadow-xs shrink-0" />
@@ -735,7 +374,7 @@ export default function AdminProducts() {
                       </button>
                     </td>
                   </tr>
-                ); })}
+                ))}
               </tbody>
             </table>
           </div>
@@ -949,14 +588,16 @@ export default function AdminProducts() {
                           />
                         </div>
                         <div>
-                          <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold">Mock Rating</label>
-                          <input
-                            type="number"
-                            step="0.1"
-                            value={form.rating}
-                            onChange={e => setForm({ ...form, rating: e.target.value })}
-                            className="w-full mt-1.5 px-3 py-2.5 border border-neutral-200 rounded-lg text-sm bg-white focus:outline-none focus:border-[#9C6B30] focus:ring-1 focus:ring-[#9C6B30] transition-all"
-                          />
+                          <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold">Dynamic Rating</label>
+                          <div className="w-full mt-1.5 px-3 py-2.5 border border-neutral-200 rounded-lg text-sm bg-neutral-50 flex items-center justify-between text-neutral-700">
+                            <span className="font-semibold flex items-center gap-1.5 text-neutral-800">
+                              <Star size={14} className={form.reviews > 0 ? "fill-[#D4AF37] stroke-[#D4AF37]" : "text-neutral-300"} />
+                              {formatRating(form.rating)} / 5.0
+                            </span>
+                            <span className="text-xs text-neutral-500">
+                              {form.reviews || 0} {(form.reviews === 1) ? 'review' : 'reviews'}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1177,38 +818,6 @@ export default function AdminProducts() {
                         </div>
                       </div>
                     </div>
-
-                    <div className="bg-white p-6 rounded-xl border border-neutral-100 shadow-xs space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Product Zoom Override</h4>
-                          <p className="text-[11px] text-neutral-500">Override the store-wide zoom functionality specifically for this product.</p>
-                        </div>
-                        <ZoomIn size={16} className="text-[#9C6B30]" />
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                        {[
-                          { id: 'default', label: 'Store Default', desc: 'Use Site Settings' },
-                          { id: 'side-by-side', label: 'Side Lens Zoom', desc: 'Lens + Flyout Window' },
-                          { id: 'inner', label: 'Inner Zoom', desc: 'In-place Scale' },
-                          { id: 'disabled', label: 'Disabled', desc: 'No Zoom' }
-                        ].map((opt) => (
-                          <button
-                            key={opt.id}
-                            type="button"
-                            onClick={() => setForm({ ...form, zoomMode: opt.id })}
-                            className={`p-3 rounded-lg border text-left transition cursor-pointer ${
-                              (form.zoomMode || 'default') === opt.id
-                                ? 'border-[#9C6B30] bg-[#FAF6EF] ring-1 ring-[#9C6B30]'
-                                : 'border-neutral-200 bg-white hover:border-neutral-300'
-                            }`}
-                          >
-                            <div className="text-xs font-bold text-neutral-900">{opt.label}</div>
-                            <div className="text-[10px] text-neutral-500 mt-0.5">{opt.desc}</div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
                   </div>
                 )}
 
@@ -1280,396 +889,6 @@ export default function AdminProducts() {
                   ) : (
                     'Save Product'
                   )}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* JSON Bulk Importer Modal */}
-      <AnimatePresence>
-        {showImporter && (
-          <ProductJsonImporter
-            isOpen={showImporter}
-            onClose={() => setShowImporter(false)}
-            existingProducts={list}
-            onImportSuccess={() => {
-              load();
-            }}
-          />
-        )}
-      </AnimatePresence>
-
-      {/* Bulk Delete Modal */}
-      <AnimatePresence>
-        {bulkAction === 'delete' && (
-          <div className="fixed inset-0 bg-[#1A1A1A]/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-xl shadow-2xl border border-neutral-200 max-w-md w-full p-5 sm:p-6"
-            >
-              <div className="flex items-center gap-3 text-red-600 mb-4">
-                <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
-                  <Trash2 size={20} />
-                </div>
-                <div>
-                  <h3 className="font-display font-semibold text-lg text-neutral-900">Delete {selectedIds.length} Products?</h3>
-                  <p className="text-xs text-neutral-500">This action cannot be undone.</p>
-                </div>
-              </div>
-              <p className="text-xs text-neutral-600 mb-3">
-                The following {selectedIds.length} selected product(s) will be permanently deleted from the store:
-              </p>
-              <div className="max-h-48 overflow-y-auto border border-neutral-200 rounded-lg p-3 bg-neutral-50 mb-5 divide-y divide-neutral-100">
-                {list.filter(p => selectedIds.includes(p.id)).map(p => (
-                  <div key={p.id} className="py-1.5 flex items-center justify-between text-xs">
-                    <span className="font-medium text-neutral-800 truncate mr-2" title={p.name}>{p.name}</span>
-                    <span className="text-neutral-400 font-mono text-[10px] shrink-0">{p.sku || 'No SKU'}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="flex justify-end gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setBulkAction(null)}
-                  disabled={bulkSubmitting}
-                  className="px-4 py-2 border border-neutral-200 rounded-md text-xs font-medium text-neutral-600 hover:bg-neutral-50 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={executeBulkDelete}
-                  disabled={bulkSubmitting}
-                  className="flex items-center gap-2 px-5 py-2 bg-red-600 text-white rounded-md text-xs font-semibold hover:bg-red-700 transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
-                >
-                  {bulkSubmitting && <Loader2 size={13} className="animate-spin" />}
-                  Delete {selectedIds.length} Products
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Bulk Duplicate / Add Copies Modal */}
-      <AnimatePresence>
-        {bulkAction === 'duplicate' && (
-          <div className="fixed inset-0 bg-[#1A1A1A]/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-xl shadow-2xl border border-neutral-200 max-w-md w-full p-5 sm:p-6"
-            >
-              <div className="flex items-center gap-3 text-[#9C6B30] mb-4">
-                <div className="w-10 h-10 rounded-full bg-[#FAF6EF] border border-[#9C6B30]/30 flex items-center justify-center shrink-0">
-                  <Copy size={20} className="text-[#9C6B30]" />
-                </div>
-                <div>
-                  <h3 className="font-display font-semibold text-lg text-neutral-900">Duplicate {selectedIds.length} Products?</h3>
-                  <p className="text-xs text-neutral-500">Add copies of selected items into your catalog.</p>
-                </div>
-              </div>
-              <p className="text-xs text-neutral-600 mb-3">
-                New duplicate products will be created with unique SKUs and slugs:
-              </p>
-              <div className="max-h-48 overflow-y-auto border border-neutral-200 rounded-lg p-3 bg-neutral-50 mb-5 divide-y divide-neutral-100">
-                {list.filter(p => selectedIds.includes(p.id)).map(p => (
-                  <div key={p.id} className="py-1.5 text-xs text-neutral-800 flex items-center justify-between">
-                    <span className="truncate mr-2">{p.name}</span>
-                    <span className="text-[#9C6B30] font-medium shrink-0">→ {p.name} (Copy)</span>
-                  </div>
-                ))}
-              </div>
-              <div className="flex justify-end gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setBulkAction(null)}
-                  disabled={bulkSubmitting}
-                  className="px-4 py-2 border border-neutral-200 rounded-md text-xs font-medium text-neutral-600 hover:bg-neutral-50 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={executeBulkDuplicate}
-                  disabled={bulkSubmitting}
-                  className="flex items-center gap-2 px-5 py-2 bg-[#1A1A1A] text-white rounded-md text-xs font-semibold hover:bg-[#9C6B30] transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
-                >
-                  {bulkSubmitting && <Loader2 size={13} className="animate-spin" />}
-                  Duplicate & Add Products
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Bulk Add to Category Modal */}
-      <AnimatePresence>
-        {bulkAction === 'category' && (
-          <div className="fixed inset-0 bg-[#1A1A1A]/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-xl shadow-2xl border border-neutral-200 max-w-md w-full p-5 sm:p-6"
-            >
-              <div className="flex items-center gap-3 text-[#9C6B30] mb-4">
-                <div className="w-10 h-10 rounded-full bg-[#FAF6EF] border border-[#9C6B30]/30 flex items-center justify-center shrink-0">
-                  <FolderPlus size={20} className="text-[#9C6B30]" />
-                </div>
-                <div>
-                  <h3 className="font-display font-semibold text-lg text-neutral-900">Add to Category</h3>
-                  <p className="text-xs text-neutral-500">Assign {selectedIds.length} selected product(s) to a category.</p>
-                </div>
-              </div>
-              <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold block mb-1.5">
-                Target Category
-              </label>
-              <select
-                value={bulkCategoryVal}
-                onChange={e => setBulkCategoryVal(e.target.value)}
-                className="w-full px-3 py-2 border border-neutral-200 rounded-md text-sm bg-white focus:outline-none focus:border-[#9C6B30] mb-5 capitalize cursor-pointer"
-              >
-                {categories.map(c => (
-                  <option key={c.id || c.slug} value={c.slug}>{c.name}</option>
-                ))}
-              </select>
-              <div className="flex justify-end gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setBulkAction(null)}
-                  disabled={bulkSubmitting}
-                  className="px-4 py-2 border border-neutral-200 rounded-md text-xs font-medium text-neutral-600 hover:bg-neutral-50 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={executeBulkCategory}
-                  disabled={bulkSubmitting}
-                  className="flex items-center gap-2 px-5 py-2 bg-[#1A1A1A] text-white rounded-md text-xs font-semibold hover:bg-[#9C6B30] transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
-                >
-                  {bulkSubmitting && <Loader2 size={13} className="animate-spin" />}
-                  Update Category
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Bulk Add to Collection Modal */}
-      <AnimatePresence>
-        {bulkAction === 'collection' && (
-          <div className="fixed inset-0 bg-[#1A1A1A]/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-xl shadow-2xl border border-neutral-200 max-w-md w-full p-5 sm:p-6"
-            >
-              <div className="flex items-center gap-3 text-[#9C6B30] mb-4">
-                <div className="w-10 h-10 rounded-full bg-[#FAF6EF] border border-[#9C6B30]/30 flex items-center justify-center shrink-0">
-                  <Layers size={20} className="text-[#9C6B30]" />
-                </div>
-                <div>
-                  <h3 className="font-display font-semibold text-lg text-neutral-900">Add to Collection</h3>
-                  <p className="text-xs text-neutral-500">Assign {selectedIds.length} selected product(s) to a collection.</p>
-                </div>
-              </div>
-              <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold block mb-1.5">
-                Target Collection
-              </label>
-              <select
-                value={bulkCollectionVal}
-                onChange={e => setBulkCollectionVal(e.target.value)}
-                className="w-full px-3 py-2 border border-neutral-200 rounded-md text-sm bg-white focus:outline-none focus:border-[#9C6B30] mb-5 capitalize cursor-pointer"
-              >
-                {collections.map(col => (
-                  <option key={col.id || col.slug} value={col.slug}>{col.name}</option>
-                ))}
-              </select>
-              <div className="flex justify-end gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setBulkAction(null)}
-                  disabled={bulkSubmitting}
-                  className="px-4 py-2 border border-neutral-200 rounded-md text-xs font-medium text-neutral-600 hover:bg-neutral-50 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={executeBulkCollection}
-                  disabled={bulkSubmitting}
-                  className="flex items-center gap-2 px-5 py-2 bg-[#1A1A1A] text-white rounded-md text-xs font-semibold hover:bg-[#9C6B30] transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
-                >
-                  {bulkSubmitting && <Loader2 size={13} className="animate-spin" />}
-                  Update Collection
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Bulk Add / Set Stock Modal */}
-      <AnimatePresence>
-        {bulkAction === 'stock' && (
-          <div className="fixed inset-0 bg-[#1A1A1A]/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-xl shadow-2xl border border-neutral-200 max-w-md w-full p-5 sm:p-6"
-            >
-              <div className="flex items-center gap-3 text-[#9C6B30] mb-4">
-                <div className="w-10 h-10 rounded-full bg-[#FAF6EF] border border-[#9C6B30]/30 flex items-center justify-center shrink-0">
-                  <Sparkles size={20} className="text-[#9C6B30]" />
-                </div>
-                <div>
-                  <h3 className="font-display font-semibold text-lg text-neutral-900">Add / Update Stock</h3>
-                  <p className="text-xs text-neutral-500">Adjust stock for {selectedIds.length} selected product(s).</p>
-                </div>
-              </div>
-              <div className="flex gap-2 mb-4">
-                <button
-                  type="button"
-                  onClick={() => setBulkStockMode('add')}
-                  className={`flex-1 py-2 text-xs font-medium rounded-md border transition-all cursor-pointer ${
-                    bulkStockMode === 'add'
-                      ? 'bg-[#FAF6EF] border-[#9C6B30] text-[#9C6B30] font-semibold'
-                      : 'border-neutral-200 text-neutral-600 hover:bg-neutral-50'
-                  }`}
-                >
-                  Add to current (+Qty)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBulkStockMode('set')}
-                  className={`flex-1 py-2 text-xs font-medium rounded-md border transition-all cursor-pointer ${
-                    bulkStockMode === 'set'
-                      ? 'bg-[#FAF6EF] border-[#9C6B30] text-[#9C6B30] font-semibold'
-                      : 'border-neutral-200 text-neutral-600 hover:bg-neutral-50'
-                  }`}
-                >
-                  Set exact stock (=Qty)
-                </button>
-              </div>
-              <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold block mb-1.5">
-                {bulkStockMode === 'add' ? 'Quantity to Add' : 'New Stock Quantity'}
-              </label>
-              <input
-                type="number"
-                min="0"
-                value={bulkStockVal}
-                onChange={e => setBulkStockVal(Math.max(0, parseInt(e.target.value) || 0))}
-                className="w-full px-3 py-2 border border-neutral-200 rounded-md text-sm bg-white focus:outline-none focus:border-[#9C6B30] mb-5"
-              />
-              <div className="flex justify-end gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setBulkAction(null)}
-                  disabled={bulkSubmitting}
-                  className="px-4 py-2 border border-neutral-200 rounded-md text-xs font-medium text-neutral-600 hover:bg-neutral-50 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={executeBulkStock}
-                  disabled={bulkSubmitting}
-                  className="flex items-center gap-2 px-5 py-2 bg-[#1A1A1A] text-white rounded-md text-xs font-semibold hover:bg-[#9C6B30] transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
-                >
-                  {bulkSubmitting && <Loader2 size={13} className="animate-spin" />}
-                  Update Stock
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Bulk Add / Set Flags Modal */}
-      <AnimatePresence>
-        {bulkAction === 'flags' && (
-          <div className="fixed inset-0 bg-[#1A1A1A]/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-xl shadow-2xl border border-neutral-200 max-w-md w-full p-5 sm:p-6"
-            >
-              <div className="flex items-center gap-3 text-[#9C6B30] mb-4">
-                <div className="w-10 h-10 rounded-full bg-[#FAF6EF] border border-[#9C6B30]/30 flex items-center justify-center shrink-0">
-                  <Tag size={20} className="text-[#9C6B30]" />
-                </div>
-                <div>
-                  <h3 className="font-display font-semibold text-lg text-neutral-900">Add / Set Flags</h3>
-                  <p className="text-xs text-neutral-500">Apply promotional badges to {selectedIds.length} selected product(s).</p>
-                </div>
-              </div>
-              <div className="space-y-3 mb-5 border border-neutral-100 rounded-lg p-3 bg-neutral-50">
-                <label className="flex items-center gap-2.5 text-xs text-neutral-800 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={bulkFlagsVal.featured}
-                    onChange={e => setBulkFlagsVal(f => ({ ...f, featured: e.target.checked }))}
-                    className="w-4 h-4 rounded text-[#9C6B30] accent-[#9C6B30] cursor-pointer"
-                  />
-                  <div>
-                    <span className="font-medium">Featured</span>
-                    <p className="text-[11px] text-neutral-400">Highlight product in featured sections</p>
-                  </div>
-                </label>
-                <label className="flex items-center gap-2.5 text-xs text-neutral-800 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={bulkFlagsVal.bestseller}
-                    onChange={e => setBulkFlagsVal(f => ({ ...f, bestseller: e.target.checked }))}
-                    className="w-4 h-4 rounded text-[#9C6B30] accent-[#9C6B30] cursor-pointer"
-                  />
-                  <div>
-                    <span className="font-medium">Best Seller</span>
-                    <p className="text-[11px] text-neutral-400">Mark with Best Seller badge</p>
-                  </div>
-                </label>
-                <label className="flex items-center gap-2.5 text-xs text-neutral-800 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={bulkFlagsVal.newArrival}
-                    onChange={e => setBulkFlagsVal(f => ({ ...f, newArrival: e.target.checked }))}
-                    className="w-4 h-4 rounded text-[#9C6B30] accent-[#9C6B30] cursor-pointer"
-                  />
-                  <div>
-                    <span className="font-medium">New Arrival</span>
-                    <p className="text-[11px] text-neutral-400">Show in new arrivals and latest trends</p>
-                  </div>
-                </label>
-              </div>
-              <div className="flex justify-end gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setBulkAction(null)}
-                  disabled={bulkSubmitting}
-                  className="px-4 py-2 border border-neutral-200 rounded-md text-xs font-medium text-neutral-600 hover:bg-neutral-50 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={executeBulkFlags}
-                  disabled={bulkSubmitting}
-                  className="flex items-center gap-2 px-5 py-2 bg-[#1A1A1A] text-white rounded-md text-xs font-semibold hover:bg-[#9C6B30] transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
-                >
-                  {bulkSubmitting && <Loader2 size={13} className="animate-spin" />}
-                  Apply Flags
                 </button>
               </div>
             </motion.div>
