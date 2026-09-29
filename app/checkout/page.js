@@ -6,7 +6,7 @@ import { useCart } from '@/lib/cart-store';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { formatINR } from '@/lib/products';
 import { toast } from 'sonner';
-import { Loader2, ShieldCheck, Truck, Lock, MapPin, Wallet, ChevronRight, CreditCard } from 'lucide-react';
+import { Loader2, ShieldCheck, Truck, Lock, MapPin, Wallet, ChevronRight, CreditCard, BookmarkCheck, Plus, Check } from 'lucide-react';
 
 export default function CheckoutPage() {
   const { items, subtotal, clear, hydrated } = useCart();
@@ -22,6 +22,9 @@ export default function CheckoutPage() {
   const [coupon, setCoupon] = useState(null);
   const [gift, setGift] = useState(false);
   const [addrErrors, setAddrErrors] = useState({ fullName: '', phone: '', line1: '', city: '', state: '', pincode: '' });
+  const [savingAddr, setSavingAddr] = useState(false);
+  const [isDefaultAddr, setIsDefaultAddr] = useState(false);
+  const [saveForFuture, setSaveForFuture] = useState(true);
 
   const [shippingConfig, setShippingConfig] = useState({
     freeShippingEnabled: true,
@@ -108,17 +111,159 @@ export default function CheckoutPage() {
     return !errText;
   };
 
-  const handleContinueAddress = () => {
+  async function loadAddr() {
+    try {
+      const r = await authFetch('/api/addresses');
+      const d = await r.json();
+      if (r.ok && Array.isArray(d.addresses)) {
+        setSavedAddresses(d.addresses);
+        if (d.addresses.length > 0) {
+          const current = selectedAddrId
+            ? d.addresses.find(a => a.id === selectedAddrId)
+            : (d.addresses.find(a => a.isDefault) || d.addresses[0]);
+          if (current && !selectedAddrId) {
+            setSelectedAddrId(current.id);
+            setAddr({
+              fullName: current.fullName || '',
+              phone: current.phone || '',
+              line1: current.line1 || '',
+              line2: current.line2 || '',
+              city: current.city || '',
+              state: current.state || '',
+              pincode: current.pincode || ''
+            });
+            setIsDefaultAddr(Boolean(current.isDefault));
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load addresses:', e);
+    }
+  }
+
+  function useSavedAddr(a) {
+    setSelectedAddrId(a.id);
+    setAddr({
+      fullName: a.fullName || '',
+      phone: a.phone || '',
+      line1: a.line1 || '',
+      line2: a.line2 || '',
+      city: a.city || '',
+      state: a.state || '',
+      pincode: a.pincode || ''
+    });
+    setIsDefaultAddr(Boolean(a.isDefault));
+    setAddrErrors({ fullName: '', phone: '', line1: '', city: '', state: '', pincode: '' });
+  }
+
+  function handleAddNewAddress() {
+    setSelectedAddrId('');
+    setAddr({
+      fullName: user?.name || '',
+      phone: user?.phone || '',
+      line1: '',
+      line2: '',
+      city: '',
+      state: '',
+      pincode: ''
+    });
+    setIsDefaultAddr(false);
+    setAddrErrors({ fullName: '', phone: '', line1: '', city: '', state: '', pincode: '' });
+  }
+
+  const handleSaveAddress = async (advanceToPayment = false) => {
     const fields = ['fullName', 'phone', 'line1', 'city', 'state', 'pincode'];
     let valid = true;
     fields.forEach(f => {
       const isFValid = validateAddressField(f, addr[f]);
       if (!isFValid) valid = false;
     });
-    if (valid) {
-      setStep('payment');
-    } else {
+    if (!valid) {
+      toast.error('Please fix the errors in your shipping address.');
+      return false;
+    }
+
+    const digits = (addr.phone || '').toString().replace(/[^0-9]/g, '');
+    const mobile10 = digits.startsWith('91') && digits.length === 12 ? digits.slice(2) : digits;
+    if (!mobile10 || mobile10.length !== 10) {
+      validateAddressField('phone', '');
+      toast.error('Please enter a valid 10-digit mobile number.');
+      return false;
+    }
+    const cleanPhone = `+91${mobile10}`;
+
+    const payload = {
+      fullName: (addr.fullName || '').trim(),
+      phone: cleanPhone,
+      line1: (addr.line1 || '').trim(),
+      line2: (addr.line2 || '').trim(),
+      city: (addr.city || '').trim(),
+      state: (addr.state || '').trim(),
+      pincode: (addr.pincode || '').trim(),
+      isDefault: Boolean(isDefaultAddr)
+    };
+
+    setSavingAddr(true);
+    try {
+      if (selectedAddrId) {
+        const res = await authFetch(`/api/addresses/${selectedAddrId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok) {
+          toast.success('Address updated successfully');
+          await loadAddr();
+          if (advanceToPayment) setStep('payment');
+          return true;
+        } else {
+          toast.error(data.error || 'Failed to update address');
+          return false;
+        }
+      } else {
+        const res = await authFetch('/api/addresses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok) {
+          toast.success('Address saved successfully');
+          if (data.address?.id) setSelectedAddrId(data.address.id);
+          await loadAddr();
+          if (advanceToPayment) setStep('payment');
+          return true;
+        } else {
+          toast.error(data.error || 'Failed to save address');
+          return false;
+        }
+      }
+    } catch (err) {
+      console.error('Save address error:', err);
+      toast.error('An error occurred while saving the address.');
+      return false;
+    } finally {
+      setSavingAddr(false);
+    }
+  };
+
+  const handleContinueAddress = async () => {
+    const fields = ['fullName', 'phone', 'line1', 'city', 'state', 'pincode'];
+    let valid = true;
+    fields.forEach(f => {
+      const isFValid = validateAddressField(f, addr[f]);
+      if (!isFValid) valid = false;
+    });
+    if (!valid) {
       toast.error('Please fix the errors in your shipping address before continuing.');
+      return;
+    }
+
+    if (user && saveForFuture && !selectedAddrId) {
+      await handleSaveAddress(true);
+    } else {
+      setStep('payment');
     }
   };
 
@@ -144,12 +289,6 @@ export default function CheckoutPage() {
       if (sessionStorage.getItem(giftKey) === '1' || sessionStorage.getItem('mikumantra_gift') === '1') setGift(true);
     } catch { }
   }, [user]);
-
-  async function loadAddr() {
-    const r = await authFetch('/api/addresses'); const d = await r.json();
-    if (r.ok && d.addresses) { setSavedAddresses(d.addresses); const def = d.addresses.find(a => a.isDefault) || d.addresses[0]; if (def) { setSelectedAddrId(def.id); setAddr({ fullName: def.fullName, phone: def.phone, line1: def.line1, line2: def.line2 || '', city: def.city, state: def.state, pincode: def.pincode }); } }
-  }
-  function useSavedAddr(a) { setSelectedAddrId(a.id); setAddr({ fullName: a.fullName, phone: a.phone, line1: a.line1, line2: a.line2 || '', city: a.city, state: a.state, pincode: a.pincode }); }
 
   async function payWithRazorpay() {
     try {
@@ -265,7 +404,39 @@ export default function CheckoutPage() {
               <div className="border border-[#E8E8E8] rounded-xl p-4 sm:p-6 md:p-8">
                 <div className="font-display text-xl sm:text-2xl mb-1">Shipping Address</div><div className="gold-line w-10 mb-6" />
                 {!user && (<div className="mb-6"><label className="text-[10px] tracking-widest uppercase text-neutral-500">Email (for order updates)</label><input required type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@email.com" className="w-full mt-1 px-4 py-3 border border-[#E8E8E8] rounded-md text-sm focus:outline-none focus:border-[#9C6B30]" /><div className="text-xs text-neutral-500 mt-2"><Link href="/login?redirect=/checkout" className="text-[#9C6B30] hover:underline">Sign in</Link> for faster checkout &amp; order tracking.</div></div>)}
-                {savedAddresses.length > 0 && (<div className="mb-6"><div className="text-[10px] tracking-widest uppercase text-neutral-500 mb-3">Saved Addresses</div><div className="grid md:grid-cols-2 gap-3">{savedAddresses.map(a => (<button key={a.id} onClick={() => useSavedAddr(a)} className={`text-left border rounded-lg p-4 transition ${selectedAddrId === a.id ? 'border-[#9C6B30] bg-[#FAF6EF]' : 'border-[#E8E8E8] hover:border-[#9C6B30]'}`}><div className="font-medium">{a.fullName}</div><div className="text-sm text-neutral-600 mt-1">{a.line1}, {a.city}, {a.state} — {a.pincode}</div><div className="text-xs text-neutral-500 mt-1">{a.phone}</div></button>))}</div></div>)}
+                {savedAddresses.length > 0 && (
+                  <div className="mb-6">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="text-[10px] tracking-widest uppercase text-neutral-500">Saved Addresses</div>
+                      <button
+                        type="button"
+                        onClick={handleAddNewAddress}
+                        className="text-xs text-[#9C6B30] hover:underline flex items-center gap-1 font-medium cursor-pointer"
+                      >
+                        <Plus size={13} /> Add New Address
+                      </button>
+                    </div>
+                    <div className="grid md:grid-cols-2 gap-3">
+                      {savedAddresses.map(a => (
+                        <button
+                          key={a.id}
+                          type="button"
+                          onClick={() => useSavedAddr(a)}
+                          className={`text-left border rounded-lg p-4 transition relative ${selectedAddrId === a.id ? 'border-[#9C6B30] bg-[#FAF6EF]' : 'border-[#E8E8E8] hover:border-[#9C6B30]'}`}
+                        >
+                          {selectedAddrId === a.id && (
+                            <span className="absolute top-3 right-3 text-[10px] tracking-wider uppercase font-semibold text-[#9C6B30] bg-white px-2 py-0.5 rounded border border-[#9C6B30]/30 flex items-center gap-1">
+                              <Check size={10} /> Selected
+                            </span>
+                          )}
+                          <div className="font-medium">{a.fullName} {a.isDefault && <span className="text-[10px] text-neutral-400 font-normal">(Default)</span>}</div>
+                          <div className="text-sm text-neutral-600 mt-1">{a.line1}, {a.city}, {a.state} — {a.pincode}</div>
+                          <div className="text-xs text-neutral-500 mt-1">{a.phone}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="grid md:grid-cols-2 gap-3">
                   <div>
                     <input
@@ -374,8 +545,37 @@ export default function CheckoutPage() {
                     {addrErrors.pincode && <p className="text-xs text-red-500 mt-1">{addrErrors.pincode}</p>}
                   </div>
                 </div>
-                <div className="mt-6 flex justify-end">
-                  <button onClick={handleContinueAddress} className="px-5 sm:px-8 py-3 sm:py-3.5 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] flex items-center gap-2 cursor-pointer">
+
+                <div className="mt-4 pt-3 border-t border-[#E8E8E8]/60 flex flex-wrap items-center justify-between gap-3 text-xs text-neutral-600">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={isDefaultAddr}
+                      onChange={e => setIsDefaultAddr(e.target.checked)}
+                      className="accent-[#9C6B30] w-4 h-4 rounded cursor-pointer"
+                    />
+                    <span>Set as default shipping address</span>
+                  </label>
+                </div>
+
+                <div className="mt-6 flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-[#E8E8E8]">
+                  <button
+                    type="button"
+                    disabled={savingAddr}
+                    onClick={() => handleSaveAddress(false)}
+                    className="px-5 sm:px-6 py-2.5 sm:py-3 border border-[#9C6B30] text-[#9C6B30] text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.2em] uppercase rounded-md hover:bg-[#FAF6EF] flex items-center gap-2 cursor-pointer transition disabled:opacity-50 font-medium"
+                  >
+                    {savingAddr ? <Loader2 size={13} className="animate-spin" /> : <BookmarkCheck size={14} />}
+                    {selectedAddrId ? 'Update Address' : 'Save Address'}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={savingAddr}
+                    onClick={handleContinueAddress}
+                    className="px-6 sm:px-8 py-3 sm:py-3.5 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] flex items-center gap-2 cursor-pointer transition disabled:opacity-50 ml-auto"
+                  >
+                    {savingAddr && <Loader2 size={14} className="animate-spin" />}
                     Continue <ChevronRight size={14} />
                   </button>
                 </div>

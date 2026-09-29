@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, Suspense } from 'react';
+import { useEffect, useState, Suspense, useRef } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/use-auth';
@@ -114,6 +114,45 @@ function OrderInner() {
     setCopiedAwb(true);
     toast.success('AWB Number copied to clipboard');
     setTimeout(() => setCopiedAwb(false), 2500);
+  };
+
+  const autoOpenedReviewRef = useRef(false);
+  const autoOpenedReturnRef = useRef(false);
+
+  const closeReviewModal = () => {
+    setShowReviewModal(false);
+    setReviewTargetItem(null);
+    setReviewModalErr('');
+    autoOpenedReviewRef.current = true;
+    if (typeof window !== 'undefined') {
+      try {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has('action') || url.searchParams.has('itemId')) {
+          url.searchParams.delete('action');
+          url.searchParams.delete('itemId');
+          window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''));
+        }
+      } catch (e) {
+        console.error('Error cleaning up URL on review modal close:', e);
+      }
+    }
+  };
+
+  const closeReturnModal = () => {
+    setShowReturnModal(false);
+    setReturnModalErr('');
+    autoOpenedReturnRef.current = true;
+    if (typeof window !== 'undefined') {
+      try {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has('action')) {
+          url.searchParams.delete('action');
+          window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''));
+        }
+      } catch (e) {
+        console.error('Error cleaning up URL on return modal close:', e);
+      }
+    }
   };
 
   // Live timer ticker for 30-minute return countdown
@@ -384,7 +423,7 @@ function OrderInner() {
       const d = await r.json();
       if (r.ok && d.return) {
         setReturnRequest(d.return);
-        setShowReturnModal(false);
+        closeReturnModal();
         toast.success('Return request submitted successfully. We will review it shortly.');
         const rOrder = await fetch(`/api/orders/${order.id}`, { credentials: 'include' });
         const dOrder = await rOrder.json();
@@ -606,7 +645,7 @@ function OrderInner() {
         if (r.ok && d.review) {
           toast.success('Your review has been updated!');
           setOrderReviews(prev => prev.map(rev => rev.id === existingReview.id ? d.review : rev));
-          setShowReviewModal(false);
+          closeReviewModal();
         } else {
           setReviewModalErr(d.error || 'Failed to update review.');
           toast.error(d.error || 'Review update failed');
@@ -632,7 +671,7 @@ function OrderInner() {
         if (r.ok && d.review) {
           toast.success('Thank you! Your review has been submitted.');
           setOrderReviews(prev => [...prev, d.review]);
-          setShowReviewModal(false);
+          closeReviewModal();
         } else {
           setReviewModalErr(d.error || 'Failed to submit review.');
           toast.error(d.error || 'Review submission failed');
@@ -659,7 +698,7 @@ function OrderInner() {
       if (r.ok) {
         toast.success('Review deleted successfully');
         setOrderReviews(prev => prev.filter(rev => rev.id !== existingReview.id));
-        setShowReviewModal(false);
+        closeReviewModal();
       } else {
         const d = await r.json().catch(() => ({}));
         setReviewModalErr(d.error || 'Failed to delete review');
@@ -735,14 +774,16 @@ function OrderInner() {
 
   // Auto-open return modal if action=return query parameter exists and return is allowed
   useEffect(() => {
-    if (order && actionParam === 'return' && canRequestReturn && !showReturnModal) {
+    if (order && actionParam === 'return' && canRequestReturn && !autoOpenedReturnRef.current) {
+      autoOpenedReturnRef.current = true;
       openReturnModal();
     }
   }, [order, actionParam, canRequestReturn]);
 
   // Auto-open review modal if action=review query parameter exists on delivered order
   useEffect(() => {
-    if (order && actionParam === 'review' && order.status === 'delivered' && !showReviewModal) {
+    if (order && actionParam === 'review' && order.status === 'delivered' && !autoOpenedReviewRef.current) {
+      autoOpenedReviewRef.current = true;
       const target = itemIdParam
         ? order.items?.find(it => it.id === itemIdParam || it.slug === itemIdParam)
         : (order.items?.find(it => !orderReviews.some(r => r.productId === it.id || r.productSlug === it.slug)) || order.items?.[0]);
@@ -751,7 +792,7 @@ function OrderInner() {
         openReviewModal(target);
       }
     }
-  }, [order, actionParam, itemIdParam, orderReviews, showReviewModal]);
+  }, [order, actionParam, itemIdParam, orderReviews]);
 
   if (authLoading || loading) return <div className="h-96 flex items-center justify-center"><Loader2 className="animate-spin text-[#9C6B30]" /></div>;
   if (!user) return null;
@@ -1556,7 +1597,7 @@ function OrderInner() {
                 <div className="text-[10px] tracking-widest uppercase text-[#9C6B30] font-semibold">Order Cancellation</div>
                 <h3 className="font-display text-lg sm:text-xl font-light">Cancel Order #{order.orderNumber}</h3>
               </div>
-              <button disabled={cancelling} onClick={() => setShowCancelModal(false)} className="text-neutral-400 hover:text-white transition p-1 cursor-pointer">
+              <button type="button" disabled={cancelling} onClick={() => setShowCancelModal(false)} className="text-neutral-400 hover:text-white transition p-1 cursor-pointer">
                 <X size={18} />
               </button>
             </div>
@@ -1661,7 +1702,7 @@ function OrderInner() {
 
       {/* Return Order Modal */}
       {showReturnModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto" onClick={() => !submittingReturn && setShowReturnModal(false)}>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto" onClick={() => !submittingReturn && closeReturnModal()}>
           <div className="bg-white text-[#1A1A1A] w-full max-w-xl rounded-xl border border-neutral-200 overflow-hidden shadow-2xl my-6" onClick={e => e.stopPropagation()}>
             <div className="bg-[#1A1A1A] text-white p-4 sm:p-5 flex justify-between items-center">
               <div>
@@ -1670,7 +1711,7 @@ function OrderInner() {
                 </div>
                 <h3 className="font-display text-lg sm:text-xl font-light">Return Order #{order.orderNumber}</h3>
               </div>
-              <button disabled={submittingReturn} onClick={() => setShowReturnModal(false)} className="text-neutral-400 hover:text-white transition p-1 cursor-pointer">
+              <button type="button" disabled={submittingReturn} onClick={closeReturnModal} className="text-neutral-400 hover:text-white transition p-1 cursor-pointer">
                 <X size={18} />
               </button>
             </div>
@@ -1861,7 +1902,7 @@ function OrderInner() {
                 </div>
 
                 <div className="pt-3 border-t border-[#E8E8E8] flex gap-3 justify-end items-center">
-                  <button type="button" onClick={() => setShowReturnModal(false)} className="px-4 py-2 text-xs text-neutral-600 hover:text-neutral-900 cursor-pointer">
+                  <button type="button" disabled={submittingReturn} onClick={closeReturnModal} className="px-4 py-2 text-xs text-neutral-600 hover:text-neutral-900 cursor-pointer">
                     Cancel
                   </button>
                   <button type="submit" className="px-6 py-2.5 bg-[#1A1A1A] text-white text-[11px] tracking-wider uppercase rounded-md hover:bg-[#9C6B30] transition font-semibold cursor-pointer">
@@ -1972,7 +2013,7 @@ function OrderInner() {
       {showReviewModal && reviewTargetItem && (
         <div
           className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
-          onClick={() => !submittingReview && !deletingReview && setShowReviewModal(false)}
+          onClick={() => !submittingReview && !deletingReview && closeReviewModal()}
         >
           <div
             className="bg-white text-[#1A1A1A] w-full max-w-lg rounded-xl border border-neutral-200 overflow-hidden shadow-2xl my-6"
@@ -1988,8 +2029,9 @@ function OrderInner() {
                 </h3>
               </div>
               <button
+                type="button"
                 disabled={submittingReview || deletingReview}
-                onClick={() => setShowReviewModal(false)}
+                onClick={closeReviewModal}
                 className="text-neutral-400 hover:text-white transition p-1 cursor-pointer"
               >
                 <X size={18} />
@@ -2224,7 +2266,7 @@ function OrderInner() {
                   <button
                     type="button"
                     disabled={submittingReview || deletingReview}
-                    onClick={() => setShowReviewModal(false)}
+                    onClick={closeReviewModal}
                     className="px-4 py-2 border border-[#E8E8E8] text-neutral-700 text-xs uppercase tracking-wider rounded-md hover:bg-neutral-50 cursor-pointer"
                   >
                     Cancel
