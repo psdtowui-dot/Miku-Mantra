@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { useWishlist } from '@/lib/cart-store';
-import { PRODUCTS, formatINR } from '@/lib/products';
+import { PRODUCTS, formatINR, formatRating } from '@/lib/products';
 import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound, RotateCcw, Clock, Star, Sparkles, CheckCircle2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -991,7 +991,7 @@ export default function AccountPage() {
                           {[1, 2, 3, 4, 5].map(s => (
                             <Star key={s} size={15} className={s <= r.rating ? 'fill-[#D4AF37] stroke-[#D4AF37]' : 'text-neutral-300'} />
                           ))}
-                          <span className="text-xs font-semibold text-neutral-800 ml-1">{r.rating}.0 / 5</span>
+                          <span className="text-xs font-semibold text-neutral-800 ml-1">{formatRating(r.rating)} / 5.0</span>
                         </div>
 
                         {r.title && (

@@ -3,7 +3,7 @@ import { useEffect, useState, Suspense, useRef } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/use-auth';
-import { formatINR } from '@/lib/products';
+import { formatINR, formatRating } from '@/lib/products';
 import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft, Star, Edit3, Trash2, Upload, Camera, Image as ImageIcon, Building2, Smartphone, ShieldCheck } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
@@ -1418,7 +1418,7 @@ function OrderInner() {
                                 <Star key={s} size={11} className={s <= itemReview.rating ? 'fill-[#D4AF37] stroke-[#D4AF37]' : 'text-neutral-300'} />
                               ))}
                             </span>
-                            <span>{itemReview.rating}.0 · Reviewed</span>
+                            <span>{formatRating(itemReview.rating)} · Reviewed</span>
                           </span>
                           {itemReview.title && (
                             <span className="text-xs text-neutral-600 font-medium italic truncate max-w-[200px] sm:max-w-xs">
@@ -1987,11 +1987,11 @@ function OrderInner() {
                   <span className="text-xs font-semibold text-[#9C6B30] ml-2">
                     {(() => {
                       const cur = hoverRating || reviewForm.rating;
-                      if (cur === 5) return '5 / 5 · Exceptional';
-                      if (cur === 4) return '4 / 5 · Very Good';
-                      if (cur === 3) return '3 / 5 · Good';
-                      if (cur === 2) return '2 / 5 · Fair';
-                      return '1 / 5 · Poor';
+                      if (cur === 5) return '5.0 / 5 · Exceptional';
+                      if (cur === 4) return '4.0 / 5 · Very Good';
+                      if (cur === 3) return '3.0 / 5 · Good';
+                      if (cur === 2) return '2.0 / 5 · Fair';
+                      return '1.0 / 5 · Poor';
                     })()}
                   </span>
                 </div>

@@ -21,6 +21,7 @@ function GoogleIcon({ className = "w-5 h-5" }) {
 function AdminLoginInner() {
   const { user, loading, login, loginWithGoogle, forgotPassword, resetPassword } = useAuth();
   const router = useRouter();
+  const sp = useSearchParams();
   const rawRedirect = sp.get('redirect');
   const redirect = (!rawRedirect || rawRedirect.startsWith('/admin/login')) ? '/admin' : rawRedirect;
   const urlError = sp.get('error');

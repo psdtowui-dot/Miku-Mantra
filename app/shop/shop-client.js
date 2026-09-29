@@ -7,6 +7,44 @@ import CompareBar from '@/components/site/compare-bar';
 import { PRODUCTS as SEED, getNormalizedSpecs, DEFAULT_PRODUCT_FILTERS } from '@/lib/products';
 import { SlidersHorizontal, X, Loader2, ChevronDown } from 'lucide-react';
 
+function normalizeAlphaNum(str) {
+  if (!str) return '';
+  return String(str).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function isOptionSelected(selectedValue, optValue, groupKey) {
+  if (!selectedValue || !optValue) return false;
+  const s1 = String(selectedValue).trim().toLowerCase();
+  const s2 = String(optValue).trim().toLowerCase();
+  if (s1 === s2) return true;
+
+  const norm1 = s1.replace(/[^a-z0-9]/g, '');
+  const norm2 = s2.replace(/[^a-z0-9]/g, '');
+  if (norm1 === norm2 && norm1.length > 0) return true;
+
+  if (groupKey === 'collection') {
+    if ((norm1 === 'bestseller' || norm1 === 'bestsellers') && (norm2 === 'bestseller' || norm2 === 'bestsellers')) return true;
+    if ((norm1 === 'newarrival' || norm1 === 'newarrivals' || norm1 === 'new') && (norm2 === 'newarrival' || norm2 === 'newarrivals' || norm2 === 'new')) return true;
+    if ((norm1 === 'editorschoice' || norm1 === 'editorspick') && (norm2 === 'editorschoice' || norm2 === 'editorspick')) return true;
+  }
+  if (groupKey === 'category') {
+    if ((norm1 === 'dailywear' || norm1 === 'daily') && (norm2 === 'dailywear' || norm2 === 'daily')) return true;
+  }
+  if (groupKey === 'metal') {
+    if (norm1.includes('yellow') && norm2.includes('yellow')) return true;
+    if (norm1.includes('rose') && norm2.includes('rose')) return true;
+    if (norm1.includes('white') && norm2.includes('white')) return true;
+    if (norm1.includes('plat') && norm2.includes('plat')) return true;
+  }
+  if (groupKey === 'stone') {
+    if (norm1.includes('polki') && norm2.includes('polki')) return true;
+    if (norm1.includes('dia') && norm2.includes('dia')) return true;
+    if (norm1.includes('emr') && norm2.includes('emr')) return true;
+    if (norm1.includes('onyx') && norm2.includes('onyx')) return true;
+  }
+  return false;
+}
+
 function ShopInner() {
   const sp = useSearchParams();
   const router = useRouter();
@@ -14,7 +52,7 @@ function ShopInner() {
   const [all, setAll] = useState(SEED);
   const [loading, setLoading] = useState(false);
 
-  // Dynamic Product Filter Groups from Backend API (initialized with default filters for immediate render)
+  // Dynamic Product Filter Groups fetched from Backend API
   const [filterGroups, setFilterGroups] = useState(DEFAULT_PRODUCT_FILTERS);
   const [filterLoading, setFilterLoading] = useState(false);
   const [hasLoadedFilters, setHasLoadedFilters] = useState(false);
@@ -36,13 +74,13 @@ function ShopInner() {
     };
   }, [openFilters]);
 
-  // Load products and dynamic filter config
+  // Load products and dynamic filter config from backend
   useEffect(() => {
     (async () => {
       try {
         const [pRes, filtersRes] = await Promise.all([
-          fetch('/api/products'),
-          fetch('/api/product-filters')
+          fetch('/api/products', { cache: 'no-store' }),
+          fetch('/api/product-filters', { cache: 'no-store' })
         ]);
         if (pRes.ok) {
           const d = await pRes.json();
@@ -52,12 +90,6 @@ function ShopInner() {
           const d = await filtersRes.json();
           if (d.groups?.length) {
             setFilterGroups(d.groups);
-            const pg = d.groups.find(g => (g.type === 'price' || g.key === 'price') && g.enabled !== false);
-            if (pg?.priceConfig) {
-              const minB = pg.priceConfig.min ?? 0;
-              const maxB = pg.priceConfig.max ?? 1000000;
-              setRange([minB, maxB]);
-            }
           }
         }
       } catch (err) {
@@ -70,6 +102,50 @@ function ShopInner() {
     })();
   }, []);
 
+  // Sync URL search params with dynamic Range and Sort states
+  useEffect(() => {
+    const sortParam = sp.get('sort');
+    if (sortParam && ['newest', 'rating', 'price-asc', 'price-desc', 'discount'].includes(sortParam)) {
+      setSort(sortParam);
+    }
+
+    const minParam = sp.get('min');
+    const maxParam = sp.get('max');
+    const priceParam = sp.get('price');
+
+    const pg = (filterGroups || []).find(g => (g.type === 'price' || g.type === 'range' || g.key === 'price') && g.enabled !== false);
+    const minBound = pg?.priceConfig?.min ?? pg?.min ?? 0;
+    const maxBound = Math.max(pg?.priceConfig?.max ?? pg?.max ?? 1000000, ...all.map(p => p.price || 0));
+
+    if (minParam != null || maxParam != null) {
+      const minVal = minParam != null ? Number(minParam) : minBound;
+      const maxVal = maxParam != null ? Number(maxParam) : maxBound;
+      if (!isNaN(minVal) && !isNaN(maxVal)) {
+        setRange([minVal, maxVal]);
+        return;
+      }
+    }
+
+    if (priceParam) {
+      if (priceParam.includes('-')) {
+        const parts = priceParam.split('-').map(Number);
+        if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+          setRange([parts[0], parts[1]]);
+          return;
+        }
+      } else {
+        const num = Number(priceParam);
+        if (!isNaN(num)) {
+          setRange([0, num]);
+          return;
+        }
+      }
+    }
+
+    // Default range when no price query param is present
+    setRange([minBound, maxBound]);
+  }, [sp, filterGroups, all]);
+
   // Set URL query parameters helper
   const setParam = (key, val) => {
     const q = new URLSearchParams(sp.toString());
@@ -77,6 +153,10 @@ function ShopInner() {
       q.set(key, val);
     } else {
       q.delete(key);
+      if (key === 'price') {
+        q.delete('min');
+        q.delete('max');
+      }
     }
     router.push(`/shop?${q.toString()}`, { scroll: false });
   };
@@ -84,25 +164,32 @@ function ShopInner() {
   // Clear All Filters helper
   const clearAll = () => {
     router.push('/shop', { scroll: false });
-    const pg = (filterGroups || []).find(g => (g.type === 'price' || g.key === 'price') && g.enabled !== false);
-    const minB = pg?.priceConfig?.min ?? 0;
-    const maxB = pg?.priceConfig?.max ?? 1000000;
+    const pg = (filterGroups || []).find(g => (g.type === 'price' || g.type === 'range' || g.key === 'price') && g.enabled !== false);
+    const minB = pg?.priceConfig?.min ?? pg?.min ?? 0;
+    const maxB = Math.max(pg?.priceConfig?.max ?? pg?.max ?? 1000000, ...all.map(p => p.price || 0));
     setRange([minB, maxB]);
   };
 
-  // Dynamic Product Filtering Engine
+  // Dynamic Product Filtering Engine based 100% on Backend Filter Config
   const list = useMemo(() => {
     let result = [...all];
 
-    // Read active enabled filter groups
+    // Read active enabled filter groups and disabled keys
     const enabledGroups = (filterGroups || []).filter(g => g.enabled !== false);
+    const disabledKeys = new Set(
+      (filterGroups || [])
+        .filter(g => g.enabled === false)
+        .map(g => g.key)
+    );
+    const handledKeys = new Set();
 
     if (enabledGroups.length > 0) {
       for (const group of enabledGroups) {
         const key = group.key;
+        handledKeys.add(key);
 
         // Price Filter Handling
-        if (group.type === 'price' || key === 'price') {
+        if (group.type === 'price' || group.type === 'range' || key === 'price') {
           result = result.filter(p => p.price >= range[0] && p.price <= range[1]);
           continue;
         }
@@ -110,80 +197,163 @@ function ShopInner() {
         // Standard Options Filter Handling
         const selectedVal = sp.get(key);
         if (selectedVal) {
+          const normSel = normalizeAlphaNum(selectedVal);
           const selValLower = selectedVal.trim().toLowerCase();
 
           result = result.filter(p => {
-            // 1. Gender filter: STRICT exact match (never use substring includes because 'women' contains 'men')
+            // 1. Gender filter: STRICT exact match (never substring because 'women' contains 'men')
             if (key === 'gender') {
               const prodGender = (p.gender || '').trim().toLowerCase();
-              if (!prodGender) return false;
-              return prodGender === selValLower || prodGender === 'unisex';
+              const pGenNorm = normalizeAlphaNum(prodGender);
+              const pCatNorm = normalizeAlphaNum(p.category);
+
+              if (normSel === 'women') {
+                return pGenNorm === 'women' || (!pGenNorm && pCatNorm === 'women') || pGenNorm === 'unisex' || pGenNorm === 'both' || pGenNorm === 'all';
+              }
+              if (normSel === 'men') {
+                return pGenNorm === 'men' || (!pGenNorm && pCatNorm === 'men') || pGenNorm === 'unisex' || pGenNorm === 'both' || pGenNorm === 'all';
+              }
+              if (normSel === 'unisex') {
+                return pGenNorm === 'unisex' || pGenNorm === 'both' || pGenNorm === 'all';
+              }
+              return pGenNorm === normSel;
             }
 
-            // 2. Category filter: STRICT exact match (handling hyphens and spaces)
+            // 2. Category filter: Normalized exact match with gender and tag fallbacks
             if (key === 'category') {
               const prodCat = (p.category || '').trim().toLowerCase();
-              return (
-                prodCat === selValLower ||
-                prodCat.replace(/\s+/g, '-') === selValLower.replace(/\s+/g, '-')
-              );
+              const pCatNorm = normalizeAlphaNum(prodCat);
+              const pGenNorm = normalizeAlphaNum(p.gender);
+
+              if (pCatNorm === normSel) return true;
+              if ((normSel === 'dailywear' || normSel === 'daily') && (pCatNorm === 'dailywear' || pCatNorm === 'daily-wear' || pCatNorm === 'daily')) return true;
+              if (normSel === 'men' && (pCatNorm === 'men' || pGenNorm === 'men')) return true;
+              if (normSel === 'women' && (pCatNorm === 'women' || pGenNorm === 'women')) return true;
+              if (prodCat === selValLower || prodCat.replace(/-/g, ' ') === selValLower.replace(/-/g, ' ')) return true;
+              if (p.subcategory && normalizeAlphaNum(p.subcategory) === normSel) return true;
+
+              if (p.tags && Array.isArray(p.tags) && p.tags.some(t => normalizeAlphaNum(t) === normSel)) return true;
+              return false;
             }
 
-            // 3. Collection filter: STRICT exact match
+            // 3. Collection filter: Strict normalized matching to ensure only the selected collection is displayed
             if (key === 'collection') {
               const prodCol = (p.collection || '').trim().toLowerCase();
-              return (
-                prodCol === selValLower ||
-                prodCol.replace(/\s+/g, '-') === selValLower.replace(/\s+/g, '-')
-              );
+              const pColNorm = normalizeAlphaNum(prodCol);
+              const prodBadge = (p.badge || '').trim().toLowerCase();
+              const pBadgeNorm = normalizeAlphaNum(prodBadge);
+
+              if (pColNorm === normSel) return true;
+
+              // Trending matching
+              if (normSel === 'trending') {
+                return pColNorm === 'trending' || pBadgeNorm === 'trending';
+              }
+
+              // Best Sellers matching
+              if (normSel === 'bestseller' || normSel === 'bestsellers') {
+                return pColNorm === 'bestseller' || pColNorm === 'bestsellers' || pBadgeNorm === 'bestseller' || pBadgeNorm === 'bestsellers';
+              }
+
+              // New Arrival matching
+              if (normSel === 'newarrival' || normSel === 'newarrivals' || normSel === 'new') {
+                return pColNorm === 'newarrival' || pColNorm === 'newarrivals' || pColNorm === 'new' || pBadgeNorm === 'new' || pBadgeNorm === 'newarrival' || pBadgeNorm === 'newarrivals';
+              }
+
+              // Editor's Choice matching
+              if (normSel === 'editorschoice' || normSel === 'editorspick' || normSel === 'editor') {
+                return pColNorm === 'editorschoice' || pColNorm === 'editorspick' || pBadgeNorm === 'editorschoice' || pBadgeNorm === 'editorspick';
+              }
+
+              return pColNorm === normSel || pBadgeNorm === normSel;
             }
 
-            // 4. Stone filter: handles None, Polki, Diamond, etc.
+            // 4. Stone filter: handles None, Polki, Diamond, Emerald, Onyx, etc.
             if (key === 'stone') {
-              const prodStone = (p.stone || p.stoneDetails || '').trim().toLowerCase();
-              const isNone = !prodStone || prodStone === '—' || prodStone === '-' || prodStone === 'none' || prodStone === 'n/a';
-              if (selValLower === 'none') {
+              const specStones = getNormalizedSpecs(p)
+                .filter(s => {
+                  const lbl = (s.label || '').toLowerCase();
+                  const id = (s.id || '').toLowerCase();
+                  return lbl.includes('stone') || lbl.includes('gem') || id.includes('stone');
+                })
+                .map(s => String(s.value || ''));
+
+              const stoneDetails = [p.stone, p.stoneDetails, ...specStones].filter(Boolean).join(' ').toLowerCase();
+              const isNone = !stoneDetails || stoneDetails === '—' || stoneDetails === '-' || stoneDetails.trim() === '' || stoneDetails === 'none' || stoneDetails === 'n/a' || stoneDetails === 'na';
+
+              if (normSel === 'none') {
                 return isNone;
               }
               if (isNone) {
                 return false;
               }
-              if (prodStone === selValLower || prodStone.includes(selValLower)) return true;
+
+              if (normSel.includes('polki') && stoneDetails.includes('polki')) return true;
+              if (normSel.includes('dia') && (stoneDetails.includes('dia') || p.category === 'diamond')) return true;
+              if (normSel.includes('emr') && stoneDetails.includes('emerald')) return true;
+              if (normSel.includes('onyx') && stoneDetails.includes('onyx')) return true;
+              if (normSel.includes('ruby') && stoneDetails.includes('ruby')) return true;
+              if (normSel.includes('pearl') && stoneDetails.includes('pearl')) return true;
+
+              if (normalizeAlphaNum(stoneDetails).includes(normSel)) return true;
+
               const terms = selValLower.split(/\s+/).filter(t => t.length > 2);
-              if (terms.some(t => prodStone.includes(t))) return true;
+              if (terms.some(t => stoneDetails.includes(t))) return true;
               return false;
             }
 
             // 5. Metal filter: handles Yellow Gold, Rose Gold, White Gold, Platinum
             if (key === 'metal') {
-              const prodMetal = (p.metal || p.metalComposition || '').trim().toLowerCase();
-              if (!prodMetal) return false;
-              return prodMetal === selValLower || prodMetal.includes(selValLower);
+              const specMetals = getNormalizedSpecs(p)
+                .filter(s => {
+                  const lbl = (s.label || '').toLowerCase();
+                  const id = (s.id || '').toLowerCase();
+                  return lbl.includes('metal') || id.includes('metal');
+                })
+                .map(s => String(s.value || ''));
+
+              const metalDetails = [p.metal, p.metalComposition, ...specMetals].filter(Boolean).join(' ').toLowerCase();
+              if (!metalDetails) return false;
+
+              if (normSel.includes('yellow') && metalDetails.includes('yellow')) return true;
+              if (normSel.includes('rose') && metalDetails.includes('rose')) return true;
+              if (normSel.includes('white') && metalDetails.includes('white')) return true;
+              if (normSel.includes('plat') && (metalDetails.includes('plat') || (p.purity || '').toLowerCase().includes('pt'))) return true;
+              if (normSel === 'gold' && (metalDetails.includes('gold') || p.category === 'gold')) return true;
+
+              if (normalizeAlphaNum(metalDetails).includes(normSel)) return true;
+              return false;
             }
 
-            // 6. Generic direct property match
+            // 6. Generic / Custom Filter Group match (Purity, Occasion, Style, Brand, etc.)
             const directVal = p[key];
             if (directVal !== undefined && directVal !== null) {
-              const strVal = String(directVal).trim().toLowerCase();
-              if (strVal === selValLower) return true;
-              if (strVal.length > 10 && strVal.includes(selValLower)) return true;
+              if (Array.isArray(directVal)) {
+                if (directVal.some(item => normalizeAlphaNum(item) === normSel || String(item).toLowerCase().includes(selValLower))) return true;
+              } else {
+                const strVal = String(directVal).trim().toLowerCase();
+                if (strVal === selValLower || normalizeAlphaNum(strVal) === normSel) return true;
+                if (strVal.length > 3 && strVal.includes(selValLower)) return true;
+              }
             }
 
-            // 7. Specifications array match
+            // 7. Specifications array match (dynamic specs created in admin product editor)
             const specs = getNormalizedSpecs(p);
             const matchingSpec = specs.find(s => {
-              const specKey = (s.id || '').toLowerCase();
-              const specLabel = (s.label || '').toLowerCase();
-              return specKey === key.toLowerCase() || specLabel === (group.name || '').toLowerCase();
+              const specKey = normalizeAlphaNum(s.id || '');
+              const specLabel = normalizeAlphaNum(s.label || '');
+              const groupKeyNorm = normalizeAlphaNum(key);
+              const groupNameNorm = normalizeAlphaNum(group.name || '');
+              return specKey === groupKeyNorm || specLabel === groupNameNorm || specLabel.includes(groupNameNorm) || groupNameNorm.includes(specLabel);
             });
             if (matchingSpec && matchingSpec.value) {
               const specVal = String(matchingSpec.value).trim().toLowerCase();
-              if (specVal === selValLower) return true;
-              if (specVal.includes(selValLower)) return true;
+              if (specVal === selValLower || normalizeAlphaNum(specVal) === normSel) return true;
+              if (normalizeAlphaNum(specVal).includes(normSel) || normSel.includes(normalizeAlphaNum(specVal))) return true;
             }
 
             // 8. Fallback tags check (exact tag match)
-            if (p.tags && Array.isArray(p.tags) && p.tags.some(t => String(t).trim().toLowerCase() === selValLower)) {
+            if (p.tags && Array.isArray(p.tags) && p.tags.some(t => normalizeAlphaNum(t) === normSel || String(t).trim().toLowerCase() === selValLower)) {
               return true;
             }
 
@@ -191,22 +361,41 @@ function ShopInner() {
           });
         }
       }
-    } else {
-      // Fallback filtering if dynamic filters haven't loaded yet
-      const cat = sp.get('category');
-      const col = sp.get('collection');
-      const gen = sp.get('gender');
-      if (cat) result = result.filter(p => (p.category || '').toLowerCase() === cat.toLowerCase());
-      if (col) result = result.filter(p => (p.collection || '').toLowerCase() === col.toLowerCase());
-      if (gen) result = result.filter(p => (p.gender || '').toLowerCase() === gen.toLowerCase() || (p.gender || '').toLowerCase() === 'unisex');
-      result = result.filter(p => p.price >= range[0] && p.price <= range[1]);
+    }
+
+    // Fallback checks for standard query params only if the group was not explicitly disabled by admin
+    if (!handledKeys.has('category') && !disabledKeys.has('category') && sp.get('category')) {
+      const normSel = normalizeAlphaNum(sp.get('category'));
+      result = result.filter(p => normalizeAlphaNum(p.category) === normSel || (normSel === 'men' && normalizeAlphaNum(p.gender) === 'men') || (normSel === 'women' && normalizeAlphaNum(p.gender) === 'women') || (p.tags && p.tags.some(t => normalizeAlphaNum(t) === normSel)));
+    }
+    if (!handledKeys.has('collection') && !disabledKeys.has('collection') && sp.get('collection')) {
+      const normSel = normalizeAlphaNum(sp.get('collection'));
+      result = result.filter(p => {
+        const pColNorm = normalizeAlphaNum(p.collection);
+        const pBadgeNorm = normalizeAlphaNum(p.badge);
+        if (pColNorm === normSel) return true;
+        if (normSel === 'trending') return pColNorm === 'trending' || pBadgeNorm === 'trending';
+        if (normSel === 'bestseller' || normSel === 'bestsellers') return pColNorm === 'bestseller' || pColNorm === 'bestsellers' || pBadgeNorm === 'bestseller' || pBadgeNorm === 'bestsellers';
+        if (normSel === 'newarrival' || normSel === 'newarrivals' || normSel === 'new') return pColNorm === 'newarrival' || pColNorm === 'newarrivals' || pColNorm === 'new' || pBadgeNorm === 'new' || pBadgeNorm === 'newarrival' || pBadgeNorm === 'newarrivals';
+        if (normSel === 'editorschoice' || normSel === 'editorspick' || normSel === 'editor') return pColNorm === 'editorschoice' || pColNorm === 'editorspick' || pBadgeNorm === 'editorschoice' || pBadgeNorm === 'editorspick';
+        return pColNorm === normSel || pBadgeNorm === normSel;
+      });
+    }
+    if (!handledKeys.has('gender') && !disabledKeys.has('gender') && sp.get('gender')) {
+      const normSel = normalizeAlphaNum(sp.get('gender'));
+      result = result.filter(p => normalizeAlphaNum(p.gender) === normSel || normalizeAlphaNum(p.gender) === 'unisex');
     }
 
     // Sort order
     if (sort === 'price-asc') result.sort((a, b) => a.price - b.price);
     else if (sort === 'price-desc') result.sort((a, b) => b.price - a.price);
-    else if (sort === 'rating') result.sort((a, b) => (b.rating || 0) - (a.rating || 0));
-    else if (sort === 'discount') {
+    else if (sort === 'rating') {
+      result.sort((a, b) => {
+        const rDiff = (b.rating || 0) - (a.rating || 0);
+        if (rDiff !== 0) return rDiff;
+        return (b.reviews || 0) - (a.reviews || 0);
+      });
+    } else if (sort === 'discount') {
       result.sort((a, b) => {
         const discA = a.mrp > a.price && a.mrp > 0 ? ((a.mrp - a.price) / a.mrp) * 100 : 0;
         const discB = b.mrp > b.price && b.mrp > 0 ? ((b.mrp - b.price) / b.mrp) * 100 : 0;
@@ -214,6 +403,13 @@ function ShopInner() {
         const saveA = a.mrp > a.price ? a.mrp - a.price : 0;
         const saveB = b.mrp > b.price ? b.mrp - b.price : 0;
         return saveB - saveA;
+      });
+    } else {
+      // Default: newest
+      result.sort((a, b) => {
+        const aNew = (a.collection === 'new-arrival' || (a.badge || '').toLowerCase().includes('new')) ? 1 : 0;
+        const bNew = (b.collection === 'new-arrival' || (b.badge || '').toLowerCase().includes('new')) ? 1 : 0;
+        return bNew - aNew;
       });
     }
 
@@ -224,15 +420,50 @@ function ShopInner() {
   const activeCategory = sp.get('category');
   const activeCollection = sp.get('collection');
   const activeGender = sp.get('gender');
-  const title = activeCategory
-    ? activeCategory.replace('-', ' ')
-    : activeCollection
-      ? activeCollection.replace('-', ' ')
-      : activeGender
-        ? activeGender
-        : 'All Jewellery';
+  const activeMetal = sp.get('metal');
+  const activeStone = sp.get('stone');
 
-  // Filters UI Component
+  const title = useMemo(() => {
+    if (activeCategory) {
+      const norm = normalizeAlphaNum(activeCategory);
+      if (norm === 'dailywear' || norm === 'daily') return 'Daily Wear Jewellery';
+      if (norm === 'wedding') return 'Wedding Collection';
+      if (norm === 'gold') return 'Gold Jewellery';
+      if (norm === 'diamond') return 'Diamond Jewellery';
+      if (norm === 'men') return "Men's Collection";
+      if (norm === 'women') return "Women's Collection";
+      return activeCategory.replace(/-/g, ' ');
+    }
+    if (activeCollection) {
+      const norm = normalizeAlphaNum(activeCollection);
+      if (norm === 'trending') return 'Trending Collection';
+      if (norm === 'bestseller' || norm === 'bestsellers') return 'Best Sellers';
+      if (norm === 'newarrival' || norm === 'newarrivals' || norm === 'new') return 'New Arrivals';
+      if (norm === 'editorschoice' || norm === 'editorspick') return "Editor's Choice";
+      return activeCollection.replace(/-/g, ' ');
+    }
+    if (activeGender) {
+      const norm = normalizeAlphaNum(activeGender);
+      if (norm === 'men') return "Men's Jewellery";
+      if (norm === 'women') return "Women's Jewellery";
+      return `${activeGender} Jewellery`;
+    }
+    if (activeMetal) {
+      return `${activeMetal} Jewellery`;
+    }
+    if (activeStone) {
+      return `${activeStone} Jewellery`;
+    }
+    for (const g of filterGroups || []) {
+      const customVal = sp.get(g.key);
+      if (customVal && g.enabled !== false) {
+        return `${customVal.replace(/-/g, ' ')} ${g.name || 'Jewellery'}`;
+      }
+    }
+    return 'All Jewellery';
+  }, [activeCategory, activeCollection, activeGender, activeMetal, activeStone, filterGroups, sp]);
+
+  // Filters UI Component - 100% Dynamic rendering based on backend state
   const Filters = ({ animate = false }) => {
     const listVariants = {
       hidden: { opacity: 0 },
@@ -275,11 +506,11 @@ function ShopInner() {
           <div className="text-xs text-neutral-400 py-6">No filter groups available</div>
         ) : (
           renderGroups.map(group => {
-            // Price Filter Section
-            if (group.type === 'price' || group.key === 'price') {
-              const minVal = group.priceConfig?.min !== undefined ? group.priceConfig.min : 0;
-              const maxVal = group.priceConfig?.max !== undefined ? group.priceConfig.max : 1000000;
-              const stepVal = group.priceConfig?.step !== undefined ? group.priceConfig.step : 5000;
+            // Price / Range Filter Section
+            if (group.type === 'price' || group.type === 'range' || group.key === 'price') {
+              const minVal = group.priceConfig?.min ?? group.min ?? 0;
+              const maxVal = Math.max(group.priceConfig?.max ?? group.max ?? 1000000, ...all.map(p => p.price || 0));
+              const stepVal = group.priceConfig?.step ?? group.step ?? 5000;
               const priceOptions = (group.options || []).filter(o => o.enabled !== false);
               const Element = animate ? motion.div : 'div';
               const props = animate ? { variants: itemVariants } : {};
@@ -299,14 +530,17 @@ function ShopInner() {
                     max={maxVal}
                     step={stepVal}
                     value={range[1]}
-                    onChange={e => setRange([range[0], +e.target.value])}
+                    onChange={e => {
+                      const newMax = +e.target.value;
+                      setRange([range[0], newMax]);
+                    }}
                     className="w-full mt-2 accent-[#9C6B30] cursor-pointer"
                   />
                   {priceOptions.length > 0 && (
                     <ul className="mt-3 space-y-1.5 pt-2 border-t border-neutral-100">
                       {priceOptions.map(opt => {
                         const selectedVal = sp.get(group.key);
-                        const isSelected = selectedVal === opt.value;
+                        const isSelected = isOptionSelected(selectedVal, opt.value, group.key);
                         return (
                           <li key={opt.id || opt.value}>
                             <button
@@ -353,7 +587,7 @@ function ShopInner() {
                 </div>
                 <ul className="space-y-2">
                   {activeOptions.map(opt => {
-                    const isSelected = selectedValue === opt.value;
+                    const isSelected = isOptionSelected(selectedValue, opt.value, group.key);
                     return (
                       <li key={opt.id || opt.value}>
                         <button
@@ -361,7 +595,7 @@ function ShopInner() {
                           className={`text-sm capitalize transition-colors text-left flex items-center justify-between w-full group ${isSelected ? 'text-[#9C6B30] font-semibold' : 'text-neutral-600 hover:text-[#9C6B30]'
                             }`}
                         >
-                          <span>{opt.name || opt.value.replace('-', ' ')}</span>
+                          <span>{opt.name || opt.value.replace(/-/g, ' ')}</span>
                           {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-[#9C6B30]" />}
                         </button>
                       </li>
