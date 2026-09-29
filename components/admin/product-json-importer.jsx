@@ -100,7 +100,7 @@ function normalizeKey(str) {
     .replace(/\s+/g, ' ');
 }
 
-// Robust Parser for both standard JSON and JavaScript product files (.js / .mjs / .cjs)
+// Robust Resilient Parser for standard JSON and JavaScript product files (.js / .mjs / .cjs)
 function parseCatalogData(rawText) {
   if (!rawText || !rawText.trim()) throw new Error('File content is empty');
   const trimmed = rawText.trim();
@@ -108,70 +108,117 @@ function parseCatalogData(rawText) {
   // 1. Attempt standard JSON parsing
   try {
     return JSON.parse(trimmed);
-  } catch (_) {
-    // Proceed to JavaScript parsing
-  }
+  } catch (_) {}
 
   // 2. Strip imports that could cause syntax errors in Function()
   let sanitized = trimmed
     .replace(/^import\s+[\s\S]*?from\s+['"][^'"]+['"];?/gm, '')
     .replace(/^import\s+['"][^'"]+['"];?/gm, '');
 
-  // 3. Attempt executing in isolated Function sandbox
+  // 3. Execution in isolated Function sandbox with resilient with() proxy scope
   try {
     const transformed = sanitized
-      .replace(/export\s+default\s+/g, 'const __defaultExport = ')
-      .replace(/export\s+(const|let|var)\s+/g, '$1 ')
+      .replace(/export\s+default\s+/g, 'var __defaultExport = ')
+      .replace(/export\s+(const|let|var)\s+/g, 'var ')
       .replace(/export\s+/g, '');
 
+    const scopeStore = { module: { exports: null }, exports: {} };
+
+    const createDummy = (name) => {
+      const dummy = function() { return ''; };
+      dummy.__isDummy = true;
+      return new Proxy(dummy, {
+        get: (t, p) => {
+          if (p === '__isDummy') return true;
+          if (p === Symbol.toPrimitive || p === 'toString' || p === 'valueOf') {
+            return () => String(name);
+          }
+          return `${String(name)}_${String(p)}`;
+        }
+      });
+    };
+
+    const globalRef = typeof window !== 'undefined' ? window : globalThis;
+
+    const safeScope = new Proxy(scopeStore, {
+      has: (target, prop) => {
+        if (prop === '__scope__') return false;
+        return true;
+      },
+      get: (target, prop) => {
+        if (prop === Symbol.unscopables) return undefined;
+        if (prop in target) return target[prop];
+        if (prop in globalRef) return globalRef[prop];
+        return createDummy(prop);
+      },
+      set: (target, prop, value) => {
+        target[prop] = value;
+        return true;
+      }
+    });
+
     const code = `
-      "use strict";
-      ${transformed}
-      if (typeof PRODUCTS !== 'undefined') return PRODUCTS;
-      if (typeof products !== 'undefined') return products;
-      if (typeof CATALOG !== 'undefined') return CATALOG;
-      if (typeof catalog !== 'undefined') return catalog;
-      if (typeof __defaultExport !== 'undefined') return __defaultExport;
-      if (typeof module !== 'undefined' && module && module.exports) return module.exports;
+      with (__scope__) {
+        ${transformed}
+      }
     `;
 
-    const fn = new Function('module', 'exports', code);
-    const mockModule = { exports: null };
-    const result = fn(mockModule, mockModule.exports);
-    if (result && (Array.isArray(result) || typeof result === 'object')) {
-      return result;
+    const fn = new Function('__scope__', code);
+    fn(safeScope);
+
+    // Look for explicit or default export in scopeStore
+    const explicitKeys = ['PRODUCTS', 'products', 'CATALOG', 'catalog', 'ITEMS', 'items', 'DATA', 'data', '__defaultExport'];
+    for (const key of explicitKeys) {
+      const val = scopeStore[key];
+      if (val && !val.__isDummy) {
+        if (Array.isArray(val) || (typeof val === 'object' && val.products)) return val;
+      }
+    }
+
+    if (scopeStore.module?.exports && !scopeStore.module.exports.__isDummy) {
+      const exp = scopeStore.module.exports;
+      if (Array.isArray(exp) || (typeof exp === 'object' && exp.products)) return exp;
+    }
+
+    // Look for any array in scopeStore that contains objects with 'name' or 'price'
+    for (const val of Object.values(scopeStore)) {
+      if (Array.isArray(val) && val.length > 0 && typeof val[0] === 'object' && (val[0].name || val[0].price || val[0].id || val[0].sku)) {
+        return val;
+      }
     }
   } catch (err1) {
-    // 4. Attempt direct expression evaluation (for raw array/object literal with unquoted keys, single quotes, etc.)
-    try {
-      const expr = sanitized
-        .replace(/export\s+default\s+/g, '')
-        .replace(/export\s+(?:const|let|var)\s+\w+\s*=\s*/g, '')
-        .replace(/module\.exports\s*=\s*/g, '')
-        .trim()
-        .replace(/;+$/, '');
-
-      const fnExpr = new Function('"use strict"; return (' + expr + ');');
-      const exprRes = fnExpr();
-      if (exprRes && (Array.isArray(exprRes) || typeof exprRes === 'object')) {
-        return exprRes;
-      }
-    } catch (err2) {
-      // 5. Fallback: Extract from first '[' to last ']'
-      const firstBracket = sanitized.indexOf('[');
-      const lastBracket = sanitized.lastIndexOf(']');
-      if (firstBracket !== -1 && lastBracket > firstBracket) {
-        try {
-          const arrCode = sanitized.slice(firstBracket, lastBracket + 1);
-          const fnArr = new Function('"use strict"; return (' + arrCode + ');');
-          const arrRes = fnArr();
-          if (Array.isArray(arrRes)) return arrRes;
-        } catch (_) {}
-      }
-
-      throw new Error(err1?.message || 'Could not parse JavaScript or JSON product data. Please check syntax.');
-    }
+    // Proceed to expression evaluation
   }
+
+  // 4. Attempt direct expression evaluation (for raw array/object literal with unquoted keys, single quotes, etc.)
+  try {
+    const expr = sanitized
+      .replace(/export\s+default\s+/g, '')
+      .replace(/export\s+(?:const|let|var)\s+\w+\s*=\s*/g, '')
+      .replace(/module\.exports\s*=\s*/g, '')
+      .trim()
+      .replace(/;+$/, '');
+
+    const fnExpr = new Function('return (' + expr + ');');
+    const exprRes = fnExpr();
+    if (exprRes && (Array.isArray(exprRes) || typeof exprRes === 'object')) {
+      return exprRes;
+    }
+  } catch (err2) {}
+
+  // 5. Fallback: Extract from first '[' to last ']'
+  const firstBracket = sanitized.indexOf('[');
+  const lastBracket = sanitized.lastIndexOf(']');
+  if (firstBracket !== -1 && lastBracket > firstBracket) {
+    try {
+      const arrCode = sanitized.slice(firstBracket, lastBracket + 1);
+      const fnArr = new Function('return (' + arrCode + ');');
+      const arrRes = fnArr();
+      if (Array.isArray(arrRes)) return arrRes;
+    } catch (_) {}
+  }
+
+  throw new Error('Could not parse JavaScript or JSON product data. Please check syntax.');
 }
 
 export default function ProductJsonImporter({ isOpen, onClose, existingProducts = [], onImportSuccess }) {
@@ -375,9 +422,14 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
 
       // Match images from uploaded files
       const matchedForThisProduct = [];
-      const explicitImages = Array.isArray(raw.images)
-        ? raw.images
-        : (typeof raw.images === 'string' ? [raw.images] : (raw.image ? [raw.image] : []));
+      const rawImgField = raw.images || raw.image || raw.img || raw.thumbnail || [];
+      const explicitImages = Array.isArray(rawImgField)
+        ? rawImgField
+        : (typeof rawImgField === 'string'
+            ? (rawImgField.includes(',') || rawImgField.includes('\n')
+                ? rawImgField.split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+                : [rawImgField.trim()])
+            : []);
 
       // Rule 1: Match explicit filenames specified in file
       imageFiles.forEach(img => {
@@ -414,7 +466,24 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
       matchedForThisProduct.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 
       // Retain any existing web URLs already present in JSON
-      const remoteUrls = explicitImages.filter(img => typeof img === 'string' && (img.startsWith('http://') || img.startsWith('https://') || img.startsWith('/')));
+      const remoteUrls = explicitImages.filter(img => typeof img === 'string' && (img.startsWith('http://') || img.startsWith('https://') || img.startsWith('/') || img.startsWith('data:')));
+
+      // Extract all product information from .js file
+      const description = (raw.description || raw.desc || raw.details || raw.about || raw.productDescription || '').trim();
+      const badge = (raw.badge || '').trim();
+      const metal = (raw.metal || raw.metalComposition || '').trim();
+      const purity = (raw.purity || raw.goldPurity || '').trim();
+      const stone = (raw.stone || raw.stoneDetails || '').trim();
+      const weight = (raw.weight || '').trim();
+      const size = (raw.size || raw.productSize || '').trim();
+      const video = (raw.video || '').trim();
+      const rating = raw.rating !== undefined && !isNaN(Number(raw.rating)) ? Number(raw.rating) : 0;
+      const reviews = raw.reviews !== undefined && !isNaN(parseInt(raw.reviews)) ? parseInt(raw.reviews) : 0;
+      const featured = raw.featured !== undefined ? Boolean(raw.featured) : (badge.toLowerCase() === 'bestseller' || badge.toLowerCase() === 'trending');
+      const bestseller = raw.bestseller !== undefined ? Boolean(raw.bestseller) : (badge.toLowerCase() === 'bestseller');
+      const newArrival = raw.newArrival !== undefined ? Boolean(raw.newArrival) : (badge.toLowerCase() === 'new' || (raw.collection && raw.collection === 'new-arrival'));
+      const seoTitle = (raw.seoTitle || '').trim();
+      const seoDescription = (raw.seoDescription || '').trim();
 
       productsProcessed.push({
         tempId: `prod_${index}_${Math.random().toString(36).slice(2, 7)}`,
@@ -427,11 +496,28 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
         collection: raw.collection || 'trending',
         gender: raw.gender || 'women',
         sku: raw.sku || '',
+        slug: raw.slug || '',
         existingMatch: existingMatch || null,
         status: existingMatch ? 'update' : 'new',
         matchedImages: matchedForThisProduct,
         remoteUrls,
-        description: raw.description || ''
+        description,
+        badge,
+        metal,
+        purity,
+        stone,
+        weight,
+        size,
+        video,
+        rating,
+        reviews,
+        featured,
+        bestseller,
+        newArrival,
+        specifications: raw.specifications,
+        productBenefits: raw.productBenefits,
+        seoTitle,
+        seoDescription
       });
     });
 
@@ -597,6 +683,7 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
         return {
           ...p.raw,
           name: p.name,
+          slug: p.slug,
           price: p.price,
           mrp: p.mrp,
           stock: p.stock,
@@ -605,6 +692,22 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
           gender: p.gender,
           sku: p.sku,
           description: p.description,
+          badge: p.badge,
+          metal: p.metal,
+          purity: p.purity,
+          stone: p.stone,
+          weight: p.weight,
+          size: p.size,
+          rating: p.rating,
+          reviews: p.reviews,
+          video: p.video,
+          featured: p.featured,
+          bestseller: p.bestseller,
+          newArrival: p.newArrival,
+          specifications: p.specifications,
+          productBenefits: p.productBenefits,
+          seoTitle: p.seoTitle,
+          seoDescription: p.seoDescription,
           images: allImages
         };
       });
@@ -654,6 +757,7 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
   const matchedExistingCount = parsedProducts.filter(p => p.existingMatch).length;
   const newProductsCount = parsedProducts.length - matchedExistingCount;
   const totalMatchedImagesCount = parsedProducts.reduce((acc, p) => acc + p.matchedImages.length, 0);
+  const withDescriptionCount = parsedProducts.filter(p => !!p.description).length;
 
   return (
     <div className="fixed inset-0 bg-[#1A1A1A]/50 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
@@ -975,19 +1079,23 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
           {step === 'preview' && (
             <div className="space-y-6">
               {/* Summary Stats Row */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                 <div className="bg-white p-3.5 rounded-xl border border-neutral-200 shadow-2xs">
                   <span className="text-[10px] text-neutral-400 uppercase tracking-widest font-semibold block">Total In Catalog</span>
                   <span className="text-xl font-bold text-neutral-800 font-display mt-0.5 block">{parsedProducts.length}</span>
                 </div>
+                <div className="bg-white p-3.5 rounded-xl border border-purple-200/80 bg-purple-50/20 shadow-2xs">
+                  <span className="text-[10px] text-purple-700 uppercase tracking-widest font-semibold block">With Description</span>
+                  <span className="text-xl font-bold text-purple-800 font-display mt-0.5 block">{withDescriptionCount}</span>
+                </div>
                 <div className="bg-white p-3.5 rounded-xl border border-amber-200/80 bg-amber-50/20 shadow-2xs">
                   <span className="text-[10px] text-amber-700 uppercase tracking-widest font-semibold block">Matches Existing</span>
                   <span className="text-xl font-bold text-amber-800 font-display mt-0.5 block">
-                    {matchedExistingCount} {matchMode === 'update' ? '(Will Update)' : matchMode === 'skip' ? '(Will Skip)' : '(Duplicate)'}
+                    {matchedExistingCount} {matchMode === 'update' ? '(Update)' : matchMode === 'skip' ? '(Skip)' : '(Duplicate)'}
                   </span>
                 </div>
                 <div className="bg-white p-3.5 rounded-xl border border-blue-200/80 bg-blue-50/20 shadow-2xs">
-                  <span className="text-[10px] text-blue-700 uppercase tracking-widest font-semibold block">Brand New Products</span>
+                  <span className="text-[10px] text-blue-700 uppercase tracking-widest font-semibold block">Brand New Items</span>
                   <span className="text-xl font-bold text-blue-800 font-display mt-0.5 block">{newProductsCount}</span>
                 </div>
                 <div className="bg-white p-3.5 rounded-xl border border-emerald-200/80 bg-emerald-50/20 shadow-2xs">
@@ -1057,8 +1165,8 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
                     <div key={item.tempId} className="p-4 hover:bg-neutral-50/40 transition-colors">
                       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                         {/* Left Info */}
-                        <div className="space-y-1 max-w-md">
-                          <div className="flex items-center gap-2">
+                        <div className="space-y-1.5 max-w-lg">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className="text-xs font-mono text-neutral-400 font-bold">#{index + 1}</span>
                             <span className="text-sm font-semibold text-neutral-900">{item.name}</span>
                             {item.existingMatch ? (
@@ -1070,8 +1178,13 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
                                 New Item
                               </span>
                             )}
+                            {item.badge && (
+                              <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 uppercase tracking-wider">
+                                {item.badge}
+                              </span>
+                            )}
                           </div>
-                          <div className="flex items-center gap-3 text-[11px] text-neutral-500 font-medium">
+                          <div className="flex flex-wrap items-center gap-2 text-[11px] text-neutral-500 font-medium">
                             <span className="capitalize">{item.category}</span>
                             <span>•</span>
                             <span className="font-semibold text-neutral-800">{formatINR(item.price)}</span>
@@ -1082,6 +1195,47 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
                             <span>Stock: {item.stock}</span>
                             {item.sku && <span>• SKU: {item.sku}</span>}
                           </div>
+
+                          {/* Description info taken from .js file */}
+                          {item.description ? (
+                            <p className="text-[11px] text-neutral-600 line-clamp-2 leading-relaxed bg-[#FAF6EF]/50 p-2 rounded-md border border-[#9C6B30]/15" title={item.description}>
+                              <span className="font-semibold text-[#9C6B30]">Description: </span>
+                              {item.description}
+                            </p>
+                          ) : (
+                            <p className="text-[10px] text-neutral-400 italic">No description provided in file</p>
+                          )}
+
+                          {/* Specifications pills from .js file */}
+                          {(item.metal || item.purity || item.stone || item.weight || item.size) && (
+                            <div className="flex flex-wrap items-center gap-1.5 text-[10px] pt-0.5">
+                              {item.metal && (
+                                <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                                  Metal: {item.metal}
+                                </span>
+                              )}
+                              {item.purity && (
+                                <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                                  Purity: {item.purity}
+                                </span>
+                              )}
+                              {item.stone && item.stone !== '—' && (
+                                <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200">
+                                  Stone: {item.stone}
+                                </span>
+                              )}
+                              {item.weight && (
+                                <span className="px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-700 border border-neutral-200">
+                                  Wt: {item.weight}
+                                </span>
+                              )}
+                              {item.size && item.size !== '—' && (
+                                <span className="px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-700 border border-neutral-200">
+                                  Size: {item.size}
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
 
                         {/* Matched Images Strip */}

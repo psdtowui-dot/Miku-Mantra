@@ -4423,6 +4423,62 @@ async function handleRoute(request, { params }) {
         }
       }
 
+      if (sub === 'upload-batch' && method === 'POST') {
+        try {
+          const formData = await request.formData();
+          const files = formData.getAll('files');
+          if (!files || !files.length) return err('No files provided', 400);
+
+          const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+          const uploads = [];
+          const uploadsDir = pathModule.join(process.cwd(), 'public', 'uploads');
+          if (!fs.existsSync(uploadsDir)) {
+            fs.mkdirSync(uploadsDir, { recursive: true });
+          }
+
+          for (const file of files) {
+            try {
+              const fileType = file.type || 'image/jpeg';
+              const originalName = file.name || 'image.jpg';
+              const ext = pathModule.extname(originalName).toLowerCase();
+              if (!['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext)) {
+                continue;
+              }
+              if (file.size > 10 * 1024 * 1024) continue;
+
+              const bytes = await file.arrayBuffer();
+              const buffer = Buffer.from(bytes);
+              const filename = `${uuidv4()}-${originalName.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+
+              let savedToDb = false;
+              try {
+                await db.collection('uploads').insertOne({
+                  filename,
+                  contentType: fileType,
+                  data: buffer,
+                  createdAt: new Date()
+                });
+                savedToDb = true;
+              } catch (_) {}
+
+              try {
+                fs.writeFileSync(pathModule.join(uploadsDir, filename), buffer);
+              } catch (_) {}
+
+              const url = savedToDb ? `/api/uploads/${filename}` : `/uploads/${filename}`;
+              uploads.push({ originalName, filename, url });
+            } catch (singleErr) {
+              console.warn('Batch single file upload error:', singleErr);
+            }
+          }
+
+          return ok({ uploads });
+        } catch (e) {
+          console.error('Batch upload error:', e);
+          return err('Batch upload failed: ' + e.message, 500);
+        }
+      }
+
       // Global Banner settings transitions
       if (sub === 'bannerSettings') {
         if (method === 'GET') {
@@ -4493,6 +4549,318 @@ async function handleRoute(request, { params }) {
         _cache.delete('admin_dashboard');
         return ok({ product: clean(p) });
       }
+
+      // Products Bulk Import (takes all information from .js or .json file including description, specs, benefits, etc.)
+      if (sub === 'products/import' && method === 'POST') {
+        if (!hasPermission(admin, 'products.create') && !hasPermission(admin, 'products.edit')) {
+          return err('Permission denied: products.create or products.edit required', 403);
+        }
+        const b = await request.json();
+        const rawProducts = Array.isArray(b.products) ? b.products : [];
+        if (!rawProducts.length) return err('No products provided for import', 400);
+
+        const matchMode = b.matchMode || 'update'; // 'update' | 'skip' | 'create_new'
+        const overwriteImages = Boolean(b.overwriteImages);
+
+        let createdCount = 0;
+        let updatedCount = 0;
+        let skippedCount = 0;
+        const errors = [];
+        const now = new Date();
+
+        for (let i = 0; i < rawProducts.length; i++) {
+          const item = rawProducts[i];
+          const name = (item.name || '').trim();
+          if (!name) {
+            errors.push({ index: i, error: 'Product name is required' });
+            continue;
+          }
+
+          const price = Number(item.price);
+          if (isNaN(price) || price < 0) {
+            errors.push({ index: i, name, error: 'Price must be a valid non-negative number' });
+            continue;
+          }
+
+          const mrp = item.mrp !== undefined && item.mrp !== '' && !isNaN(Number(item.mrp))
+            ? Number(item.mrp)
+            : price;
+          const stock = item.stock !== undefined && !isNaN(parseInt(item.stock))
+            ? parseInt(item.stock)
+            : 10;
+
+          const category = (item.category || 'gold').trim();
+          const collection = (item.collection || 'trending').trim();
+          const gender = (item.gender || 'women').trim();
+          const sku = (item.sku || '').trim();
+          const description = (item.description || item.desc || item.details || item.about || item.productDescription || '').trim();
+          const badge = (item.badge || '').trim();
+          const metal = (item.metal || item.metalComposition || '').trim();
+          const purity = (item.purity || item.goldPurity || '').trim();
+          const stone = (item.stone || item.stoneDetails || '').trim();
+          const weight = (item.weight || '').trim();
+          const size = (item.size || item.productSize || '').trim();
+          const video = (item.video || '').trim();
+          const rating = item.rating !== undefined && !isNaN(Number(item.rating)) ? Number(item.rating) : 0;
+          const reviews = item.reviews !== undefined && !isNaN(parseInt(item.reviews)) ? parseInt(item.reviews) : 0;
+          const featured = item.featured !== undefined ? Boolean(item.featured) : (badge.toLowerCase() === 'bestseller' || badge.toLowerCase() === 'trending');
+          const bestseller = item.bestseller !== undefined ? Boolean(item.bestseller) : (badge.toLowerCase() === 'bestseller' || collection === 'best-sellers');
+          const newArrival = item.newArrival !== undefined ? Boolean(item.newArrival) : (badge.toLowerCase() === 'new' || collection === 'new-arrival');
+          const seoTitle = (item.seoTitle || `${name} | MikuMantra Fine Jewellery`).trim();
+          const seoDescription = (item.seoDescription || (description ? description.slice(0, 155) : '')).trim();
+
+          // Normalize specifications
+          let specifications = [];
+          if (Array.isArray(item.specifications) && item.specifications.length > 0) {
+            specifications = item.specifications
+              .filter(s => s && (s.label?.trim() || s.value?.trim()))
+              .map((s, idx) => ({
+                id: s.id || uuidv4(),
+                label: s.label?.trim() || '',
+                value: s.value?.trim() || '',
+                enabled: s.enabled !== false,
+                order: s.order !== undefined && !isNaN(s.order) ? +s.order : idx
+              }));
+          } else if (item.specifications && typeof item.specifications === 'object') {
+            specifications = Object.entries(item.specifications).map(([lbl, val], idx) => ({
+              id: uuidv4(),
+              label: lbl.trim(),
+              value: String(val).trim(),
+              enabled: true,
+              order: idx
+            }));
+          } else {
+            let sOrder = 0;
+            if (metal) specifications.push({ id: 'legacy-metal', label: 'Metal', value: metal, enabled: true, order: sOrder++ });
+            if (purity) specifications.push({ id: 'legacy-purity', label: 'Purity', value: purity, enabled: true, order: sOrder++ });
+            if (stone && stone !== '—') specifications.push({ id: 'legacy-stone', label: 'Stone', value: stone, enabled: true, order: sOrder++ });
+            if (weight) specifications.push({ id: 'legacy-weight', label: 'Weight', value: weight, enabled: true, order: sOrder++ });
+            if (size && size !== '—') specifications.push({ id: 'legacy-size', label: 'Size', value: size, enabled: true, order: sOrder++ });
+          }
+
+          // Normalize product benefits
+          let productBenefits = null;
+          if (Array.isArray(item.productBenefits) && item.productBenefits.length > 0) {
+            productBenefits = item.productBenefits
+              .filter(b => b && b.title?.trim())
+              .map((b, idx) => ({
+                id: b.id || uuidv4(),
+                title: b.title.trim(),
+                icon: b.icon?.trim() || 'ShieldCheck',
+                description: b.description?.trim() || '',
+                enabled: b.enabled !== false,
+                order: b.order !== undefined && !isNaN(b.order) ? +b.order : idx
+              }));
+          }
+
+          // Normalize images
+          let incomingImages = [];
+          if (Array.isArray(item.images)) {
+            incomingImages = item.images.map(s => String(s).trim()).filter(Boolean);
+          } else if (typeof item.images === 'string' && item.images.trim()) {
+            incomingImages = item.images.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+          } else if (item.image) {
+            incomingImages = [String(item.image).trim()];
+          } else if (item.img) {
+            incomingImages = [String(item.img).trim()];
+          }
+
+          // Search existing product by sku, slug, id, or case-insensitive exact name
+          let existing = null;
+          if (matchMode !== 'create_new') {
+            const queryConditions = [];
+            if (sku) queryConditions.push({ sku });
+            if (item.slug) queryConditions.push({ slug: item.slug.trim().toLowerCase() });
+            if (item.id) queryConditions.push({ id: item.id });
+            queryConditions.push({ name: { $regex: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } });
+
+            existing = await db.collection('products').findOne({ $or: queryConditions });
+          }
+
+          if (existing && matchMode === 'skip') {
+            skippedCount++;
+            continue;
+          }
+
+          if (existing && matchMode === 'update') {
+            let finalImages = existing.images || [];
+            if (overwriteImages) {
+              if (incomingImages.length > 0) finalImages = incomingImages;
+            } else {
+              if (incomingImages.length > 0) {
+                finalImages = Array.from(new Set([...incomingImages, ...finalImages]));
+              }
+            }
+
+            const updateDoc = {
+              ...item,
+              name,
+              category,
+              collection,
+              gender,
+              price,
+              mrp,
+              stock: item.stock !== undefined ? stock : (existing.stock ?? stock),
+              description: description || existing.description || '',
+              sku: sku || existing.sku || '',
+              badge: badge || existing.badge || '',
+              metal: metal || existing.metal || '',
+              purity: purity || existing.purity || '',
+              stone: stone || existing.stone || '',
+              weight: weight || existing.weight || '',
+              size: size || existing.size || '',
+              video: video || existing.video || '',
+              rating: item.rating !== undefined ? rating : (existing.rating ?? 0),
+              reviews: item.reviews !== undefined ? reviews : (existing.reviews ?? 0),
+              featured: item.featured !== undefined ? featured : (existing.featured ?? featured),
+              bestseller: item.bestseller !== undefined ? bestseller : (existing.bestseller ?? bestseller),
+              newArrival: item.newArrival !== undefined ? newArrival : (existing.newArrival ?? newArrival),
+              seoTitle: seoTitle || existing.seoTitle || '',
+              seoDescription: seoDescription || existing.seoDescription || '',
+              specifications: specifications.length > 0 ? specifications : (existing.specifications || []),
+              productBenefits: productBenefits || existing.productBenefits || DEFAULT_PRODUCT_BENEFITS,
+              images: finalImages,
+              updatedAt: now
+            };
+            delete updateDoc._id;
+            delete updateDoc.id;
+
+            await db.collection('products').updateOne({ id: existing.id }, { $set: updateDoc });
+            updatedCount++;
+          } else {
+            let slug = item.slug
+              ? item.slug.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-')
+              : name.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+            let existingSlug = await db.collection('products').findOne({ slug });
+            if (existingSlug) {
+              slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
+            }
+
+            const newProd = {
+              ...item,
+              id: item.id || uuidv4(),
+              slug,
+              name,
+              category,
+              collection,
+              gender,
+              price,
+              mrp,
+              stock,
+              description,
+              sku,
+              badge,
+              metal,
+              purity,
+              stone,
+              weight,
+              size,
+              video,
+              rating,
+              reviews,
+              featured,
+              bestseller,
+              newArrival,
+              seoTitle,
+              seoDescription,
+              specifications,
+              productBenefits: productBenefits || DEFAULT_PRODUCT_BENEFITS,
+              images: incomingImages,
+              createdAt: now,
+              updatedAt: now
+            };
+
+            await db.collection('products').insertOne(newProd);
+            createdCount++;
+          }
+        }
+
+        cacheBust('products:');
+        _cache.delete('admin_products');
+        _cache.delete('admin_dashboard');
+
+        return ok({
+          ok: true,
+          createdCount,
+          updatedCount,
+          skippedCount,
+          total: rawProducts.length,
+          errors
+        });
+      }
+
+      // Products Bulk Delete
+      if (sub === 'products/bulk-delete' && method === 'POST') {
+        if (!hasPermission(admin, 'products.delete')) return err('Permission denied: products.delete required', 403);
+        const { ids } = await request.json();
+        if (!Array.isArray(ids) || !ids.length) return err('No product IDs provided', 400);
+        const res = await db.collection('products').deleteMany({ id: { $in: ids } });
+        cacheBust('products:');
+        _cache.delete('admin_products');
+        _cache.delete('admin_dashboard');
+        return ok({ ok: true, deletedCount: res.deletedCount || ids.length });
+      }
+
+      // Products Bulk Actions (duplicate, update category/collection/stock/flags)
+      if (sub === 'products/bulk-action' && method === 'POST') {
+        if (!hasPermission(admin, 'products.edit')) return err('Permission denied: products.edit required', 403);
+        const { action, ids, data } = await request.json();
+        if (!Array.isArray(ids) || !ids.length) return err('No product IDs provided', 400);
+
+        let affected = 0;
+        if (action === 'duplicate') {
+          const prods = await db.collection('products').find({ id: { $in: ids } }).toArray();
+          const clones = prods.map(p => {
+            const shortId = Math.random().toString(36).slice(2, 6);
+            const { _id, ...rest } = p;
+            return {
+              ...rest,
+              id: uuidv4(),
+              slug: `${p.slug || p.name.toLowerCase().replace(/[^a-z0-9_-]/g, '-')}-copy-${shortId}`,
+              name: `${p.name} (Copy)`,
+              createdAt: new Date(),
+              updatedAt: new Date()
+            };
+          });
+          if (clones.length) {
+            await db.collection('products').insertMany(clones);
+            affected = clones.length;
+          }
+        } else if (action === 'update_category' && data?.category) {
+          const r = await db.collection('products').updateMany({ id: { $in: ids } }, { $set: { category: data.category, updatedAt: new Date() } });
+          affected = r.modifiedCount || ids.length;
+        } else if (action === 'update_collection' && data?.collection) {
+          const r = await db.collection('products').updateMany({ id: { $in: ids } }, { $set: { collection: data.collection, updatedAt: new Date() } });
+          affected = r.modifiedCount || ids.length;
+        } else if (action === 'add_stock') {
+          const qty = Number(data?.quantity) || 0;
+          if (data?.isIncrement) {
+            const r = await db.collection('products').updateMany({ id: { $in: ids } }, { $inc: { stock: qty }, $set: { updatedAt: new Date() } });
+            affected = r.modifiedCount || ids.length;
+          } else {
+            const r = await db.collection('products').updateMany({ id: { $in: ids } }, { $set: { stock: qty, updatedAt: new Date() } });
+            affected = r.modifiedCount || ids.length;
+          }
+        } else if (action === 'set_flags' && data) {
+          const r = await db.collection('products').updateMany({ id: { $in: ids } }, {
+            $set: {
+              ...(data.featured !== undefined ? { featured: Boolean(data.featured) } : {}),
+              ...(data.bestseller !== undefined ? { bestseller: Boolean(data.bestseller) } : {}),
+              ...(data.newArrival !== undefined ? { newArrival: Boolean(data.newArrival) } : {}),
+              updatedAt: new Date()
+            }
+          });
+          affected = r.modifiedCount || ids.length;
+        } else {
+          return err('Invalid bulk action', 400);
+        }
+
+        cacheBust('products:');
+        _cache.delete('admin_products');
+        _cache.delete('admin_dashboard');
+        return ok({ ok: true, count: affected });
+      }
+
       if (sub.startsWith('products/') && method === 'PUT') {
         if (!hasPermission(admin, 'products.edit')) return err('Permission denied: products.edit required', 403);
         const id = sub.split('/')[1];
