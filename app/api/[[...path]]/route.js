@@ -4580,8 +4580,8 @@ async function handleRoute(request, { params }) {
           const collection = (item.collection || 'trending').trim();
           const gender = (item.gender || 'women').trim();
           const sku = (item.sku || '').trim();
-          const description = normalizeImportDesc(item.description ?? item.desc ?? item.details ?? item.about ?? item.productDescription ?? item.info ?? item.summary ?? item.content);
-          const badge = (item.badge || '').trim();
+          const description = normalizeImportDesc(item.description ?? item.longDesc ?? item.desc ?? item.shortDesc ?? item.caption ?? item.details ?? item.about ?? item.productDescription ?? item.info ?? item.summary ?? item.content);
+          const badge = (item.badge || item.tag || '').trim();
           const metal = (item.metal || item.metalComposition || '').trim();
           const purity = (item.purity || item.goldPurity || '').trim();
           const stone = (item.stone || item.stoneDetails || '').trim();
@@ -4598,8 +4598,9 @@ async function handleRoute(request, { params }) {
 
           // Normalize specifications
           let specifications = [];
-          if (Array.isArray(item.specifications) && item.specifications.length > 0) {
-            specifications = item.specifications
+          const rawSpecs = item.specifications ?? item.specs ?? item.specification;
+          if (Array.isArray(rawSpecs) && rawSpecs.length > 0) {
+            specifications = rawSpecs
               .map((s, idx) => {
                 if (!s) return null;
                 if (typeof s === 'string') {
@@ -4621,8 +4622,8 @@ async function handleRoute(request, { params }) {
                 };
               })
               .filter(s => s && (s.label || s.value));
-          } else if (item.specifications && typeof item.specifications === 'object') {
-            specifications = Object.entries(item.specifications).map(([lbl, val], idx) => ({
+          } else if (rawSpecs && typeof rawSpecs === 'object') {
+            specifications = Object.entries(rawSpecs).map(([lbl, val], idx) => ({
               id: uuidv4(),
               label: lbl.trim(),
               value: (typeof val === 'object' ? JSON.stringify(val) : String(val)).trim(),
@@ -4665,15 +4666,17 @@ async function handleRoute(request, { params }) {
             incomingImages = [String(item.image).trim()];
           } else if (item.img) {
             incomingImages = [String(item.img).trim()];
+          } else if (item.icon) {
+            incomingImages = [String(item.icon).trim()];
           }
 
-          // Search existing product by sku, slug, id, or case-insensitive exact name
+          // Search existing product by id, sku, slug, or case-insensitive exact name
           let existing = null;
           if (matchMode !== 'create_new') {
             const queryConditions = [];
+            if (item.id) queryConditions.push({ id: item.id });
             if (sku) queryConditions.push({ sku });
             if (item.slug) queryConditions.push({ slug: item.slug.trim().toLowerCase() });
-            if (item.id) queryConditions.push({ id: item.id });
             queryConditions.push({ name: { $regex: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } });
 
             existing = await db.collection('products').findOne({ $or: queryConditions });
@@ -4726,14 +4729,18 @@ async function handleRoute(request, { params }) {
               updatedAt: now
             };
             delete updateDoc._id;
-            delete updateDoc.id;
+            if (item.id) {
+              updateDoc.id = item.id;
+            } else {
+              delete updateDoc.id;
+            }
 
-            await db.collection('products').updateOne({ id: existing.id }, { $set: updateDoc });
+            await db.collection('products').updateOne({ _id: existing._id }, { $set: updateDoc });
             updatedCount++;
           } else {
             let slug = item.slug
               ? item.slug.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-')
-              : name.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+              : (item.id || name).toLowerCase().replace(/[^a-z0-9_-]/g, '-');
             let existingSlug = await db.collection('products').findOne({ slug });
             if (existingSlug) {
               slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;

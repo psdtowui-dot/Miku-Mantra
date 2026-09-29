@@ -163,7 +163,7 @@ function normalizeKey(str) {
 // Robust extractor for product description
 function extractDescription(raw) {
   if (!raw) return '';
-  const d = raw.description ?? raw.desc ?? raw.details ?? raw.about ?? raw.productDescription ?? raw.info ?? raw.summary ?? raw.content;
+  const d = raw.description ?? raw.longDesc ?? raw.desc ?? raw.shortDesc ?? raw.caption ?? raw.details ?? raw.about ?? raw.productDescription ?? raw.info ?? raw.summary ?? raw.content;
   if (d === undefined || d === null) return '';
   if (typeof d === 'string') return d.trim();
   if (Array.isArray(d)) return d.map(item => typeof item === 'string' ? item : (item?.text || JSON.stringify(item))).join('\n\n').trim();
@@ -278,6 +278,16 @@ function parseCatalogData(rawText) {
     .replace(/^import\s+[\s\S]*?from\s+['"][^'"]+['"];?/gm, '')
     .replace(/^import\s+['"][^'"]+['"];?/gm, '');
 
+  const isProductLike = (v) => {
+    return v && typeof v === 'object' && !Array.isArray(v) && !v.__isDummy &&
+      (v.name || v.title || v.id || v.sku || v.price !== undefined || v.shortDesc || v.longDesc || v.description);
+  };
+
+  const isProductArray = (v) => {
+    return Array.isArray(v) && v.length > 0 && typeof v[0] === 'object' &&
+      (v[0].name || v[0].title || v[0].id || v[0].sku || v[0].price !== undefined || v[0].shortDesc || v[0].longDesc);
+  };
+
   // 3. Execution in isolated Function sandbox with resilient with() proxy scope
   try {
     const transformed = sanitized
@@ -330,22 +340,31 @@ function parseCatalogData(rawText) {
     fn(safeScope);
 
     // Look for explicit or default export in scopeStore
-    const explicitKeys = ['PRODUCTS', 'products', 'CATALOG', 'catalog', 'ITEMS', 'items', 'DATA', 'data', '__defaultExport'];
+    const explicitKeys = ['PRODUCTS', 'products', 'CATALOG', 'catalog', 'ITEMS', 'items', 'DATA', 'data', 'PRODUCT', 'product', 'ITEM', 'item', '__defaultExport'];
     for (const key of explicitKeys) {
       const val = scopeStore[key];
       if (val && !val.__isDummy) {
         if (Array.isArray(val) || (typeof val === 'object' && val.products)) return val;
+        if (isProductLike(val)) return val;
       }
     }
 
     if (scopeStore.module?.exports && !scopeStore.module.exports.__isDummy) {
       const exp = scopeStore.module.exports;
       if (Array.isArray(exp) || (typeof exp === 'object' && exp.products)) return exp;
+      if (isProductLike(exp)) return exp;
     }
 
-    // Look for any array in scopeStore that contains objects with 'name' or 'price'
+    // Look for any array in scopeStore that contains objects with product-like properties
     for (const val of Object.values(scopeStore)) {
-      if (Array.isArray(val) && val.length > 0 && typeof val[0] === 'object' && (val[0].name || val[0].price || val[0].id || val[0].sku)) {
+      if (isProductArray(val)) {
+        return val;
+      }
+    }
+
+    // Look for any variable in scopeStore that is a product object
+    for (const val of Object.values(scopeStore)) {
+      if (isProductLike(val)) {
         return val;
       }
     }
@@ -378,6 +397,18 @@ function parseCatalogData(rawText) {
       const fnArr = new Function('return (' + arrCode + ');');
       const arrRes = fnArr();
       if (Array.isArray(arrRes)) return arrRes;
+    } catch (_) {}
+  }
+
+  // 6. Fallback: Extract from first '{' to last '}'
+  const firstBrace = sanitized.indexOf('{');
+  const lastBrace = sanitized.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      const objCode = sanitized.slice(firstBrace, lastBrace + 1);
+      const fnObj = new Function('return (' + objCode + ');');
+      const objRes = fnObj();
+      if (objRes && typeof objRes === 'object') return objRes;
     } catch (_) {}
   }
 
@@ -577,6 +608,7 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
 
       const existingMatch = existingProducts.find(p => {
         if (!p) return false;
+        if (raw.id && (p.id === raw.id || String(p.id).toLowerCase() === String(raw.id).toLowerCase())) return true;
         if (normalizeKey(p.name) === normName) return true;
         if (normSku && p.sku && normalizeKey(p.sku) === normSku) return true;
         if (normSlug && p.slug && normalizeKey(p.slug) === normSlug) return true;
@@ -585,7 +617,7 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
 
       // Match images from uploaded files
       const matchedForThisProduct = [];
-      const rawImgField = raw.images || raw.image || raw.img || raw.thumbnail || [];
+      const rawImgField = raw.images || raw.image || raw.img || raw.thumbnail || raw.icon || [];
       const explicitImages = Array.isArray(rawImgField)
         ? rawImgField
         : (typeof rawImgField === 'string'
@@ -628,8 +660,10 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
       // Natural sort matched images so image-1, image-2 appear in correct order
       matchedForThisProduct.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 
-      // Retain any existing web URLs already present in JSON
-      const remoteUrls = explicitImages.filter(img => typeof img === 'string' && (img.startsWith('http://') || img.startsWith('https://') || img.startsWith('/') || img.startsWith('data:')));
+      // Retain all existing image paths or web URLs from the uploaded JS file
+      const remoteUrls = explicitImages
+        .map(img => typeof img === 'string' ? img.trim() : (img?.url || String(img)))
+        .filter(Boolean);
 
       // Extract all product information from .js file using robust extractors
       const description = extractDescription(raw);
@@ -637,7 +671,7 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
       const extractedReviews = extractReviews(raw);
 
       const findSpec = (key) => specifications.find(s => s.label?.toLowerCase() === key.toLowerCase())?.value || '';
-      const badge = (raw.badge || '').trim();
+      const badge = (raw.badge || raw.tag || '').trim();
       const metal = (raw.metal || raw.metalComposition || findSpec('metal') || '').trim();
       const purity = (raw.purity || raw.goldPurity || findSpec('purity') || '').trim();
       const stone = (raw.stone || raw.stoneDetails || findSpec('stone') || '').trim();
@@ -662,8 +696,10 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
       const seoDescription = (raw.seoDescription || '').trim();
 
       productsProcessed.push({
+        ...raw,
         tempId: `prod_${index}_${Math.random().toString(36).slice(2, 7)}`,
         raw,
+        id: raw.id || (existingMatch ? existingMatch.id : undefined),
         name,
         price,
         mrp: raw.mrp ? Number(raw.mrp) : price,
@@ -679,6 +715,13 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
         remoteUrls,
         description,
         badge,
+        tag: raw.tag,
+        icon: raw.icon,
+        shortDesc: raw.shortDesc,
+        caption: raw.caption,
+        longDesc: raw.longDesc,
+        meta: raw.meta,
+        specs: raw.specs,
         metal,
         purity,
         stone,
@@ -855,12 +898,18 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
           .map(img => imageMap.get(img.id))
           .filter(Boolean);
 
-        const allImages = [...uploadedUrls, ...(p.remoteUrls || [])];
+        const allImages = uploadedUrls.length > 0
+          ? [...uploadedUrls, ...(p.remoteUrls || [])]
+          : ((p.remoteUrls && p.remoteUrls.length > 0)
+              ? p.remoteUrls
+              : (Array.isArray(p.raw?.images) ? p.raw.images : (p.raw?.image ? [p.raw.image] : (p.raw?.icon ? [p.raw.icon] : []))));
 
         return {
           ...p.raw,
+          ...p,
+          id: p.raw?.id || p.id,
           name: p.name,
-          slug: p.slug,
+          slug: p.slug || p.raw?.slug || '',
           price: p.price,
           mrp: p.mrp,
           stock: p.stock,
@@ -868,7 +917,7 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
           collection: p.collection,
           gender: p.gender,
           sku: p.sku,
-          description: p.description,
+          description: p.description || p.raw?.description || p.raw?.longDesc || p.raw?.shortDesc || '',
           badge: p.badge,
           metal: p.metal,
           purity: p.purity,
@@ -881,7 +930,9 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
           featured: p.featured,
           bestseller: p.bestseller,
           newArrival: p.newArrival,
-          specifications: p.specifications,
+          specifications: (Array.isArray(p.specifications) && p.specifications.length > 0)
+            ? p.specifications
+            : (Array.isArray(p.raw?.specifications) ? p.raw.specifications : []),
           extractedReviews: p.extractedReviews,
           reviewsList: p.extractedReviews,
           productBenefits: p.productBenefits,
@@ -936,8 +987,8 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
   const matchedExistingCount = parsedProducts.filter(p => p.existingMatch).length;
   const newProductsCount = parsedProducts.length - matchedExistingCount;
   const totalMatchedImagesCount = parsedProducts.reduce((acc, p) => acc + p.matchedImages.length, 0);
-  const withDescriptionCount = parsedProducts.filter(p => !!p.description).length;
-  const withSpecsCount = parsedProducts.filter(p => Array.isArray(p.specifications) && p.specifications.length > 0).length;
+  const withDescriptionCount = parsedProducts.filter(p => !!(p.description || p.longDesc || p.shortDesc)).length;
+  const withSpecsCount = parsedProducts.filter(p => (Array.isArray(p.specifications) && p.specifications.length > 0) || (p.specs && typeof p.specs === 'object' && Object.keys(p.specs).length > 0)).length;
   const totalReviewsCount = parsedProducts.reduce((acc, p) => acc + (p.extractedReviews?.length || 0), 0);
 
   return (
@@ -1489,9 +1540,24 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
                             </div>
                           ))}
 
-                          {item.matchedImages.length === 0 && (
+                          {item.matchedImages.length === 0 && item.remoteUrls && item.remoteUrls.length > 0 && (
+                            <div className="flex items-center gap-1.5 overflow-x-auto py-1">
+                              {item.remoteUrls.map((url, uIdx) => (
+                                <div key={uIdx} className={`relative shrink-0 w-12 h-12 rounded-lg overflow-hidden border ${uIdx === 0 ? 'border-[#9C6B30]' : 'border-neutral-200'}`} title={url}>
+                                  <img src={url} alt={`Photo ${uIdx + 1}`} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                                  {uIdx === 0 && (
+                                    <span className="absolute top-0.5 left-0.5 bg-[#9C6B30] text-white text-[7px] font-bold px-1 rounded uppercase tracking-wider">
+                                      JS
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {item.matchedImages.length === 0 && (!item.remoteUrls || item.remoteUrls.length === 0) && (
                             <div className="px-3 py-2 rounded-lg border border-dashed border-neutral-300 text-[11px] text-neutral-400 bg-neutral-50 flex items-center gap-1.5">
-                              <ImageIcon size={13} /> No local photos matched
+                              <ImageIcon size={13} /> No photos
                             </div>
                           )}
                         </div>
