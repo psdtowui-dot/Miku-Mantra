@@ -3,7 +3,7 @@ import { useState, useRef, useMemo, useEffect } from 'react';
 import {
   Upload, FileText, Image as ImageIcon, CheckCircle2, AlertCircle,
   X, ArrowRight, ArrowLeft, Loader2, RefreshCw, Copy, Check,
-  Download, Eye, Sparkles, Plus, AlertTriangle, Layers, Trash2, Code2
+  Download, Eye, Sparkles, Plus, AlertTriangle, Layers, Trash2, Code2, Star
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
@@ -25,7 +25,22 @@ const SAMPLE_JSON = [
     "weight": "4.20 g",
     "size": "Standard",
     "badge": "Bestseller",
-    "description": "A radiant teardrop silhouette set with 32 brilliant-cut diamonds, hand-finished in 18K rose gold."
+    "description": "A radiant teardrop silhouette set with 32 brilliant-cut diamonds, hand-finished in 18K rose gold.",
+    "specifications": [
+      { "label": "Metal", "value": "18K Rose Gold" },
+      { "label": "Stone", "value": "Natural Diamond (0.45 ct)" },
+      { "label": "Purity", "value": "18K (750 BIS Hallmarked)" },
+      { "label": "Weight", "value": "4.20 g" }
+    ],
+    "reviews": [
+      {
+        "reviewerName": "Ananya Sharma",
+        "rating": 5,
+        "title": "Breathtaking brilliance",
+        "comment": "The diamond teardrop pendant looks stunning in person. Truly exceptional craftsmanship.",
+        "verifiedPurchase": true
+      }
+    ]
   },
   {
     "name": "Meher 22K Bridal Choker",
@@ -42,7 +57,22 @@ const SAMPLE_JSON = [
     "weight": "42.80 g",
     "size": "Adjustable",
     "badge": "Bridal",
-    "description": "An heirloom bridal choker in 22K gold, adorned with uncut polki and freshwater pearls."
+    "description": "An heirloom bridal choker in 22K gold, adorned with uncut polki and freshwater pearls.",
+    "specifications": [
+      { "label": "Metal", "value": "22K Yellow Gold" },
+      { "label": "Stone", "value": "Uncut Syndicate Polki & Natural Pearls" },
+      { "label": "Purity", "value": "22K (916 BIS Hallmarked)" },
+      { "label": "Gross Weight", "value": "42.80 g" }
+    ],
+    "reviews": [
+      {
+        "reviewerName": "Radhika Singhania",
+        "rating": 5,
+        "title": "Pure royal heirloom",
+        "comment": "Wore this for our wedding festivities in Jaipur. The polki setting is flawless.",
+        "verifiedPurchase": true
+      }
+    ]
   }
 ];
 
@@ -63,7 +93,22 @@ export const PRODUCTS = [
     weight: "4.20 g",
     size: "Standard",
     badge: "Bestseller",
-    description: "A radiant teardrop silhouette set with 32 brilliant-cut diamonds, hand-finished in 18K rose gold."
+    description: "A radiant teardrop silhouette set with 32 brilliant-cut diamonds, hand-finished in 18K rose gold.",
+    specifications: [
+      { label: "Metal", value: "18K Rose Gold" },
+      { label: "Stone", value: "Natural Diamond (0.45 ct)" },
+      { label: "Purity", value: "18K (750 BIS Hallmarked)" },
+      { label: "Weight", value: "4.20 g" }
+    ],
+    reviews: [
+      {
+        reviewerName: "Ananya Sharma",
+        rating: 5,
+        title: "Breathtaking brilliance",
+        comment: "The diamond teardrop pendant looks stunning in person. Truly exceptional craftsmanship.",
+        verifiedPurchase: true
+      }
+    ]
   },
   {
     name: "Meher 22K Bridal Choker",
@@ -80,7 +125,22 @@ export const PRODUCTS = [
     weight: "42.80 g",
     size: "Adjustable",
     badge: "Bridal",
-    description: "An heirloom bridal choker in 22K gold, adorned with uncut polki and freshwater pearls."
+    description: "An heirloom bridal choker in 22K gold, adorned with uncut polki and freshwater pearls.",
+    specifications: [
+      { label: "Metal", value: "22K Yellow Gold" },
+      { label: "Stone", value: "Uncut Syndicate Polki & Natural Pearls" },
+      { label: "Purity", value: "22K (916 BIS Hallmarked)" },
+      { label: "Gross Weight", value: "42.80 g" }
+    ],
+    reviews: [
+      {
+        reviewerName: "Radhika Singhania",
+        rating: 5,
+        title: "Pure royal heirloom",
+        comment: "Wore this for our wedding festivities in Jaipur. The polki setting is flawless.",
+        verifiedPurchase: true
+      }
+    ]
   }
 ];
 `;
@@ -98,6 +158,109 @@ function normalizeKey(str) {
     .replace(/[^a-z0-9]/g, ' ')
     .trim()
     .replace(/\s+/g, ' ');
+}
+
+// Robust extractor for product description
+function extractDescription(raw) {
+  if (!raw) return '';
+  const d = raw.description ?? raw.desc ?? raw.details ?? raw.about ?? raw.productDescription ?? raw.info ?? raw.summary ?? raw.content;
+  if (d === undefined || d === null) return '';
+  if (typeof d === 'string') return d.trim();
+  if (Array.isArray(d)) return d.map(item => typeof item === 'string' ? item : (item?.text || JSON.stringify(item))).join('\n\n').trim();
+  if (typeof d === 'object') return (d.text || d.en || d.value || JSON.stringify(d)).trim();
+  return String(d).trim();
+}
+
+// Robust extractor for specifications array
+function extractSpecifications(raw) {
+  if (!raw) return [];
+  const source = raw.specifications ?? raw.specs ?? raw.specification;
+  let list = [];
+
+  if (Array.isArray(source) && source.length > 0) {
+    list = source.map((s, idx) => {
+      if (!s) return null;
+      if (typeof s === 'string') {
+        const parts = s.split(/[:=]/);
+        return {
+          id: `spec-${idx}`,
+          label: (parts[0] || '').trim(),
+          value: (parts.slice(1).join(':') || '').trim(),
+          enabled: true,
+          order: idx
+        };
+      }
+      return {
+        id: s.id || `spec-${idx}`,
+        label: (s.label || s.key || s.name || s.title || '').trim(),
+        value: (s.value !== undefined ? String(s.value) : (s.val !== undefined ? String(s.val) : (s.detail || ''))).trim(),
+        enabled: s.enabled !== false,
+        order: s.order !== undefined && !isNaN(s.order) ? +s.order : idx
+      };
+    }).filter(s => s && (s.label || s.value));
+  } else if (source && typeof source === 'object') {
+    list = Object.entries(source).map(([k, v], idx) => ({
+      id: `spec-${idx}`,
+      label: String(k).trim(),
+      value: (typeof v === 'object' ? JSON.stringify(v) : String(v)).trim(),
+      enabled: true,
+      order: idx
+    }));
+  }
+
+  // Augment from top-level fields (metal, purity, stone, weight, size) if not already in list
+  const hasLabel = (lbl) => list.some(s => s.label.toLowerCase() === lbl.toLowerCase());
+  const metal = raw.metal || raw.metalComposition || raw.material;
+  const purity = raw.purity || raw.goldPurity;
+  const stone = raw.stone || raw.stoneDetails || raw.gemstone || raw.diamond;
+  const weight = raw.weight || raw.grossWeight || raw.netWeight;
+  const size = raw.size || raw.productSize || raw.dimensions;
+
+  let currOrder = list.length;
+  if (metal && !hasLabel('metal')) list.push({ id: 'legacy-metal', label: 'Metal', value: String(metal).trim(), enabled: true, order: currOrder++ });
+  if (purity && !hasLabel('purity')) list.push({ id: 'legacy-purity', label: 'Purity', value: String(purity).trim(), enabled: true, order: currOrder++ });
+  if (stone && stone !== '—' && !hasLabel('stone')) list.push({ id: 'legacy-stone', label: 'Stone', value: String(stone).trim(), enabled: true, order: currOrder++ });
+  if (weight && !hasLabel('weight')) list.push({ id: 'legacy-weight', label: 'Weight', value: String(weight).trim(), enabled: true, order: currOrder++ });
+  if (size && size !== '—' && !hasLabel('size')) list.push({ id: 'legacy-size', label: 'Size', value: String(size).trim(), enabled: true, order: currOrder++ });
+
+  return list;
+}
+
+// Robust extractor for reviews array
+function extractReviews(raw) {
+  if (!raw) return [];
+  const source = raw.reviews ?? raw.customerReviews ?? raw.productReviews ?? raw.feedback ?? raw.testimonials;
+  if (!Array.isArray(source) || !source.length) return [];
+
+  return source.map((r, idx) => {
+    if (!r) return null;
+    if (typeof r === 'string') {
+      return {
+        id: `rev-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+        reviewerName: 'Verified Customer',
+        rating: 5,
+        title: '',
+        comment: r.trim(),
+        verifiedPurchase: true
+      };
+    }
+    const ratingNum = Number(r.rating || r.stars || r.score || r.rate);
+    const rating = isNaN(ratingNum) ? 5 : Math.min(5, Math.max(1, ratingNum));
+    const reviewerName = (r.reviewerName || r.author || r.name || r.user || r.userName || r.customerName || 'Verified Customer').trim();
+    const title = (r.title || r.headline || r.subject || '').trim();
+    const comment = (r.comment || r.review || r.text || r.content || r.body || r.message || '').trim();
+
+    return {
+      id: r.id || `rev-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+      reviewerName,
+      reviewerEmail: (r.reviewerEmail || r.email || '').trim(),
+      rating,
+      title,
+      comment,
+      verifiedPurchase: r.verifiedPurchase !== false,
+      date: r.date || r.createdAt || r.timestamp || null
+    };
+  }).filter(r => r && (r.comment || r.title || r.rating));
 }
 
 // Robust Resilient Parser for standard JSON and JavaScript product files (.js / .mjs / .cjs)
@@ -468,17 +631,30 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
       // Retain any existing web URLs already present in JSON
       const remoteUrls = explicitImages.filter(img => typeof img === 'string' && (img.startsWith('http://') || img.startsWith('https://') || img.startsWith('/') || img.startsWith('data:')));
 
-      // Extract all product information from .js file
-      const description = (raw.description || raw.desc || raw.details || raw.about || raw.productDescription || '').trim();
+      // Extract all product information from .js file using robust extractors
+      const description = extractDescription(raw);
+      const specifications = extractSpecifications(raw);
+      const extractedReviews = extractReviews(raw);
+
+      const findSpec = (key) => specifications.find(s => s.label?.toLowerCase() === key.toLowerCase())?.value || '';
       const badge = (raw.badge || '').trim();
-      const metal = (raw.metal || raw.metalComposition || '').trim();
-      const purity = (raw.purity || raw.goldPurity || '').trim();
-      const stone = (raw.stone || raw.stoneDetails || '').trim();
-      const weight = (raw.weight || '').trim();
-      const size = (raw.size || raw.productSize || '').trim();
+      const metal = (raw.metal || raw.metalComposition || findSpec('metal') || '').trim();
+      const purity = (raw.purity || raw.goldPurity || findSpec('purity') || '').trim();
+      const stone = (raw.stone || raw.stoneDetails || findSpec('stone') || '').trim();
+      const weight = (raw.weight || findSpec('weight') || '').trim();
+      const size = (raw.size || raw.productSize || findSpec('size') || '').trim();
       const video = (raw.video || '').trim();
-      const rating = raw.rating !== undefined && !isNaN(Number(raw.rating)) ? Number(raw.rating) : 0;
-      const reviews = raw.reviews !== undefined && !isNaN(parseInt(raw.reviews)) ? parseInt(raw.reviews) : 0;
+
+      const extractedAvgRating = extractedReviews.length > 0
+        ? Math.round((extractedReviews.reduce((sum, r) => sum + (Number(r.rating) || 5), 0) / extractedReviews.length) * 10) / 10
+        : 0;
+      const rating = raw.rating !== undefined && !isNaN(Number(raw.rating))
+        ? Number(raw.rating)
+        : extractedAvgRating;
+      const reviews = raw.reviews !== undefined && !isNaN(parseInt(raw.reviews))
+        ? parseInt(raw.reviews)
+        : extractedReviews.length;
+
       const featured = raw.featured !== undefined ? Boolean(raw.featured) : (badge.toLowerCase() === 'bestseller' || badge.toLowerCase() === 'trending');
       const bestseller = raw.bestseller !== undefined ? Boolean(raw.bestseller) : (badge.toLowerCase() === 'bestseller');
       const newArrival = raw.newArrival !== undefined ? Boolean(raw.newArrival) : (badge.toLowerCase() === 'new' || (raw.collection && raw.collection === 'new-arrival'));
@@ -514,7 +690,8 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
         featured,
         bestseller,
         newArrival,
-        specifications: raw.specifications,
+        specifications,
+        extractedReviews,
         productBenefits: raw.productBenefits,
         seoTitle,
         seoDescription
@@ -705,6 +882,8 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
           bestseller: p.bestseller,
           newArrival: p.newArrival,
           specifications: p.specifications,
+          extractedReviews: p.extractedReviews,
+          reviewsList: p.extractedReviews,
           productBenefits: p.productBenefits,
           seoTitle: p.seoTitle,
           seoDescription: p.seoDescription,
@@ -758,6 +937,8 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
   const newProductsCount = parsedProducts.length - matchedExistingCount;
   const totalMatchedImagesCount = parsedProducts.reduce((acc, p) => acc + p.matchedImages.length, 0);
   const withDescriptionCount = parsedProducts.filter(p => !!p.description).length;
+  const withSpecsCount = parsedProducts.filter(p => Array.isArray(p.specifications) && p.specifications.length > 0).length;
+  const totalReviewsCount = parsedProducts.reduce((acc, p) => acc + (p.extractedReviews?.length || 0), 0);
 
   return (
     <div className="fixed inset-0 bg-[#1A1A1A]/50 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
@@ -1079,7 +1260,7 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
           {step === 'preview' && (
             <div className="space-y-6">
               {/* Summary Stats Row */}
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
                 <div className="bg-white p-3.5 rounded-xl border border-neutral-200 shadow-2xs">
                   <span className="text-[10px] text-neutral-400 uppercase tracking-widest font-semibold block">Total In Catalog</span>
                   <span className="text-xl font-bold text-neutral-800 font-display mt-0.5 block">{parsedProducts.length}</span>
@@ -1088,15 +1269,19 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
                   <span className="text-[10px] text-purple-700 uppercase tracking-widest font-semibold block">With Description</span>
                   <span className="text-xl font-bold text-purple-800 font-display mt-0.5 block">{withDescriptionCount}</span>
                 </div>
+                <div className="bg-white p-3.5 rounded-xl border border-indigo-200/80 bg-indigo-50/20 shadow-2xs">
+                  <span className="text-[10px] text-indigo-700 uppercase tracking-widest font-semibold block">With Specs</span>
+                  <span className="text-xl font-bold text-indigo-800 font-display mt-0.5 block">{withSpecsCount}</span>
+                </div>
                 <div className="bg-white p-3.5 rounded-xl border border-amber-200/80 bg-amber-50/20 shadow-2xs">
-                  <span className="text-[10px] text-amber-700 uppercase tracking-widest font-semibold block">Matches Existing</span>
-                  <span className="text-xl font-bold text-amber-800 font-display mt-0.5 block">
-                    {matchedExistingCount} {matchMode === 'update' ? '(Update)' : matchMode === 'skip' ? '(Skip)' : '(Duplicate)'}
-                  </span>
+                  <span className="text-[10px] text-amber-700 uppercase tracking-widest font-semibold block">Reviews Found</span>
+                  <span className="text-xl font-bold text-amber-800 font-display mt-0.5 block">{totalReviewsCount}</span>
                 </div>
                 <div className="bg-white p-3.5 rounded-xl border border-blue-200/80 bg-blue-50/20 shadow-2xs">
-                  <span className="text-[10px] text-blue-700 uppercase tracking-widest font-semibold block">Brand New Items</span>
-                  <span className="text-xl font-bold text-blue-800 font-display mt-0.5 block">{newProductsCount}</span>
+                  <span className="text-[10px] text-blue-700 uppercase tracking-widest font-semibold block">Matches / New</span>
+                  <span className="text-xl font-bold text-blue-800 font-display mt-0.5 block">
+                    {matchedExistingCount} / {newProductsCount}
+                  </span>
                 </div>
                 <div className="bg-white p-3.5 rounded-xl border border-emerald-200/80 bg-emerald-50/20 shadow-2xs">
                   <span className="text-[10px] text-emerald-700 uppercase tracking-widest font-semibold block">Matched Images</span>
@@ -1198,40 +1383,69 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
 
                           {/* Description info taken from .js file */}
                           {item.description ? (
-                            <p className="text-[11px] text-neutral-600 line-clamp-2 leading-relaxed bg-[#FAF6EF]/50 p-2 rounded-md border border-[#9C6B30]/15" title={item.description}>
-                              <span className="font-semibold text-[#9C6B30]">Description: </span>
-                              {item.description}
-                            </p>
+                            <div className="bg-[#FAF6EF]/60 p-2.5 rounded-lg border border-[#9C6B30]/20 space-y-1">
+                              <div className="flex items-center justify-between text-[10px]">
+                                <span className="font-bold text-[#9C6B30] uppercase tracking-wider">Description:</span>
+                                <span className="text-neutral-400 font-mono text-[9px]">{item.description.length} chars</span>
+                              </div>
+                              <p className="text-[11px] text-neutral-700 line-clamp-3 leading-relaxed whitespace-pre-line" title={item.description}>
+                                {item.description}
+                              </p>
+                            </div>
                           ) : (
                             <p className="text-[10px] text-neutral-400 italic">No description provided in file</p>
                           )}
 
-                          {/* Specifications pills from .js file */}
-                          {(item.metal || item.purity || item.stone || item.weight || item.size) && (
+                          {/* Specifications from .js file */}
+                          {item.specifications && item.specifications.length > 0 ? (
+                            <div className="space-y-1 pt-0.5">
+                              <div className="flex items-center gap-1.5 text-[10px]">
+                                <span className="font-bold text-neutral-700 uppercase tracking-wider">Specifications:</span>
+                                <span className="px-1.5 py-0.2 rounded-full bg-neutral-200 text-neutral-700 font-mono text-[9px]">
+                                  {item.specifications.length}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                                {item.specifications.slice(0, 5).map((sp, sIdx) => (
+                                  <span key={sp.id || sIdx} className="px-2 py-0.5 rounded-md bg-neutral-100 text-neutral-800 border border-neutral-200">
+                                    <strong className="text-neutral-900 font-semibold">{sp.label}:</strong> {sp.value}
+                                  </span>
+                                ))}
+                                {item.specifications.length > 5 && (
+                                  <span className="px-1.5 py-0.5 rounded bg-neutral-200/70 text-neutral-600 text-[9px] font-medium" title={item.specifications.slice(5).map(s => `${s.label}: ${s.value}`).join(', ')}>
+                                    +{item.specifications.length - 5} more
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ) : (item.metal || item.purity || item.stone || item.weight || item.size) ? (
                             <div className="flex flex-wrap items-center gap-1.5 text-[10px] pt-0.5">
-                              {item.metal && (
-                                <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
-                                  Metal: {item.metal}
+                              {item.metal && <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">Metal: {item.metal}</span>}
+                              {item.purity && <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">Purity: {item.purity}</span>}
+                              {item.stone && item.stone !== '—' && <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200">Stone: {item.stone}</span>}
+                              {item.weight && <span className="px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-700 border border-neutral-200">Wt: {item.weight}</span>}
+                              {item.size && item.size !== '—' && <span className="px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-700 border border-neutral-200">Size: {item.size}</span>}
+                            </div>
+                          ) : null}
+
+                          {/* Reviews info taken from .js file */}
+                          {item.extractedReviews && item.extractedReviews.length > 0 && (
+                            <div className="bg-amber-50/70 p-2 rounded-lg border border-amber-200/80 space-y-1">
+                              <div className="flex items-center justify-between text-[11px] font-semibold text-amber-900">
+                                <span className="flex items-center gap-1.5">
+                                  <Star size={12} className="text-amber-500 fill-amber-500" />
+                                  <span>{item.extractedReviews.length} Review{item.extractedReviews.length > 1 ? 's' : ''} ({item.rating}★ avg)</span>
                                 </span>
-                              )}
-                              {item.purity && (
-                                <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
-                                  Purity: {item.purity}
+                                <span className="text-[9px] text-amber-700 font-medium px-1.5 py-0.2 rounded bg-amber-100 border border-amber-200">
+                                  Will populate store reviews
                                 </span>
-                              )}
-                              {item.stone && item.stone !== '—' && (
-                                <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200">
-                                  Stone: {item.stone}
-                                </span>
-                              )}
-                              {item.weight && (
-                                <span className="px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-700 border border-neutral-200">
-                                  Wt: {item.weight}
-                                </span>
-                              )}
-                              {item.size && item.size !== '—' && (
-                                <span className="px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-700 border border-neutral-200">
-                                  Size: {item.size}
+                              </div>
+                              <p className="text-[10px] text-neutral-700 line-clamp-1 italic">
+                                &ldquo;{item.extractedReviews[0].comment}&rdquo; &mdash; <span className="font-semibold not-italic text-neutral-900">{item.extractedReviews[0].reviewerName}</span>
+                              </p>
+                              {item.extractedReviews.length > 1 && (
+                                <span className="text-[9px] text-amber-800 font-medium block">
+                                  +{item.extractedReviews.length - 1} more customer review{item.extractedReviews.length > 2 ? 's' : ''} ready to import
                                 </span>
                               )}
                             </div>

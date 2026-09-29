@@ -4497,6 +4497,14 @@ async function handleRoute(request, { params }) {
         const errors = [];
         const now = new Date();
 
+        const normalizeImportDesc = (d) => {
+          if (d === undefined || d === null) return '';
+          if (typeof d === 'string') return d.trim();
+          if (Array.isArray(d)) return d.map(item => typeof item === 'string' ? item : (item?.text || JSON.stringify(item))).join('\n\n').trim();
+          if (typeof d === 'object') return (d.text || d.en || d.value || JSON.stringify(d)).trim();
+          return String(d).trim();
+        };
+
         for (let i = 0; i < rawProducts.length; i++) {
           const item = rawProducts[i];
           const name = (item.name || '').trim();
@@ -4522,7 +4530,7 @@ async function handleRoute(request, { params }) {
           const collection = (item.collection || 'trending').trim();
           const gender = (item.gender || 'women').trim();
           const sku = (item.sku || '').trim();
-          const description = (item.description || item.desc || item.details || item.about || item.productDescription || '').trim();
+          const description = normalizeImportDesc(item.description ?? item.desc ?? item.details ?? item.about ?? item.productDescription ?? item.info ?? item.summary ?? item.content);
           const badge = (item.badge || '').trim();
           const metal = (item.metal || item.metalComposition || '').trim();
           const purity = (item.purity || item.goldPurity || '').trim();
@@ -4542,30 +4550,45 @@ async function handleRoute(request, { params }) {
           let specifications = [];
           if (Array.isArray(item.specifications) && item.specifications.length > 0) {
             specifications = item.specifications
-              .filter(s => s && (s.label?.trim() || s.value?.trim()))
-              .map((s, idx) => ({
-                id: s.id || uuidv4(),
-                label: s.label?.trim() || '',
-                value: s.value?.trim() || '',
-                enabled: s.enabled !== false,
-                order: s.order !== undefined && !isNaN(s.order) ? +s.order : idx
-              }));
+              .map((s, idx) => {
+                if (!s) return null;
+                if (typeof s === 'string') {
+                  const parts = s.split(/[:=]/);
+                  return {
+                    id: uuidv4(),
+                    label: (parts[0] || '').trim(),
+                    value: (parts.slice(1).join(':') || '').trim(),
+                    enabled: true,
+                    order: idx
+                  };
+                }
+                return {
+                  id: s.id || uuidv4(),
+                  label: (s.label || s.key || s.name || s.title || '').trim(),
+                  value: (s.value !== undefined ? String(s.value) : (s.val !== undefined ? String(s.val) : (s.detail || ''))).trim(),
+                  enabled: s.enabled !== false,
+                  order: s.order !== undefined && !isNaN(s.order) ? +s.order : idx
+                };
+              })
+              .filter(s => s && (s.label || s.value));
           } else if (item.specifications && typeof item.specifications === 'object') {
             specifications = Object.entries(item.specifications).map(([lbl, val], idx) => ({
               id: uuidv4(),
               label: lbl.trim(),
-              value: String(val).trim(),
+              value: (typeof val === 'object' ? JSON.stringify(val) : String(val)).trim(),
               enabled: true,
               order: idx
             }));
-          } else {
-            let sOrder = 0;
-            if (metal) specifications.push({ id: 'legacy-metal', label: 'Metal', value: metal, enabled: true, order: sOrder++ });
-            if (purity) specifications.push({ id: 'legacy-purity', label: 'Purity', value: purity, enabled: true, order: sOrder++ });
-            if (stone && stone !== '—') specifications.push({ id: 'legacy-stone', label: 'Stone', value: stone, enabled: true, order: sOrder++ });
-            if (weight) specifications.push({ id: 'legacy-weight', label: 'Weight', value: weight, enabled: true, order: sOrder++ });
-            if (size && size !== '—') specifications.push({ id: 'legacy-size', label: 'Size', value: size, enabled: true, order: sOrder++ });
           }
+
+          // Augment with legacy top-level attributes if not already in specifications
+          const hasSpecLabel = (lbl) => specifications.some(s => s.label.toLowerCase() === lbl.toLowerCase());
+          let sOrder = specifications.length;
+          if (metal && !hasSpecLabel('metal')) specifications.push({ id: 'legacy-metal', label: 'Metal', value: metal, enabled: true, order: sOrder++ });
+          if (purity && !hasSpecLabel('purity')) specifications.push({ id: 'legacy-purity', label: 'Purity', value: purity, enabled: true, order: sOrder++ });
+          if (stone && stone !== '—' && !hasSpecLabel('stone')) specifications.push({ id: 'legacy-stone', label: 'Stone', value: stone, enabled: true, order: sOrder++ });
+          if (weight && !hasSpecLabel('weight')) specifications.push({ id: 'legacy-weight', label: 'Weight', value: weight, enabled: true, order: sOrder++ });
+          if (size && size !== '—' && !hasSpecLabel('size')) specifications.push({ id: 'legacy-size', label: 'Size', value: size, enabled: true, order: sOrder++ });
 
           // Normalize product benefits
           let productBenefits = null;
@@ -4611,6 +4634,7 @@ async function handleRoute(request, { params }) {
             continue;
           }
 
+          let newProd = null;
           if (existing && matchMode === 'update') {
             let finalImages = existing.images || [];
             if (overwriteImages) {
@@ -4665,7 +4689,7 @@ async function handleRoute(request, { params }) {
               slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
             }
 
-            const newProd = {
+            newProd = {
               ...item,
               id: item.id || uuidv4(),
               slug,
@@ -4701,6 +4725,90 @@ async function handleRoute(request, { params }) {
 
             await db.collection('products').insertOne(newProd);
             createdCount++;
+          }
+
+          const targetProdId = existing ? existing.id : newProd?.id;
+          const targetProdSlug = existing ? existing.slug : newProd?.slug;
+
+          // Process and persist reviews from .js or .json file
+          const rawReviewsList = Array.isArray(item.extractedReviews) && item.extractedReviews.length > 0
+            ? item.extractedReviews
+            : (Array.isArray(item.reviewsList) && item.reviewsList.length > 0
+                ? item.reviewsList
+                : (Array.isArray(item.reviews) && item.reviews.length > 0 && typeof item.reviews[0] === 'object'
+                    ? item.reviews
+                    : (Array.isArray(item.customerReviews) && item.customerReviews.length > 0
+                        ? item.customerReviews
+                        : [])));
+
+          if (rawReviewsList.length > 0 && targetProdId) {
+            for (let revIdx = 0; revIdx < rawReviewsList.length; revIdx++) {
+              const r = rawReviewsList[revIdx];
+              if (!r) continue;
+              const rComment = typeof r === 'string' ? r.trim() : (r.comment || r.review || r.text || r.content || r.body || '').trim();
+              const rTitle = typeof r === 'object' ? (r.title || r.headline || '').trim().slice(0, 150) : '';
+              const rRatingNum = typeof r === 'object' ? Number(r.rating || r.stars || r.score || r.rate) : 5;
+              const rRatingVal = isNaN(rRatingNum) ? 5 : Math.min(5, Math.max(1, rRatingNum));
+              const rName = typeof r === 'object' && (r.reviewerName || r.author || r.name || r.user || r.userName || r.customerName)
+                ? String(r.reviewerName || r.author || r.name || r.user || r.userName || r.customerName).trim().slice(0, 100)
+                : 'Verified Customer';
+              const rEmail = typeof r === 'object' && (r.reviewerEmail || r.email) ? String(r.reviewerEmail || r.email).trim().toLowerCase() : '';
+              const rImages = Array.isArray(r.images) ? r.images : [];
+              const rawDate = typeof r === 'object' ? (r.date || r.createdAt || r.timestamp) : null;
+              const rDate = rawDate ? new Date(rawDate) : now;
+
+              if (rComment || rTitle || rRatingVal) {
+                const existingRev = await db.collection('reviews').findOne({
+                  productId: targetProdId,
+                  $or: [
+                    ...(r.id ? [{ id: r.id }] : []),
+                    { reviewerName: rName, comment: rComment }
+                  ]
+                });
+
+                if (existingRev) {
+                  await db.collection('reviews').updateOne(
+                    { _id: existingRev._id },
+                    {
+                      $set: {
+                        productSlug: targetProdSlug,
+                        productName: name,
+                        productImage: (incomingImages && incomingImages[0]) || existing?.images?.[0] || '',
+                        rating: rRatingVal,
+                        title: rTitle || existingRev.title || '',
+                        comment: rComment || existingRev.comment || '',
+                        status: 'published',
+                        approved: true,
+                        updatedAt: now
+                      }
+                    }
+                  );
+                } else {
+                  await db.collection('reviews').insertOne({
+                    id: r.id || uuidv4(),
+                    productId: targetProdId,
+                    productSlug: targetProdSlug,
+                    productName: name,
+                    productImage: (incomingImages && incomingImages[0]) || existing?.images?.[0] || '',
+                    userId: `import_${Math.random().toString(36).slice(2, 8)}`,
+                    reviewerName: rName,
+                    reviewerEmail: rEmail,
+                    rating: rRatingVal,
+                    title: rTitle,
+                    comment: rComment,
+                    images: rImages,
+                    status: 'published',
+                    verifiedPurchase: r.verifiedPurchase !== false,
+                    approved: true,
+                    createdAt: isNaN(rDate.getTime()) ? now : rDate,
+                    updatedAt: now
+                  });
+                }
+              }
+            }
+
+            // Sync rating, reviews count and star breakdown on product document
+            await recalculateProductRating(db, targetProdId);
           }
         }
 
