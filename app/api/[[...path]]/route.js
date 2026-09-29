@@ -175,12 +175,12 @@ async function connectToMongo() {
           dns.setServers(['8.8.8.8', '1.1.1.1']);
         } catch (e) {}
         try {
-          client = new MongoClient(mongoUrl, { serverSelectionTimeoutMS: 10000 });
+          client = new MongoClient(mongoUrl, { tls: true, serverSelectionTimeoutMS: 10000 });
           await client.connect();
         } catch (srvErr) {
           if (directUrl && mongoUrl !== directUrl) {
             console.log('MongoDB connection attempt failed, falling back to direct replica set...');
-            client = new MongoClient(directUrl, { serverSelectionTimeoutMS: 10000 });
+            client = new MongoClient(directUrl, { tls: true, serverSelectionTimeoutMS: 10000 });
             await client.connect();
           } else {
             throw srvErr;
@@ -1011,10 +1011,25 @@ async function handleRoute(request, { params }) {
     }
     if (route.startsWith('/products/') && method === 'GET') {
       const slug = route.split('/')[2]
-      const p = await db.collection('products').findOne({ slug })
+      let p = await db.collection('products').findOne({ $or: [{ slug }, { id: slug }] })
+      if (!p) {
+        const allProds = await db.collection('products').find({}).toArray();
+        p = allProds.find(item => {
+          const s = (item.slug || item.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+          return s === slug || item.id === slug;
+        });
+      }
       if (!p) return err('Not found', 404)
-      const related = await db.collection('products').find({ category: p.category, id: { $ne: p.id } }).limit(4).toArray()
-      return ok({ product: clean(p), related: related.map(clean) })
+      const [related, siteSettings] = await Promise.all([
+        db.collection('products').find({ category: p.category, id: { $ne: p.id } }).limit(4).toArray(),
+        db.collection('site_settings').findOne({ id: 'default' })
+      ]);
+      const mergedZoom = {
+        ...DEFAULT_SITE_SETTINGS.zoomSettings,
+        ...(siteSettings?.zoomSettings || {}),
+        ...(p.zoomMode && p.zoomMode !== 'default' ? { mode: p.zoomMode } : {})
+      };
+      return ok({ product: clean(p), related: related.map(clean), zoomSettings: mergedZoom })
     }
     if (route === '/categories' && method === 'GET') { const c = cacheGet('cats'); if (c) return ok(c); const list = await db.collection('categories').find({}).toArray(); const r = { categories: list.map(clean) }; cacheSet('cats', r, 300000); return ok(r) }
     if (route === '/collections' && method === 'GET') { const c = cacheGet('cols'); if (c) return ok(c); const list = await db.collection('collections').find({}).toArray(); const r = { collections: list.map(clean) }; cacheSet('cols', r, 300000); return ok(r) }
@@ -1062,6 +1077,10 @@ async function handleRoute(request, { params }) {
         shipping: {
           ...DEFAULT_SITE_SETTINGS.shipping,
           ...((settings && settings.shipping) || {})
+        },
+        zoomSettings: {
+          ...DEFAULT_SITE_SETTINGS.zoomSettings,
+          ...((settings && settings.zoomSettings) || {})
         },
         paymentSettings: {
           razorpay: {
@@ -4084,6 +4103,10 @@ async function handleRoute(request, { params }) {
               ...DEFAULT_SITE_SETTINGS.shipping,
               ...((settings && settings.shipping) || {})
             },
+            zoomSettings: {
+              ...DEFAULT_SITE_SETTINGS.zoomSettings,
+              ...((settings && settings.zoomSettings) || {})
+            },
             paymentSettings: {
               razorpay: {
                 enabled: rawPay?.razorpay?.enabled !== false,
@@ -4162,6 +4185,29 @@ async function handleRoute(request, { params }) {
             });
           }
 
+          if (updates.zoomSettings) {
+            const z = updates.zoomSettings;
+            updates.zoomSettings = {
+              enabled: z.enabled !== false,
+              mode: ['side-by-side', 'inner', 'both', 'disabled'].includes(z.mode) ? z.mode : 'side-by-side',
+              zoomLevel: Math.max(1.5, Math.min(4, Number(z.zoomLevel) || 2.5)),
+              showCrosshair: z.showCrosshair !== false,
+              lensSize: Math.max(100, Math.min(260, Number(z.lensSize) || 160)),
+              lensBorderColor: z.lensBorderColor || '#D4AF37',
+              allowCustomerToggle: z.allowCustomerToggle !== false,
+              modalZoomEnabled: z.modalZoomEnabled !== false
+            };
+            await logAdminActivity(db, {
+              admin,
+              action: 'ZOOM_SETTINGS_UPDATED',
+              module: 'SITE_SETTINGS',
+              targetId: 'default',
+              targetName: 'Product Zoom Settings',
+              metadata: updates.zoomSettings,
+              request
+            });
+          }
+
           await db.collection('site_settings').updateOne(
             { id: 'default' },
             { $set: { ...updates, updatedAt: new Date() } },
@@ -4200,6 +4246,10 @@ async function handleRoute(request, { params }) {
             shipping: {
               ...DEFAULT_SITE_SETTINGS.shipping,
               ...((updated && updated.shipping) || {})
+            },
+            zoomSettings: {
+              ...DEFAULT_SITE_SETTINGS.zoomSettings,
+              ...((updated && updated.zoomSettings) || {})
             },
             paymentSettings: {
               razorpay: {

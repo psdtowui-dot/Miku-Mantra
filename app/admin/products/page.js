@@ -5,7 +5,7 @@ import {
   Plus, Pencil, Trash2, X, Loader2, Search, Upload,
   Link as LinkIcon, Trash, Check, ArrowLeft, ArrowRight,
   FileText, Sparkles, Settings, Image as ImageIcon, Eye, Award,
-  Copy, FolderPlus, Layers, Tag, CheckSquare, AlertCircle
+  Copy, FolderPlus, Layers, Tag, CheckSquare, AlertCircle, ZoomIn
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -21,7 +21,8 @@ const EMPTY = {
   featured: false, bestseller: false, newArrival: false,
   seoTitle: '', seoDescription: '',
   specifications: [],
-  productBenefits: []
+  productBenefits: [],
+  zoomMode: 'default'
 };
 
 export default function AdminProducts() {
@@ -1174,6 +1175,38 @@ export default function AdminProducts() {
                             className="w-full pl-8 pr-3 py-2.5 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:border-[#9C6B30]"
                           />
                         </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-xl border border-neutral-100 shadow-xs space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Product Zoom Override</h4>
+                          <p className="text-[11px] text-neutral-500">Override the store-wide zoom functionality specifically for this product.</p>
+                        </div>
+                        <ZoomIn size={16} className="text-[#9C6B30]" />
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                        {[
+                          { id: 'default', label: 'Store Default', desc: 'Use Site Settings' },
+                          { id: 'side-by-side', label: 'Side Lens Zoom', desc: 'Lens + Flyout Window' },
+                          { id: 'inner', label: 'Inner Zoom', desc: 'In-place Scale' },
+                          { id: 'disabled', label: 'Disabled', desc: 'No Zoom' }
+                        ].map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => setForm({ ...form, zoomMode: opt.id })}
+                            className={`p-3 rounded-lg border text-left transition cursor-pointer ${
+                              (form.zoomMode || 'default') === opt.id
+                                ? 'border-[#9C6B30] bg-[#FAF6EF] ring-1 ring-[#9C6B30]'
+                                : 'border-neutral-200 bg-white hover:border-neutral-300'
+                            }`}
+                          >
+                            <div className="text-xs font-bold text-neutral-900">{opt.label}</div>
+                            <div className="text-[10px] text-neutral-500 mt-0.5">{opt.desc}</div>
+                          </button>
+                        ))}
                       </div>
                     </div>
                   </div>
