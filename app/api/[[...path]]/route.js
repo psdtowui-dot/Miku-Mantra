@@ -15,6 +15,8 @@ import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendReturn
 import { sendPasswordResetEmail } from '@/lib/email-service'
 import { seedRbacIfEmpty, resolveUserPermissions, hasPermission, logAdminActivity, validatePrivilegeEscalation, PERMISSIONS, DEFAULT_ROLES } from '@/lib/rbac'
 import { invalidateSiteDataCache } from '@/lib/db-site-settings'
+import { DEFAULT_SOCIAL_MEDIA_SETTINGS, DEFAULT_SOCIAL_MEDIA_ITEMS, DEFAULT_CATEGORY_SHOWCASE_SETTINGS } from '@/lib/site-defaults'
+import { calculateCartPricing, validateCouponRules } from '@/lib/cart-pricing'
 
 
 // Simple in-memory server cache with TTL
@@ -239,12 +241,12 @@ async function connectToMongo() {
           dns.setServers(['8.8.8.8', '1.1.1.1']);
         } catch (e) {}
         try {
-          client = new MongoClient(mongoUrl, { tls: true, serverSelectionTimeoutMS: 10000 });
+          client = new MongoClient(mongoUrl, { serverSelectionTimeoutMS: 10000 });
           await client.connect();
         } catch (srvErr) {
           if (directUrl && mongoUrl !== directUrl) {
             console.log('MongoDB connection attempt failed, falling back to direct replica set...');
-            client = new MongoClient(directUrl, { tls: true, serverSelectionTimeoutMS: 10000 });
+            client = new MongoClient(directUrl, { serverSelectionTimeoutMS: 10000 });
             await client.connect();
           } else {
             throw srvErr;
@@ -322,12 +324,6 @@ async function seedIfEmpty(db) {
     { id: uuidv4(), code: 'MIKUMANTRA10', type: 'percent', value: 10, minOrder: 0, active: true, createdAt: new Date() },
     { id: uuidv4(), code: 'WELCOME2000', type: 'flat', value: 2000, minOrder: 10000, active: true, createdAt: new Date() },
   ])
-  try {
-    await db.collection('coupons').createIndex(
-      { code: 1 },
-      { unique: true, collation: { locale: 'en', strength: 2 }, name: 'uniq_coupon_code' }
-    );
-  } catch (_) {}
   const fc = await db.collection('footer').countDocuments()
   if (fc === 0) {
     await db.collection('footer').insertOne({
@@ -546,12 +542,104 @@ async function seedIfEmpty(db) {
   }
 
   await seedFiltersIfEmpty(db);
+  await seedSocialMediaIfEmpty(db);
+  await seedCategoryShowcaseIfEmpty(db);
 }
 
 async function seedFiltersIfEmpty(db) {
   const count = await db.collection('product_filters').countDocuments();
   if (count === 0) {
     await db.collection('product_filters').insertMany(DEFAULT_PRODUCT_FILTERS);
+  }
+}
+
+async function seedSocialMediaIfEmpty(db) {
+  if (!db) return;
+  try {
+    const count = await db.collection('social_media').countDocuments();
+    if (count === 0) {
+      await db.collection('social_media').insertMany(
+        DEFAULT_SOCIAL_MEDIA_ITEMS.map(i => ({
+          ...i,
+          createdAt: new Date(i.createdAt || Date.now()),
+          updatedAt: new Date(i.updatedAt || Date.now())
+        }))
+      );
+    }
+    const settingsCount = await db.collection('social_media_settings').countDocuments({ id: 'default' });
+    if (settingsCount === 0) {
+      await db.collection('social_media_settings').insertOne({
+        id: 'default',
+        ...DEFAULT_SOCIAL_MEDIA_SETTINGS,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+    }
+  } catch (err) {
+    console.warn('Failed to seedSocialMediaIfEmpty:', err.message);
+  }
+}
+
+async function seedCategoryShowcaseIfEmpty(db) {
+  if (!db) return;
+  try {
+    const settingsCount = await db.collection('category_showcase_settings').countDocuments({ id: 'default' });
+    if (settingsCount === 0) {
+      await db.collection('category_showcase_settings').insertOne({
+        id: 'default',
+        ...DEFAULT_CATEGORY_SHOWCASE_SETTINGS,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+    }
+
+    const catCount = await db.collection('categories').countDocuments();
+    if (catCount === 0) {
+      await db.collection('categories').insertMany(
+        SEED_CATEGORIES.map((c, idx) => ({
+          ...c,
+          id: uuidv4(),
+          link: `/shop?category=${c.slug}`,
+          buttonText: 'SHOP NOW',
+          order: idx + 1,
+          displayOrder: idx + 1,
+          active: true,
+          enabled: true,
+          openInNewTab: false,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        }))
+      );
+    } else {
+      // Ensure existing categories have order / displayOrder / link if missing
+      const cats = await db.collection('categories').find({}).toArray();
+      let hasMissing = false;
+      for (let i = 0; i < cats.length; i++) {
+        const cat = cats[i];
+        const updateFields = {};
+        if (cat.order === undefined && cat.displayOrder === undefined) {
+          updateFields.order = i + 1;
+          updateFields.displayOrder = i + 1;
+        }
+        if (!cat.link) {
+          updateFields.link = `/shop?category=${cat.slug}`;
+        }
+        if (!cat.buttonText) {
+          updateFields.buttonText = 'SHOP NOW';
+        }
+        if (Object.keys(updateFields).length > 0) {
+          await db.collection('categories').updateOne({ id: cat.id }, { $set: updateFields });
+          hasMissing = true;
+        }
+      }
+      if (hasMissing) {
+        _cache.delete('cats');
+        _cache.delete('admin_categories');
+        invalidateSiteDataCache('homepage_data');
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to seedCategoryShowcaseIfEmpty:', err.message);
   }
 }
 
@@ -1147,27 +1235,64 @@ async function handleRoute(request, { params }) {
     }
     if (route.startsWith('/products/') && method === 'GET') {
       const slug = route.split('/')[2]
-      let p = await db.collection('products').findOne({ $or: [{ slug }, { id: slug }] })
-      if (!p) {
-        const allProds = await db.collection('products').find({}).toArray();
-        p = allProds.find(item => {
-          const s = (item.slug || item.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-          return s === slug || item.id === slug;
-        });
-      }
+      const p = await db.collection('products').findOne({ slug })
       if (!p) return err('Not found', 404)
-      const [related, siteSettings] = await Promise.all([
-        db.collection('products').find({ category: p.category, id: { $ne: p.id } }).limit(4).toArray(),
-        db.collection('site_settings').findOne({ id: 'default' })
-      ]);
-      const mergedZoom = {
-        ...DEFAULT_SITE_SETTINGS.zoomSettings,
-        ...(siteSettings?.zoomSettings || {}),
-        ...(p.zoomMode && p.zoomMode !== 'default' ? { mode: p.zoomMode } : {})
-      };
-      return ok({ product: clean(p), related: related.map(clean), zoomSettings: mergedZoom })
+      const related = await db.collection('products').find({ category: p.category, id: { $ne: p.id } }).limit(4).toArray()
+      return ok({ product: clean(p), related: related.map(clean) })
     }
-    if (route === '/categories' && method === 'GET') { const c = cacheGet('cats'); if (c) return ok(c); const list = await db.collection('categories').find({}).toArray(); const r = { categories: list.map(clean) }; cacheSet('cats', r, 3000); return ok(r) }
+    if ((route === '/categories' || route === '/category-showcase') && method === 'GET') {
+      const c = cacheGet('cats');
+      if (c) return ok(c);
+      await seedCategoryShowcaseIfEmpty(db);
+      const [list, settingsDoc] = await Promise.all([
+        db.collection('categories').find({ active: { $ne: false }, enabled: { $ne: false } }).sort({ order: 1, displayOrder: 1, createdAt: 1 }).toArray(),
+        db.collection('category_showcase_settings').findOne({ id: 'default' })
+      ]);
+      const settings = {
+        ...DEFAULT_CATEGORY_SHOWCASE_SETTINGS,
+        ...(settingsDoc ? clean(settingsDoc) : {})
+      };
+      const formatted = list.map(c => {
+        const cleanItem = clean(c);
+        return {
+          ...cleanItem,
+          id: cleanItem.id,
+          name: cleanItem.name,
+          slug: cleanItem.slug,
+          img: cleanItem.img || cleanItem.imageUrl || '',
+          imageUrl: cleanItem.img || cleanItem.imageUrl || '',
+          link: cleanItem.link || `/shop?category=${cleanItem.slug}`,
+          buttonText: cleanItem.buttonText || settings.buttonText || 'SHOP NOW',
+          displayOrder: Number(cleanItem.order ?? cleanItem.displayOrder ?? 0),
+          isActive: cleanItem.active !== false && cleanItem.enabled !== false,
+          openInNewTab: !!cleanItem.openInNewTab
+        };
+      });
+      const r = {
+        success: true,
+        data: {
+          categories: formatted,
+          settings
+        },
+        categories: formatted,
+        settings
+      };
+      cacheSet('cats', r, 3000);
+      return ok(r);
+    }
+    if (route === '/category-showcase/settings' && method === 'GET') {
+      await seedCategoryShowcaseIfEmpty(db);
+      const settingsDoc = await db.collection('category_showcase_settings').findOne({ id: 'default' });
+      const settings = {
+        ...DEFAULT_CATEGORY_SHOWCASE_SETTINGS,
+        ...(settingsDoc ? clean(settingsDoc) : {})
+      };
+      return ok({
+        success: true,
+        data: { settings },
+        settings
+      });
+    }
     if (route === '/collections' && method === 'GET') { const c = cacheGet('cols'); if (c) return ok(c); const list = await db.collection('collections').find({}).toArray(); const r = { collections: list.map(clean) }; cacheSet('cols', r, 3000); return ok(r) }
     if (route === '/banners' && method === 'GET') {
       const c = cacheGet('bans');
@@ -1178,6 +1303,26 @@ async function handleRoute(request, { params }) {
       ]);
       const r = { banners: list.map(clean), transition: settings?.transition || 'fade' };
       cacheSet('bans', r, 300000);
+      return ok(r);
+    }
+    if (route === '/social-media' && method === 'GET') {
+      const c = cacheGet('social_media_public');
+      if (c) return ok(c);
+      await seedSocialMediaIfEmpty(db);
+      const [items, settingsDoc] = await Promise.all([
+        db.collection('social_media').find({ isActive: true }).sort({ displayOrder: 1 }).toArray(),
+        db.collection('social_media_settings').findOne({ id: 'default' })
+      ]);
+      const settings = {
+        ...DEFAULT_SOCIAL_MEDIA_SETTINGS,
+        ...(settingsDoc || {})
+      };
+      const r = {
+        success: true,
+        data: items.map(clean),
+        settings: clean(settings)
+      };
+      cacheSet('social_media_public', r, 60000);
       return ok(r);
     }
     if (route === '/footer' && method === 'GET') {
@@ -1214,10 +1359,7 @@ async function handleRoute(request, { params }) {
           ...DEFAULT_SITE_SETTINGS.shipping,
           ...((settings && settings.shipping) || {})
         },
-        zoomSettings: {
-          ...DEFAULT_SITE_SETTINGS.zoomSettings,
-          ...((settings && settings.zoomSettings) || {})
-        },
+        couponHelperText: settings?.couponHelperText !== undefined ? settings.couponHelperText : (DEFAULT_SITE_SETTINGS.couponHelperText || ''),
         paymentSettings: {
           razorpay: {
             enabled: rawPay?.razorpay?.enabled !== false,
@@ -1829,47 +1971,175 @@ async function handleRoute(request, { params }) {
       return ok({ ok: true });
     }
 
-    // ============ DATABASE CART PERSISTENCE ============
+    // ============ DATABASE CART PERSISTENCE & PRICING ============
     if (route === '/cart' && method === 'GET') {
       const u = await getCurrentUser(db, request);
-      if (!u) return ok({ items: [] });
+      if (!u) return ok({ items: [], subtotal: 0, discount: 0, coupon: null, couponCode: null, couponValid: true, total: 0 });
+
       const cartDoc = await db.collection('cart').findOne({ userId: u.id });
-      return ok({ items: cartDoc?.items || [] });
+      if (!cartDoc || !Array.isArray(cartDoc.items) || cartDoc.items.length === 0) {
+        return ok({ items: [], subtotal: 0, discount: 0, coupon: null, couponCode: null, couponValid: true, total: 0 });
+      }
+
+      let siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+      const shippingConfig = {
+        ...DEFAULT_SITE_SETTINGS.shipping,
+        ...((siteSettings && siteSettings.shipping) || {})
+      };
+
+      const pricing = await calculateCartPricing({
+        db,
+        items: cartDoc.items,
+        couponCode: cartDoc.coupon || cartDoc.couponCode || null,
+        giftWrap: !!cartDoc.giftWrap,
+        shippingConfig,
+        user: u
+      });
+
+      // If coupon was present in DB cart but is now invalid, synchronize DB atomically
+      if (cartDoc.coupon && !pricing.couponValid) {
+        await db.collection('cart').updateOne(
+          { userId: u.id },
+          {
+            $set: {
+              coupon: null,
+              couponCode: null,
+              discount: 0,
+              subtotal: pricing.subtotal,
+              total: pricing.total,
+              updatedAt: new Date()
+            }
+          }
+        );
+      }
+
+      return ok(pricing);
     }
+
     if (route === '/cart' && method === 'PUT') {
       const u = await getCurrentUser(db, request);
       if (!u) return err('Not authenticated', 401);
-      const b = await request.json();
+      const b = await request.json().catch(() => ({}));
       const items = Array.isArray(b.items) ? b.items : [];
+      const incomingCoupon = b.coupon !== undefined ? b.coupon : (b.couponCode !== undefined ? b.couponCode : null);
+
+      let siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+      const shippingConfig = {
+        ...DEFAULT_SITE_SETTINGS.shipping,
+        ...((siteSettings && siteSettings.shipping) || {})
+      };
+
+      const pricing = await calculateCartPricing({
+        db,
+        items,
+        couponCode: incomingCoupon,
+        giftWrap: !!b.giftWrap,
+        shippingConfig,
+        user: u
+      });
+
       await db.collection('cart').updateOne(
         { userId: u.id },
-        { $set: { userId: u.id, items, updatedAt: new Date() } },
+        {
+          $set: {
+            userId: u.id,
+            items: pricing.items,
+            coupon: pricing.couponCode,
+            couponCode: pricing.couponCode,
+            discount: pricing.discount,
+            subtotal: pricing.subtotal,
+            total: pricing.total,
+            giftWrap: !!b.giftWrap,
+            updatedAt: new Date()
+          }
+        },
         { upsert: true }
       );
-      return ok({ items });
+
+      return ok(pricing);
     }
+
     if (route === '/cart' && method === 'DELETE') {
       const u = await getCurrentUser(db, request);
       if (!u) return err('Not authenticated', 401);
       await db.collection('cart').deleteOne({ userId: u.id });
-      return ok({ items: [] });
+      return ok({ items: [], subtotal: 0, discount: 0, coupon: null, couponCode: null, couponValid: true, total: 0 });
+    }
+
+    // ============ CART PRICING & REVALIDATION ============
+    if (route === '/cart/pricing' && method === 'POST') {
+      const body = await request.json().catch(() => ({}));
+      const u = await getCurrentUser(db, request);
+      let siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+      const shippingConfig = {
+        ...DEFAULT_SITE_SETTINGS.shipping,
+        ...((siteSettings && siteSettings.shipping) || {})
+      };
+
+      const pricing = await calculateCartPricing({
+        db,
+        items: body.items || [],
+        couponCode: body.coupon || body.couponCode || null,
+        giftWrap: !!body.giftWrap,
+        shippingConfig,
+        user: u
+      });
+
+      return ok(pricing);
+    }
+
+    // ============ COUPONS SETTINGS (public) ============
+    if (route === '/coupons/settings' && method === 'GET') {
+      const isNoCache = request.headers.get('cache-control')?.includes('no-cache') || request.headers.get('cache-control')?.includes('no-store');
+      if (!isNoCache) {
+        const cached = cacheGet('coupon_settings');
+        if (cached) return ok(cached);
+      }
+      let settings = await db.collection('site_settings').findOne({ id: 'default' });
+      const helperText = settings?.couponHelperText !== undefined
+        ? settings.couponHelperText
+        : (DEFAULT_SITE_SETTINGS.couponHelperText || 'Try MIKUMANTRA10 or WELCOME2000');
+      const res = {
+        success: true,
+        data: {
+          helperText
+        },
+        helperText
+      };
+      cacheSet('coupon_settings', res, 5000);
+      return ok(res);
     }
 
     // ============ COUPONS (public validate) ============
     if (route === '/coupons/validate' && method === 'POST') {
-      const { code, subtotal } = await request.json().catch(() => ({}));
-      const rawCode = (code || '').trim().toUpperCase();
-      if (!rawCode) return err('Please enter a coupon code', 400);
-      const escaped = rawCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const body = await request.json().catch(() => ({}));
+      const code = (body.code || '').trim().toUpperCase();
+      const subtotal = Number(body.subtotal) || 0;
+      const items = Array.isArray(body.items) ? body.items : [];
+      const user = await getCurrentUser(db, request);
+
+      if (!code) return err('Coupon code is required', 400);
+
       const c = await db.collection('coupons').findOne({
-        code: { $regex: new RegExp(`^${escaped}$`, 'i') },
-        active: true
+        code,
+        $or: [{ active: true }, { isActive: true }]
       });
-      if (!c) return err('Invalid or inactive coupon code', 404);
-      const minReq = Number(c.minOrder || 0);
-      if (minReq > (subtotal || 0)) return err(`Minimum order ₹${minReq.toLocaleString('en-IN')} required for coupon ${c.code}`, 400);
-      const discount = c.type === 'percent' ? Math.round(subtotal * c.value / 100) : c.value;
-      return ok({ code: c.code, discount, type: c.type, value: c.value });
+      if (!c) return err('Invalid coupon', 404);
+
+      const valResult = validateCouponRules(c, subtotal, { items, user, db });
+      if (!valResult.valid) {
+        return err(valResult.message || `Minimum order ₹${valResult.minOrder} required`, 400);
+      }
+
+      return ok({
+        code: valResult.code,
+        discount: valResult.discount,
+        type: valResult.type,
+        value: valResult.value,
+        minOrder: valResult.minOrder,
+        maxDiscount: valResult.maxDiscount,
+        valid: true
+      });
     }
 
     // ============ CART VALIDATION ============
@@ -1998,25 +2268,23 @@ async function handleRoute(request, { params }) {
         });
       }
 
-      // Recalculate coupon discount server-side
+      // Recalculate coupon discount server-side using centralized coupon engine
       let calculatedDiscount = 0;
       let couponCode = null;
-      if (body.coupon && typeof body.coupon === 'string') {
-        const rawCode = body.coupon.trim().toUpperCase();
-        if (rawCode) {
-          const escaped = rawCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const couponDoc = await db.collection('coupons').findOne({
-            code: { $regex: new RegExp(`^${escaped}$`, 'i') },
-            active: true
-          });
-          if (couponDoc) {
-            if (calculatedSubtotal >= (couponDoc.minOrder || 0)) {
-              couponCode = couponDoc.code;
-              calculatedDiscount = couponDoc.type === 'percent'
-                ? Math.round(calculatedSubtotal * couponDoc.value / 100)
-                : couponDoc.value;
-              calculatedDiscount = Math.min(calculatedDiscount, calculatedSubtotal);
-            }
+      let validCouponDoc = null;
+
+      if (body.coupon && typeof body.coupon === 'string' && body.coupon.trim()) {
+        const code = body.coupon.trim().toUpperCase();
+        const couponDoc = await db.collection('coupons').findOne({
+          code,
+          $or: [{ active: true }, { isActive: true }]
+        });
+        if (couponDoc) {
+          const valResult = validateCouponRules(couponDoc, calculatedSubtotal, { items: validatedItems, user: u });
+          if (valResult.valid) {
+            couponCode = valResult.code;
+            calculatedDiscount = valResult.discount;
+            validCouponDoc = couponDoc;
           }
         }
       }
@@ -2118,6 +2386,22 @@ async function handleRoute(request, { params }) {
       }
 
       await db.collection('orders').insertOne(order);
+
+      // Invalidate / clear the user's cart in database
+      await db.collection('cart').deleteOne({ userId: u.id });
+
+      // Increment coupon usage count if applied
+      if (validCouponDoc) {
+        try {
+          await db.collection('coupons').updateOne(
+            { _id: validCouponDoc._id },
+            { $inc: { usedCount: 1, usageCount: 1 } }
+          );
+        } catch (couponErr) {
+          console.warn('Failed to increment coupon usage:', couponErr.message);
+        }
+      }
+
       cacheBust('products:');
 
       // Trigger WhatsApp & SMS notification for order placement
@@ -2194,7 +2478,7 @@ async function handleRoute(request, { params }) {
       };
 
       const pdf = await buildInvoicePDF(order, companyConfig);
-      return handleCORS(new NextResponse(pdf, { status: 200, headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="MikuMantra-Invoice-${order.orderNumber}.pdf"` } }));
+      return handleCORS(new NextResponse(pdf, { status: 200, headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="Invoice-${order.orderNumber}.pdf"` } }));
     }
     if (route.startsWith('/orders/') && route.endsWith('/shippingslip') && method === 'GET') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
@@ -2234,8 +2518,8 @@ async function handleRoute(request, { params }) {
       const order = await db.collection('orders').findOne({ id });
       if (!order) return err('Order not found', 404);
 
-      if (order.userId !== u.id && u.role !== 'admin') {
-        return err('Unauthorized access to order.', 403);
+      if (order.userId !== u.id) {
+        return err('Unauthorized access: You can only cancel your own orders.', 403);
       }
 
       if (order.status === 'cancelled') {
@@ -2273,7 +2557,9 @@ async function handleRoute(request, { params }) {
           $set: {
             status: 'cancelled',
             cancelledAt: now,
-            cancelledBy: u.role === 'admin' ? 'mikumantra' : 'customer',
+            cancelledBy: 'customer',
+            cancelledByUserId: u.id,
+            cancelledByRole: 'customer',
             cancellationReason: reason,
             cancellationNote: note,
             ...refundDoc
@@ -2282,7 +2568,7 @@ async function handleRoute(request, { params }) {
             statusHistory: {
               status: 'cancelled',
               at: now,
-              note: `Cancelled by ${u.role === 'admin' ? 'mikumantra' : 'customer'}: ${cancellationReasonStr}`
+              note: `Cancelled by customer: ${cancellationReasonStr}`
             }
           }
         }
@@ -2793,15 +3079,35 @@ async function handleRoute(request, { params }) {
 
     // ============ RAZORPAY PAYMENT GATEWAY ============
     if (route === '/payment/razorpay/order' && method === 'POST') {
-      const { amount } = await request.json();
-      if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
-        return err('Valid order amount is required.', 400);
-      }
+      const body = await request.json();
+      let orderAmount = Number(body.amount);
 
       const siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
       const rzpConfig = siteSettings?.paymentSettings?.razorpay;
       if (rzpConfig && rzpConfig.enabled === false) {
         return err('Razorpay payment gateway is currently disabled by store administrator.', 400);
+      }
+
+      // If items are passed from checkout, enforce server-verified pricing
+      if (Array.isArray(body.items) && body.items.length > 0) {
+        const u = await getCurrentUser(db, request);
+        const shippingConfig = {
+          ...DEFAULT_SITE_SETTINGS.shipping,
+          ...((siteSettings && siteSettings.shipping) || {})
+        };
+        const pricing = await calculateCartPricing({
+          db,
+          items: body.items,
+          couponCode: body.coupon || null,
+          giftWrap: !!body.giftWrap,
+          shippingConfig,
+          user: u
+        });
+        orderAmount = pricing.total;
+      }
+
+      if (!orderAmount || isNaN(orderAmount) || orderAmount <= 0) {
+        return err('Valid order amount is required.', 400);
       }
 
       const keyId = (rzpConfig?.keyId && rzpConfig.keyId.trim())
@@ -2824,7 +3130,7 @@ async function handleRoute(request, { params }) {
               'Authorization': authHeader
             },
             body: JSON.stringify({
-              amount: Math.round(Number(amount) * 100), // amount in paise
+              amount: Math.round(orderAmount * 100), // amount in paise
               currency: 'INR',
               receipt: `rcpt_${uuidv4().slice(0, 10)}`
             })
@@ -2850,7 +3156,7 @@ async function handleRoute(request, { params }) {
       const id = 'order_MOCK' + Math.random().toString(36).slice(2, 12);
       return ok({
         id,
-        amount: Math.round(Number(amount) * 100),
+        amount: Math.round(orderAmount * 100),
         currency: 'INR',
         key: keyId || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || 'rzp_test_mockkey',
         mock: true
@@ -3537,8 +3843,12 @@ async function handleRoute(request, { params }) {
         _cache.delete('footer');
         _cache.delete('product_filters');
         _cache.delete('site_settings');
+        _cache.delete('coupon_settings');
         _cache.delete('header_config');
         _cache.delete('admin_dashboard');
+        _cache.delete('social_media_public');
+        cacheBust('social_media');
+        cacheBust('coupons');
         invalidateUserSessionCache();
         try { invalidateSiteDataCache(); } catch (e) {}
       }
@@ -4081,7 +4391,14 @@ async function handleRoute(request, { params }) {
             type: body.type || 'options',
             enabled: body.enabled !== false,
             order: parseInt(body.order ?? (await db.collection('product_filters').countDocuments())),
-            priceConfig: body.priceConfig || { min: 0, max: 1000000, step: 5000 },
+            priceConfig: body.priceConfig ? {
+              min: Number(body.priceConfig.min ?? 0),
+              max: Number(body.priceConfig.max ?? 1000000),
+              step: Number(body.priceConfig.step ?? 5000)
+            } : { min: 0, max: 1000000, step: 5000 },
+            min: body.priceConfig?.min !== undefined ? Number(body.priceConfig.min) : 0,
+            max: body.priceConfig?.max !== undefined ? Number(body.priceConfig.max) : 1000000,
+            step: body.priceConfig?.step !== undefined ? Number(body.priceConfig.step) : 5000,
             options: Array.isArray(body.options) ? body.options : [],
             createdAt: new Date()
           };
@@ -4115,7 +4432,16 @@ async function handleRoute(request, { params }) {
           if (body.type !== undefined) updateDoc.type = body.type;
           if (body.enabled !== undefined) updateDoc.enabled = !!body.enabled;
           if (body.order !== undefined) updateDoc.order = parseInt(body.order);
-          if (body.priceConfig !== undefined) updateDoc.priceConfig = body.priceConfig;
+          if (body.priceConfig !== undefined) {
+            updateDoc.priceConfig = {
+              min: Number(body.priceConfig.min ?? 0),
+              max: Number(body.priceConfig.max ?? 1000000),
+              step: Number(body.priceConfig.step ?? 5000)
+            };
+            updateDoc.min = updateDoc.priceConfig.min;
+            updateDoc.max = updateDoc.priceConfig.max;
+            updateDoc.step = updateDoc.priceConfig.step;
+          }
           if (Array.isArray(body.options)) updateDoc.options = body.options;
           updateDoc.updatedAt = new Date();
 
@@ -4360,10 +4686,6 @@ async function handleRoute(request, { params }) {
               ...DEFAULT_SITE_SETTINGS.shipping,
               ...((settings && settings.shipping) || {})
             },
-            zoomSettings: {
-              ...DEFAULT_SITE_SETTINGS.zoomSettings,
-              ...((settings && settings.zoomSettings) || {})
-            },
             paymentSettings: {
               razorpay: {
                 enabled: rawPay?.razorpay?.enabled !== false,
@@ -4442,29 +4764,6 @@ async function handleRoute(request, { params }) {
             });
           }
 
-          if (updates.zoomSettings) {
-            const z = updates.zoomSettings;
-            updates.zoomSettings = {
-              enabled: z.enabled !== false,
-              mode: ['side-by-side', 'inner', 'both', 'disabled'].includes(z.mode) ? z.mode : 'side-by-side',
-              zoomLevel: Math.max(1.5, Math.min(4, Number(z.zoomLevel) || 2.5)),
-              showCrosshair: z.showCrosshair !== false,
-              lensSize: Math.max(100, Math.min(260, Number(z.lensSize) || 160)),
-              lensBorderColor: z.lensBorderColor || '#D4AF37',
-              allowCustomerToggle: z.allowCustomerToggle !== false,
-              modalZoomEnabled: z.modalZoomEnabled !== false
-            };
-            await logAdminActivity(db, {
-              admin,
-              action: 'ZOOM_SETTINGS_UPDATED',
-              module: 'SITE_SETTINGS',
-              targetId: 'default',
-              targetName: 'Product Zoom Settings',
-              metadata: updates.zoomSettings,
-              request
-            });
-          }
-
           await db.collection('site_settings').updateOne(
             { id: 'default' },
             { $set: { ...updates, updatedAt: new Date() } },
@@ -4503,10 +4802,6 @@ async function handleRoute(request, { params }) {
             shipping: {
               ...DEFAULT_SITE_SETTINGS.shipping,
               ...((updated && updated.shipping) || {})
-            },
-            zoomSettings: {
-              ...DEFAULT_SITE_SETTINGS.zoomSettings,
-              ...((updated && updated.zoomSettings) || {})
             },
             paymentSettings: {
               razorpay: {
@@ -4577,6 +4872,232 @@ async function handleRoute(request, { params }) {
         }
       }
 
+      // ============ ADMIN: SOCIAL MEDIA / FOLLOW OUR WORLD ============
+      if (sub.startsWith('social-media')) {
+        const parts = sub.split('/');
+
+        // Helper for URL validation
+        const isValidUrl = (str) => {
+          try {
+            const parsed = new URL(str);
+            return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+          } catch {
+            return false;
+          }
+        };
+
+        // GET /api/admin/social-media (List all items + settings)
+        if (parts.length === 1 && method === 'GET') {
+          if (!hasPermission(admin, 'settings.view')) return err('Permission denied: settings.view required', 403);
+          await seedSocialMediaIfEmpty(db);
+          const [items, settingsDoc] = await Promise.all([
+            db.collection('social_media').find({}).sort({ displayOrder: 1, createdAt: -1 }).toArray(),
+            db.collection('social_media_settings').findOne({ id: 'default' })
+          ]);
+          const settings = {
+            ...DEFAULT_SOCIAL_MEDIA_SETTINGS,
+            ...(settingsDoc || {})
+          };
+          return ok({
+            success: true,
+            items: items.map(clean),
+            settings: clean(settings)
+          });
+        }
+
+        // POST /api/admin/social-media (Create new item)
+        if (parts.length === 1 && method === 'POST') {
+          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied: settings.edit required', 403);
+          const body = await request.json();
+          const rawUrl = (body.url || '').trim();
+          const rawThumb = (body.thumbnailUrl || body.thumbnail || '').trim();
+
+          if (!rawUrl) return err('Social media URL is required', 400);
+          if (!isValidUrl(rawUrl)) return err('Please enter a valid URL (e.g. https://www.instagram.com/p/...)', 400);
+          if (!rawThumb) return err('Thumbnail image is required', 400);
+
+          const count = await db.collection('social_media').countDocuments();
+          const newItem = {
+            id: uuidv4(),
+            platform: body.platform || 'Instagram',
+            url: rawUrl,
+            thumbnailUrl: rawThumb,
+            title: (body.title || body.caption || '').trim(),
+            displayOrder: body.displayOrder !== undefined && body.displayOrder !== '' ? Number(body.displayOrder) : count + 1,
+            isActive: body.isActive !== undefined ? !!body.isActive : true,
+            openInNewTab: body.openInNewTab !== undefined ? !!body.openInNewTab : true,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          };
+
+          await db.collection('social_media').insertOne(newItem);
+          _cache.delete('social_media_public');
+          _cache.delete('homepage_data');
+          cacheBust('social_media');
+          invalidateSiteDataCache();
+          try { revalidatePath('/', 'layout'); } catch (e) {}
+
+          await logAdminActivity(db, {
+            admin,
+            action: 'SOCIAL_MEDIA_CREATED',
+            module: 'SOCIAL_MEDIA',
+            targetId: newItem.id,
+            targetName: newItem.platform + ' Post',
+            metadata: { url: newItem.url, platform: newItem.platform },
+            request
+          });
+
+          return ok({ success: true, item: clean(newItem) });
+        }
+
+        // PUT /api/admin/social-media/settings (Update global section settings)
+        if (parts.length === 2 && parts[1] === 'settings' && method === 'PUT') {
+          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied: settings.edit required', 403);
+          const body = await request.json();
+          const updateDoc = {};
+          if (body.showSection !== undefined) updateDoc.showSection = !!body.showSection;
+          if (body.eyebrow !== undefined) updateDoc.eyebrow = String(body.eyebrow).trim();
+          if (body.title !== undefined) updateDoc.title = String(body.title).trim();
+          if (body.subtitle !== undefined) updateDoc.subtitle = String(body.subtitle).trim();
+          if (body.maxVisible !== undefined) updateDoc.maxVisible = Math.max(1, Math.min(24, parseInt(body.maxVisible) || 6));
+          if (body.hoverAnimation !== undefined) updateDoc.hoverAnimation = !!body.hoverAnimation;
+          if (body.hoverScale !== undefined) updateDoc.hoverScale = Math.max(1.01, Math.min(1.5, Number(body.hoverScale) || 1.10));
+          updateDoc.updatedAt = new Date();
+
+          await db.collection('social_media_settings').updateOne(
+            { id: 'default' },
+            { $set: updateDoc },
+            { upsert: true }
+          );
+
+          _cache.delete('social_media_public');
+          _cache.delete('homepage_data');
+          cacheBust('social_media');
+          invalidateSiteDataCache();
+          try { revalidatePath('/', 'layout'); } catch (e) {}
+
+          const updated = await db.collection('social_media_settings').findOne({ id: 'default' });
+          return ok({ success: true, settings: clean({ ...DEFAULT_SOCIAL_MEDIA_SETTINGS, ...updated }) });
+        }
+
+        // PATCH /api/admin/social-media/reorder (Bulk reorder displayOrder)
+        if (parts.length === 2 && parts[1] === 'reorder' && (method === 'PATCH' || method === 'PUT')) {
+          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied: settings.edit required', 403);
+          const body = await request.json();
+          const items = body.items || body.order || [];
+          if (!Array.isArray(items)) return err('Items array is required for reordering', 400);
+
+          const ops = items.map((it, idx) => {
+            const id = typeof it === 'string' ? it : it.id;
+            const order = typeof it === 'object' && it.displayOrder !== undefined ? Number(it.displayOrder) : idx + 1;
+            return {
+              updateOne: {
+                filter: { id },
+                update: { $set: { displayOrder: order, updatedAt: new Date() } }
+              }
+            };
+          });
+
+          if (ops.length > 0) {
+            await db.collection('social_media').bulkWrite(ops);
+          }
+
+          _cache.delete('social_media_public');
+          _cache.delete('homepage_data');
+          cacheBust('social_media');
+          invalidateSiteDataCache();
+          try { revalidatePath('/', 'layout'); } catch (e) {}
+
+          const updatedList = await db.collection('social_media').find({}).sort({ displayOrder: 1 }).toArray();
+          return ok({ success: true, items: updatedList.map(clean) });
+        }
+
+        // PATCH /api/admin/social-media/:id/status (Toggle active status)
+        if (parts.length === 3 && parts[2] === 'status' && (method === 'PATCH' || method === 'PUT')) {
+          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied: settings.edit required', 403);
+          const id = parts[1];
+          const body = await request.json();
+          const item = await db.collection('social_media').findOne({ id });
+          if (!item) return err('Social media item not found', 404);
+
+          const newStatus = body.isActive !== undefined ? !!body.isActive : !item.isActive;
+          await db.collection('social_media').updateOne({ id }, { $set: { isActive: newStatus, updatedAt: new Date() } });
+
+          _cache.delete('social_media_public');
+          _cache.delete('homepage_data');
+          cacheBust('social_media');
+          invalidateSiteDataCache();
+          try { revalidatePath('/', 'layout'); } catch (e) {}
+
+          return ok({ success: true, id, isActive: newStatus });
+        }
+
+        // PUT /api/admin/social-media/:id (Update single item)
+        if (parts.length === 2 && parts[1] !== 'settings' && parts[1] !== 'reorder' && method === 'PUT') {
+          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied: settings.edit required', 403);
+          const id = parts[1];
+          const body = await request.json();
+          const existing = await db.collection('social_media').findOne({ id });
+          if (!existing) return err('Social media item not found', 404);
+
+          if (body.url) {
+            const rawUrl = body.url.trim();
+            if (!isValidUrl(rawUrl)) return err('Please enter a valid URL', 400);
+          }
+
+          const updateDoc = {};
+          if (body.platform !== undefined) updateDoc.platform = body.platform;
+          if (body.url !== undefined) updateDoc.url = body.url.trim();
+          if (body.thumbnailUrl !== undefined || body.thumbnail !== undefined) {
+            updateDoc.thumbnailUrl = (body.thumbnailUrl || body.thumbnail || '').trim();
+          }
+          if (body.title !== undefined || body.caption !== undefined) {
+            updateDoc.title = (body.title || body.caption || '').trim();
+          }
+          if (body.displayOrder !== undefined) updateDoc.displayOrder = Number(body.displayOrder);
+          if (body.isActive !== undefined) updateDoc.isActive = !!body.isActive;
+          if (body.openInNewTab !== undefined) updateDoc.openInNewTab = !!body.openInNewTab;
+          updateDoc.updatedAt = new Date();
+
+          await db.collection('social_media').updateOne({ id }, { $set: updateDoc });
+          _cache.delete('social_media_public');
+          _cache.delete('homepage_data');
+          cacheBust('social_media');
+          invalidateSiteDataCache();
+          try { revalidatePath('/', 'layout'); } catch (e) {}
+
+          const updated = await db.collection('social_media').findOne({ id });
+          return ok({ success: true, item: clean(updated) });
+        }
+
+        // DELETE /api/admin/social-media/:id (Delete item)
+        if (parts.length === 2 && parts[1] !== 'settings' && parts[1] !== 'reorder' && method === 'DELETE') {
+          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied: settings.edit required', 403);
+          const id = parts[1];
+          const existing = await db.collection('social_media').findOne({ id });
+          if (!existing) return err('Social media item not found', 404);
+
+          await db.collection('social_media').deleteOne({ id });
+          _cache.delete('social_media_public');
+          _cache.delete('homepage_data');
+          cacheBust('social_media');
+          invalidateSiteDataCache();
+          try { revalidatePath('/', 'layout'); } catch (e) {}
+
+          await logAdminActivity(db, {
+            admin,
+            action: 'SOCIAL_MEDIA_DELETED',
+            module: 'SOCIAL_MEDIA',
+            targetId: id,
+            targetName: existing.title || existing.platform + ' item',
+            metadata: { url: existing.url },
+            request
+          });
+
+          return ok({ success: true, message: 'Social media post deleted successfully' });
+        }
+      }
+
       if (sub === 'dashboard' && method === 'GET') {
         const cached = cacheGet('admin_dashboard');
         if (cached) return ok(cached);
@@ -4601,15 +5122,15 @@ async function handleRoute(request, { params }) {
 
           // Image/SVG upload validations
           const fileType = file.type || 'image/jpeg';
-          const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon'];
+          const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
           if (!allowedTypes.includes(fileType)) {
-            return err('Invalid MIME type. Only image/jpeg, image/png, image/webp, image/svg+xml, and image/x-icon are allowed.', 400);
+            return err('Invalid MIME type. Only image/jpeg, image/png, image/webp, and image/svg+xml are allowed.', 400);
           }
 
           const originalName = file.name || 'image.jpg';
           const ext = pathModule.extname(originalName).toLowerCase();
-          if (!['.jpg', '.jpeg', '.png', '.webp', '.svg', '.ico'].includes(ext)) {
-            return err('Invalid file extension. Only .jpg, .jpeg, .png, .webp, .svg, and .ico are allowed.', 400);
+          if (!['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext)) {
+            return err('Invalid file extension. Only .jpg, .jpeg, .png, .webp, and .svg are allowed.', 400);
           }
 
           if (file.size > 5 * 1024 * 1024) {
@@ -4656,62 +5177,6 @@ async function handleRoute(request, { params }) {
         } catch (e) {
           console.error('Upload error:', e);
           return err('Upload failed: ' + e.message, 500);
-        }
-      }
-
-      if (sub === 'upload-batch' && method === 'POST') {
-        try {
-          const formData = await request.formData();
-          const files = formData.getAll('files');
-          if (!files || !files.length) return err('No files provided', 400);
-
-          const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon'];
-          const uploads = [];
-          const uploadsDir = pathModule.join(process.cwd(), 'public', 'uploads');
-          if (!fs.existsSync(uploadsDir)) {
-            fs.mkdirSync(uploadsDir, { recursive: true });
-          }
-
-          for (const file of files) {
-            try {
-              const fileType = file.type || 'image/jpeg';
-              const originalName = file.name || 'image.jpg';
-              const ext = pathModule.extname(originalName).toLowerCase();
-              if (!['.jpg', '.jpeg', '.png', '.webp', '.svg', '.ico'].includes(ext)) {
-                continue;
-              }
-              if (file.size > 10 * 1024 * 1024) continue;
-
-              const bytes = await file.arrayBuffer();
-              const buffer = Buffer.from(bytes);
-              const filename = `${uuidv4()}-${originalName.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-
-              let savedToDb = false;
-              try {
-                await db.collection('uploads').insertOne({
-                  filename,
-                  contentType: fileType,
-                  data: buffer,
-                  createdAt: new Date()
-                });
-                savedToDb = true;
-              } catch (_) {}
-
-              try {
-                fs.writeFileSync(pathModule.join(uploadsDir, filename), buffer);
-              } catch (_) {}
-
-              const url = savedToDb ? `/api/uploads/${filename}` : `/uploads/${filename}`;
-              uploads.push({ originalName, filename, url });
-            } catch (singleErr) {
-              console.warn('Batch single file upload error:', singleErr);
-            }
-          }
-
-          return ok({ uploads });
-        } catch (e) {
-          console.error('Batch upload error:', e);
-          return err('Batch upload failed: ' + e.message, 500);
         }
       }
 
@@ -4785,433 +5250,6 @@ async function handleRoute(request, { params }) {
         _cache.delete('admin_dashboard');
         return ok({ product: clean(p) });
       }
-
-      // Products Bulk Import (takes all information from .js or .json file including description, specs, benefits, etc.)
-      if (sub === 'products/import' && method === 'POST') {
-        if (!hasPermission(admin, 'products.create') && !hasPermission(admin, 'products.edit')) {
-          return err('Permission denied: products.create or products.edit required', 403);
-        }
-        const b = await request.json();
-        const rawProducts = Array.isArray(b.products) ? b.products : [];
-        if (!rawProducts.length) return err('No products provided for import', 400);
-
-        const matchMode = b.matchMode || 'update'; // 'update' | 'skip' | 'create_new'
-        const overwriteImages = Boolean(b.overwriteImages);
-
-        let createdCount = 0;
-        let updatedCount = 0;
-        let skippedCount = 0;
-        const errors = [];
-        const now = new Date();
-
-        const normalizeImportDesc = (d) => {
-          if (d === undefined || d === null) return '';
-          if (typeof d === 'string') return d.trim();
-          if (Array.isArray(d)) return d.map(item => typeof item === 'string' ? item : (item?.text || JSON.stringify(item))).join('\n\n').trim();
-          if (typeof d === 'object') return (d.text || d.en || d.value || JSON.stringify(d)).trim();
-          return String(d).trim();
-        };
-
-        for (let i = 0; i < rawProducts.length; i++) {
-          const item = rawProducts[i];
-          const name = (item.name || '').trim();
-          if (!name) {
-            errors.push({ index: i, error: 'Product name is required' });
-            continue;
-          }
-
-          const price = Number(item.price);
-          if (isNaN(price) || price < 0) {
-            errors.push({ index: i, name, error: 'Price must be a valid non-negative number' });
-            continue;
-          }
-
-          const mrp = item.mrp !== undefined && item.mrp !== '' && !isNaN(Number(item.mrp))
-            ? Number(item.mrp)
-            : price;
-          const stock = item.stock !== undefined && !isNaN(parseInt(item.stock))
-            ? parseInt(item.stock)
-            : 10;
-
-          const category = (item.category || 'gold').trim();
-          const collection = (item.collection || 'trending').trim();
-          const gender = (item.gender || 'women').trim();
-          const sku = (item.sku || '').trim();
-          const description = normalizeImportDesc(item.description ?? item.longDesc ?? item.desc ?? item.shortDesc ?? item.caption ?? item.details ?? item.about ?? item.productDescription ?? item.info ?? item.summary ?? item.content);
-          const badge = (item.badge || item.tag || '').trim();
-          const metal = (item.metal || item.metalComposition || '').trim();
-          const purity = (item.purity || item.goldPurity || '').trim();
-          const stone = (item.stone || item.stoneDetails || '').trim();
-          const weight = (item.weight || '').trim();
-          const size = (item.size || item.productSize || '').trim();
-          const video = (item.video || '').trim();
-          const rating = item.rating !== undefined && !isNaN(Number(item.rating)) ? Number(item.rating) : 0;
-          const reviews = item.reviews !== undefined && !isNaN(parseInt(item.reviews)) ? parseInt(item.reviews) : 0;
-          const featured = item.featured !== undefined ? Boolean(item.featured) : (badge.toLowerCase() === 'bestseller' || badge.toLowerCase() === 'trending');
-          const bestseller = item.bestseller !== undefined ? Boolean(item.bestseller) : (badge.toLowerCase() === 'bestseller' || collection === 'best-sellers');
-          const newArrival = item.newArrival !== undefined ? Boolean(item.newArrival) : (badge.toLowerCase() === 'new' || collection === 'new-arrival');
-          const seoTitle = (item.seoTitle || `${name} | MikuMantra Fine Jewellery`).trim();
-          const seoDescription = (item.seoDescription || (description ? description.slice(0, 155) : '')).trim();
-
-          // Normalize specifications
-          let specifications = [];
-          const rawSpecs = item.specifications ?? item.specs ?? item.specification;
-          if (Array.isArray(rawSpecs) && rawSpecs.length > 0) {
-            specifications = rawSpecs
-              .map((s, idx) => {
-                if (!s) return null;
-                if (typeof s === 'string') {
-                  const parts = s.split(/[:=]/);
-                  return {
-                    id: uuidv4(),
-                    label: (parts[0] || '').trim(),
-                    value: (parts.slice(1).join(':') || '').trim(),
-                    enabled: true,
-                    order: idx
-                  };
-                }
-                return {
-                  id: s.id || uuidv4(),
-                  label: (s.label || s.key || s.name || s.title || '').trim(),
-                  value: (s.value !== undefined ? String(s.value) : (s.val !== undefined ? String(s.val) : (s.detail || ''))).trim(),
-                  enabled: s.enabled !== false,
-                  order: s.order !== undefined && !isNaN(s.order) ? +s.order : idx
-                };
-              })
-              .filter(s => s && (s.label || s.value));
-          } else if (rawSpecs && typeof rawSpecs === 'object') {
-            specifications = Object.entries(rawSpecs).map(([lbl, val], idx) => ({
-              id: uuidv4(),
-              label: lbl.trim(),
-              value: (typeof val === 'object' ? JSON.stringify(val) : String(val)).trim(),
-              enabled: true,
-              order: idx
-            }));
-          }
-
-          // Augment with legacy top-level attributes if not already in specifications
-          const hasSpecLabel = (lbl) => specifications.some(s => s.label.toLowerCase() === lbl.toLowerCase());
-          let sOrder = specifications.length;
-          if (metal && !hasSpecLabel('metal')) specifications.push({ id: 'legacy-metal', label: 'Metal', value: metal, enabled: true, order: sOrder++ });
-          if (purity && !hasSpecLabel('purity')) specifications.push({ id: 'legacy-purity', label: 'Purity', value: purity, enabled: true, order: sOrder++ });
-          if (stone && stone !== '—' && !hasSpecLabel('stone')) specifications.push({ id: 'legacy-stone', label: 'Stone', value: stone, enabled: true, order: sOrder++ });
-          if (weight && !hasSpecLabel('weight')) specifications.push({ id: 'legacy-weight', label: 'Weight', value: weight, enabled: true, order: sOrder++ });
-          if (size && size !== '—' && !hasSpecLabel('size')) specifications.push({ id: 'legacy-size', label: 'Size', value: size, enabled: true, order: sOrder++ });
-
-          // Normalize product benefits
-          let productBenefits = null;
-          if (Array.isArray(item.productBenefits) && item.productBenefits.length > 0) {
-            productBenefits = item.productBenefits
-              .filter(b => b && b.title?.trim())
-              .map((b, idx) => ({
-                id: b.id || uuidv4(),
-                title: b.title.trim(),
-                icon: b.icon?.trim() || 'ShieldCheck',
-                description: b.description?.trim() || '',
-                enabled: b.enabled !== false,
-                order: b.order !== undefined && !isNaN(b.order) ? +b.order : idx
-              }));
-          }
-
-          // Normalize images
-          let incomingImages = [];
-          if (Array.isArray(item.images)) {
-            incomingImages = item.images.map(s => String(s).trim()).filter(Boolean);
-          } else if (typeof item.images === 'string' && item.images.trim()) {
-            incomingImages = item.images.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-          } else if (item.image) {
-            incomingImages = [String(item.image).trim()];
-          } else if (item.img) {
-            incomingImages = [String(item.img).trim()];
-          } else if (item.icon) {
-            incomingImages = [String(item.icon).trim()];
-          }
-
-          // Search existing product by id, sku, slug, or case-insensitive exact name
-          let existing = null;
-          if (matchMode !== 'create_new') {
-            const queryConditions = [];
-            if (item.id) queryConditions.push({ id: item.id });
-            if (sku) queryConditions.push({ sku });
-            if (item.slug) queryConditions.push({ slug: item.slug.trim().toLowerCase() });
-            queryConditions.push({ name: { $regex: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } });
-
-            existing = await db.collection('products').findOne({ $or: queryConditions });
-          }
-
-          if (existing && matchMode === 'skip') {
-            skippedCount++;
-            continue;
-          }
-
-          let newProd = null;
-          if (existing && matchMode === 'update') {
-            let finalImages = existing.images || [];
-            if (overwriteImages) {
-              if (incomingImages.length > 0) finalImages = incomingImages;
-            } else {
-              if (incomingImages.length > 0) {
-                finalImages = Array.from(new Set([...incomingImages, ...finalImages]));
-              }
-            }
-
-            const updateDoc = {
-              ...item,
-              name,
-              category,
-              collection,
-              gender,
-              price,
-              mrp,
-              stock: item.stock !== undefined ? stock : (existing.stock ?? stock),
-              description: description || existing.description || '',
-              sku: sku || existing.sku || '',
-              badge: badge || existing.badge || '',
-              metal: metal || existing.metal || '',
-              purity: purity || existing.purity || '',
-              stone: stone || existing.stone || '',
-              weight: weight || existing.weight || '',
-              size: size || existing.size || '',
-              video: video || existing.video || '',
-              rating: item.rating !== undefined ? rating : (existing.rating ?? 0),
-              reviews: item.reviews !== undefined ? reviews : (existing.reviews ?? 0),
-              featured: item.featured !== undefined ? featured : (existing.featured ?? featured),
-              bestseller: item.bestseller !== undefined ? bestseller : (existing.bestseller ?? bestseller),
-              newArrival: item.newArrival !== undefined ? newArrival : (existing.newArrival ?? newArrival),
-              seoTitle: seoTitle || existing.seoTitle || '',
-              seoDescription: seoDescription || existing.seoDescription || '',
-              specifications: specifications.length > 0 ? specifications : (existing.specifications || []),
-              productBenefits: productBenefits || existing.productBenefits || DEFAULT_PRODUCT_BENEFITS,
-              images: finalImages,
-              updatedAt: now
-            };
-            delete updateDoc._id;
-            if (item.id) {
-              updateDoc.id = item.id;
-            } else {
-              delete updateDoc.id;
-            }
-
-            await db.collection('products').updateOne({ _id: existing._id }, { $set: updateDoc });
-            updatedCount++;
-          } else {
-            let slug = item.slug
-              ? item.slug.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-')
-              : (item.id || name).toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-            let existingSlug = await db.collection('products').findOne({ slug });
-            if (existingSlug) {
-              slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
-            }
-
-            newProd = {
-              ...item,
-              id: item.id || uuidv4(),
-              slug,
-              name,
-              category,
-              collection,
-              gender,
-              price,
-              mrp,
-              stock,
-              description,
-              sku,
-              badge,
-              metal,
-              purity,
-              stone,
-              weight,
-              size,
-              video,
-              rating,
-              reviews,
-              featured,
-              bestseller,
-              newArrival,
-              seoTitle,
-              seoDescription,
-              specifications,
-              productBenefits: productBenefits || DEFAULT_PRODUCT_BENEFITS,
-              images: incomingImages,
-              createdAt: now,
-              updatedAt: now
-            };
-
-            await db.collection('products').insertOne(newProd);
-            createdCount++;
-          }
-
-          const targetProdId = existing ? existing.id : newProd?.id;
-          const targetProdSlug = existing ? existing.slug : newProd?.slug;
-
-          // Process and persist reviews from .js or .json file
-          const rawReviewsList = Array.isArray(item.extractedReviews) && item.extractedReviews.length > 0
-            ? item.extractedReviews
-            : (Array.isArray(item.reviewsList) && item.reviewsList.length > 0
-                ? item.reviewsList
-                : (Array.isArray(item.reviews) && item.reviews.length > 0 && typeof item.reviews[0] === 'object'
-                    ? item.reviews
-                    : (Array.isArray(item.customerReviews) && item.customerReviews.length > 0
-                        ? item.customerReviews
-                        : [])));
-
-          if (rawReviewsList.length > 0 && targetProdId) {
-            for (let revIdx = 0; revIdx < rawReviewsList.length; revIdx++) {
-              const r = rawReviewsList[revIdx];
-              if (!r) continue;
-              const rComment = typeof r === 'string' ? r.trim() : (r.comment || r.review || r.text || r.content || r.body || '').trim();
-              const rTitle = typeof r === 'object' ? (r.title || r.headline || '').trim().slice(0, 150) : '';
-              const rRatingNum = typeof r === 'object' ? Number(r.rating || r.stars || r.score || r.rate) : 5;
-              const rRatingVal = isNaN(rRatingNum) ? 5 : Math.min(5, Math.max(1, rRatingNum));
-              const rName = typeof r === 'object' && (r.reviewerName || r.author || r.name || r.user || r.userName || r.customerName)
-                ? String(r.reviewerName || r.author || r.name || r.user || r.userName || r.customerName).trim().slice(0, 100)
-                : 'Verified Customer';
-              const rEmail = typeof r === 'object' && (r.reviewerEmail || r.email) ? String(r.reviewerEmail || r.email).trim().toLowerCase() : '';
-              const rImages = Array.isArray(r.images) ? r.images : [];
-              const rawDate = typeof r === 'object' ? (r.date || r.createdAt || r.timestamp) : null;
-              const rDate = rawDate ? new Date(rawDate) : now;
-
-              if (rComment || rTitle || rRatingVal) {
-                const existingRev = await db.collection('reviews').findOne({
-                  productId: targetProdId,
-                  $or: [
-                    ...(r.id ? [{ id: r.id }] : []),
-                    { reviewerName: rName, comment: rComment }
-                  ]
-                });
-
-                if (existingRev) {
-                  await db.collection('reviews').updateOne(
-                    { _id: existingRev._id },
-                    {
-                      $set: {
-                        productSlug: targetProdSlug,
-                        productName: name,
-                        productImage: (incomingImages && incomingImages[0]) || existing?.images?.[0] || '',
-                        rating: rRatingVal,
-                        title: rTitle || existingRev.title || '',
-                        comment: rComment || existingRev.comment || '',
-                        status: 'published',
-                        approved: true,
-                        updatedAt: now
-                      }
-                    }
-                  );
-                } else {
-                  await db.collection('reviews').insertOne({
-                    id: r.id || uuidv4(),
-                    productId: targetProdId,
-                    productSlug: targetProdSlug,
-                    productName: name,
-                    productImage: (incomingImages && incomingImages[0]) || existing?.images?.[0] || '',
-                    userId: `import_${Math.random().toString(36).slice(2, 8)}`,
-                    reviewerName: rName,
-                    reviewerEmail: rEmail,
-                    rating: rRatingVal,
-                    title: rTitle,
-                    comment: rComment,
-                    images: rImages,
-                    status: 'published',
-                    verifiedPurchase: r.verifiedPurchase !== false,
-                    approved: true,
-                    createdAt: isNaN(rDate.getTime()) ? now : rDate,
-                    updatedAt: now
-                  });
-                }
-              }
-            }
-
-            // Sync rating, reviews count and star breakdown on product document
-            await recalculateProductRating(db, targetProdId);
-          }
-        }
-
-        cacheBust('products:');
-        _cache.delete('admin_products');
-        _cache.delete('admin_dashboard');
-
-        return ok({
-          ok: true,
-          createdCount,
-          updatedCount,
-          skippedCount,
-          total: rawProducts.length,
-          errors
-        });
-      }
-
-      // Products Bulk Delete
-      if (sub === 'products/bulk-delete' && method === 'POST') {
-        if (!hasPermission(admin, 'products.delete')) return err('Permission denied: products.delete required', 403);
-        const { ids } = await request.json();
-        if (!Array.isArray(ids) || !ids.length) return err('No product IDs provided', 400);
-        const res = await db.collection('products').deleteMany({ id: { $in: ids } });
-        cacheBust('products:');
-        _cache.delete('admin_products');
-        _cache.delete('admin_dashboard');
-        return ok({ ok: true, deletedCount: res.deletedCount || ids.length });
-      }
-
-      // Products Bulk Actions (duplicate, update category/collection/stock/flags)
-      if (sub === 'products/bulk-action' && method === 'POST') {
-        if (!hasPermission(admin, 'products.edit')) return err('Permission denied: products.edit required', 403);
-        const { action, ids, data } = await request.json();
-        if (!Array.isArray(ids) || !ids.length) return err('No product IDs provided', 400);
-
-        let affected = 0;
-        if (action === 'duplicate') {
-          const prods = await db.collection('products').find({ id: { $in: ids } }).toArray();
-          const clones = prods.map(p => {
-            const shortId = Math.random().toString(36).slice(2, 6);
-            const { _id, ...rest } = p;
-            return {
-              ...rest,
-              id: uuidv4(),
-              slug: `${p.slug || p.name.toLowerCase().replace(/[^a-z0-9_-]/g, '-')}-copy-${shortId}`,
-              name: `${p.name} (Copy)`,
-              createdAt: new Date(),
-              updatedAt: new Date()
-            };
-          });
-          if (clones.length) {
-            await db.collection('products').insertMany(clones);
-            affected = clones.length;
-          }
-        } else if (action === 'update_category' && data?.category) {
-          const r = await db.collection('products').updateMany({ id: { $in: ids } }, { $set: { category: data.category, updatedAt: new Date() } });
-          affected = r.modifiedCount || ids.length;
-        } else if (action === 'update_collection' && data?.collection) {
-          const r = await db.collection('products').updateMany({ id: { $in: ids } }, { $set: { collection: data.collection, updatedAt: new Date() } });
-          affected = r.modifiedCount || ids.length;
-        } else if (action === 'add_stock') {
-          const qty = Number(data?.quantity) || 0;
-          if (data?.isIncrement) {
-            const r = await db.collection('products').updateMany({ id: { $in: ids } }, { $inc: { stock: qty }, $set: { updatedAt: new Date() } });
-            affected = r.modifiedCount || ids.length;
-          } else {
-            const r = await db.collection('products').updateMany({ id: { $in: ids } }, { $set: { stock: qty, updatedAt: new Date() } });
-            affected = r.modifiedCount || ids.length;
-          }
-        } else if (action === 'set_flags' && data) {
-          const r = await db.collection('products').updateMany({ id: { $in: ids } }, {
-            $set: {
-              ...(data.featured !== undefined ? { featured: Boolean(data.featured) } : {}),
-              ...(data.bestseller !== undefined ? { bestseller: Boolean(data.bestseller) } : {}),
-              ...(data.newArrival !== undefined ? { newArrival: Boolean(data.newArrival) } : {}),
-              updatedAt: new Date()
-            }
-          });
-          affected = r.modifiedCount || ids.length;
-        } else {
-          return err('Invalid bulk action', 400);
-        }
-
-        cacheBust('products:');
-        _cache.delete('admin_products');
-        _cache.delete('admin_dashboard');
-        return ok({ ok: true, count: affected });
-      }
-
       if (sub.startsWith('products/') && method === 'PUT') {
         if (!hasPermission(admin, 'products.edit')) return err('Permission denied: products.edit required', 403);
         const id = sub.split('/')[1];
@@ -5263,8 +5301,399 @@ async function handleRoute(request, { params }) {
         return ok({ ok: true });
       }
 
-      // Categories, Collections, Banners CRUD (uniform)
-      for (const col of ['categories', 'collections', 'banners', 'coupons']) {
+      // Admin Coupon Display / Helper Text Settings
+      if (sub === 'coupons/settings') {
+        if (method === 'GET') {
+          let settings = await db.collection('site_settings').findOne({ id: 'default' });
+          const helperText = settings?.couponHelperText !== undefined
+            ? settings.couponHelperText
+            : (DEFAULT_SITE_SETTINGS.couponHelperText || 'Try MIKUMANTRA10 or WELCOME2000');
+          return ok({
+            success: true,
+            data: { helperText },
+            helperText
+          });
+        }
+        if (method === 'PUT') {
+          const b = await request.json().catch(() => ({}));
+          const rawText = b.helperText !== undefined ? b.helperText : (b.data?.helperText !== undefined ? b.data.helperText : '');
+          const cleanText = typeof rawText === 'string' ? rawText.replace(/<[^>]*>?/gm, '').trim() : '';
+
+          await db.collection('site_settings').updateOne(
+            { id: 'default' },
+            { $set: { couponHelperText: cleanText, updatedAt: new Date() } },
+            { upsert: true }
+          );
+
+          _cache.delete('site_settings');
+          _cache.delete('coupon_settings');
+          _cache.delete('admin_coupons_settings');
+          cacheBust('site_settings');
+          invalidateSiteDataCache('site_settings');
+
+          return ok({
+            success: true,
+            data: { helperText: cleanText },
+            helperText: cleanText
+          });
+        }
+      }
+
+      // ============ ADMIN: CATEGORIES & CATEGORY SHOWCASE ============
+      if (sub.startsWith('categories') || sub.startsWith('category-showcase')) {
+        const parts = sub.split('/');
+
+        // 1. GET /api/admin/categories/settings or /api/admin/category-showcase/settings
+        if (parts.length === 2 && parts[1] === 'settings' && method === 'GET') {
+          if (!hasPermission(admin, 'settings.view') && !hasPermission(admin, 'products.view')) {
+            return err('Permission denied', 403);
+          }
+          await seedCategoryShowcaseIfEmpty(db);
+          const settingsDoc = await db.collection('category_showcase_settings').findOne({ id: 'default' });
+          const settings = {
+            ...DEFAULT_CATEGORY_SHOWCASE_SETTINGS,
+            ...(settingsDoc ? clean(settingsDoc) : {})
+          };
+          return ok({ success: true, settings, data: { settings } });
+        }
+
+        // 2. PUT /api/admin/categories/settings or /api/admin/category-showcase/settings
+        if (parts.length === 2 && parts[1] === 'settings' && method === 'PUT') {
+          if (!hasPermission(admin, 'settings.edit') && !hasPermission(admin, 'products.edit')) {
+            return err('Permission denied', 403);
+          }
+          const body = await request.json().catch(() => ({}));
+          const updateDoc = {};
+          if (body.sectionEnabled !== undefined) updateDoc.sectionEnabled = !!body.sectionEnabled;
+          if (body.eyebrow !== undefined) updateDoc.eyebrow = String(body.eyebrow).trim();
+          if (body.title !== undefined) updateDoc.title = String(body.title).trim();
+          if (body.subtitle !== undefined) updateDoc.subtitle = String(body.subtitle).trim();
+          if (body.buttonText !== undefined) updateDoc.buttonText = String(body.buttonText).trim();
+          if (body.hoverEnabled !== undefined) updateDoc.hoverEnabled = !!body.hoverEnabled;
+          if (body.hoverScale !== undefined) updateDoc.hoverScale = Math.max(1.0, Math.min(1.5, Number(body.hoverScale) || 1.10));
+          if (body.otherItemsScale !== undefined) updateDoc.otherItemsScale = Math.max(0.8, Math.min(1.0, Number(body.otherItemsScale) || 0.95));
+          if (body.transitionDuration !== undefined) updateDoc.transitionDuration = Math.max(100, Math.min(1000, Number(body.transitionDuration) || 300));
+          if (body.hoverOpacity !== undefined) updateDoc.hoverOpacity = Math.max(0.5, Math.min(1.0, Number(body.hoverOpacity) || 1.0));
+          if (body.imageHoverEffect !== undefined) updateDoc.imageHoverEffect = body.imageHoverEffect;
+          if (body.hoverBorder !== undefined) updateDoc.hoverBorder = !!body.hoverBorder;
+          if (body.hoverBorderWidth !== undefined) updateDoc.hoverBorderWidth = Math.max(1, Math.min(4, Number(body.hoverBorderWidth) || 1));
+          if (body.hoverShadow !== undefined) updateDoc.hoverShadow = !!body.hoverShadow;
+          if (body.desktopItems !== undefined) updateDoc.desktopItems = Math.max(2, Math.min(8, Number(body.desktopItems) || 6));
+          if (body.tabletItems !== undefined) updateDoc.tabletItems = Math.max(2, Math.min(6, Number(body.tabletItems) || 4));
+          if (body.mobileItems !== undefined) updateDoc.mobileItems = Math.max(1, Math.min(4, Number(body.mobileItems) || 2));
+          if (body.circleSize !== undefined) updateDoc.circleSize = Math.max(80, Math.min(260, Number(body.circleSize) || 170));
+          if (body.gap !== undefined) updateDoc.gap = Math.max(8, Math.min(60, Number(body.gap) || 24));
+          updateDoc.updatedAt = new Date();
+
+          await db.collection('category_showcase_settings').updateOne(
+            { id: 'default' },
+            { $set: updateDoc },
+            { upsert: true }
+          );
+
+          _cache.delete('cats');
+          _cache.delete('admin_categories');
+          _cache.delete('homepage_data');
+          cacheBust('cats');
+          invalidateSiteDataCache('homepage_data');
+          try { revalidatePath('/', 'layout'); } catch (e) {}
+
+          const updated = await db.collection('category_showcase_settings').findOne({ id: 'default' });
+          const settings = {
+            ...DEFAULT_CATEGORY_SHOWCASE_SETTINGS,
+            ...(updated ? clean(updated) : {})
+          };
+          return ok({ success: true, settings, data: { settings } });
+        }
+
+        // 3. PATCH/PUT /api/admin/categories/reorder or /api/admin/category-showcase/reorder
+        if (parts.length === 2 && parts[1] === 'reorder' && (method === 'PATCH' || method === 'PUT')) {
+          if (!hasPermission(admin, 'products.edit') && !hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied', 403);
+          }
+          const body = await request.json().catch(() => ({}));
+          const items = body.items || body.order || body.orderIds || [];
+          if (!Array.isArray(items)) return err('Items array is required for reordering', 400);
+
+          const ops = items.map((it, idx) => {
+            const id = typeof it === 'string' ? it : it.id;
+            const orderNum = typeof it === 'object' && (it.displayOrder !== undefined || it.order !== undefined)
+              ? Number(it.displayOrder ?? it.order)
+              : idx + 1;
+            return {
+              updateOne: {
+                filter: { id },
+                update: { $set: { order: orderNum, displayOrder: orderNum, updatedAt: new Date() } }
+              }
+            };
+          });
+
+          if (ops.length > 0) {
+            await db.collection('categories').bulkWrite(ops);
+          }
+
+          await syncCategoryAndCollectionFilterOptions(db);
+          _cache.delete('cats');
+          _cache.delete('admin_categories');
+          _cache.delete('homepage_data');
+          _cache.delete('product_filters');
+          cacheBust('cats');
+          cacheBust('product_filters');
+          invalidateSiteDataCache('homepage_data');
+          try { revalidatePath('/', 'layout'); } catch (e) {}
+
+          return ok({ success: true, message: 'Categories reordered successfully' });
+        }
+
+        // 4. PATCH /api/admin/categories/:id/status
+        if (parts.length === 3 && parts[2] === 'status' && (method === 'PATCH' || method === 'PUT')) {
+          if (!hasPermission(admin, 'products.edit') && !hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied', 403);
+          }
+          const id = parts[1];
+          const body = await request.json().catch(() => ({}));
+          const existing = await db.collection('categories').findOne({ id });
+          if (!existing) return err('Category not found', 404);
+
+          const newActive = body.active !== undefined ? !!body.active : (body.isActive !== undefined ? !!body.isActive : !existing.active);
+
+          await db.collection('categories').updateOne(
+            { id },
+            { $set: { active: newActive, enabled: newActive, updatedAt: new Date() } }
+          );
+
+          await syncCategoryAndCollectionFilterOptions(db);
+          _cache.delete('cats');
+          _cache.delete('admin_categories');
+          _cache.delete('homepage_data');
+          _cache.delete('product_filters');
+          cacheBust('cats');
+          cacheBust('product_filters');
+          invalidateSiteDataCache('homepage_data');
+          try { revalidatePath('/', 'layout'); } catch (e) {}
+
+          const up = await db.collection('categories').findOne({ id });
+          return ok({ success: true, item: clean(up) });
+        }
+
+        // 5. GET /api/admin/categories or /api/admin/category-showcase (List all items)
+        if (parts.length === 1 && method === 'GET') {
+          if (!hasPermission(admin, 'products.view') && !hasPermission(admin, 'settings.view')) {
+            return err('Permission denied', 403);
+          }
+          await seedCategoryShowcaseIfEmpty(db);
+          const [list, settingsDoc] = await Promise.all([
+            db.collection('categories').find({}).sort({ order: 1, displayOrder: 1, createdAt: 1 }).toArray(),
+            db.collection('category_showcase_settings').findOne({ id: 'default' })
+          ]);
+          const settings = {
+            ...DEFAULT_CATEGORY_SHOWCASE_SETTINGS,
+            ...(settingsDoc ? clean(settingsDoc) : {})
+          };
+          const formatted = list.map((c, idx) => {
+            const cleanItem = clean(c);
+            return {
+              ...cleanItem,
+              id: cleanItem.id,
+              name: cleanItem.name,
+              slug: cleanItem.slug,
+              img: cleanItem.img || cleanItem.imageUrl || '',
+              imageUrl: cleanItem.img || cleanItem.imageUrl || '',
+              link: cleanItem.link || `/shop?category=${cleanItem.slug}`,
+              buttonText: cleanItem.buttonText || '',
+              displayOrder: Number(cleanItem.order ?? cleanItem.displayOrder ?? (idx + 1)),
+              order: Number(cleanItem.order ?? cleanItem.displayOrder ?? (idx + 1)),
+              active: cleanItem.active !== false && cleanItem.enabled !== false,
+              enabled: cleanItem.active !== false && cleanItem.enabled !== false,
+              isActive: cleanItem.active !== false && cleanItem.enabled !== false,
+              openInNewTab: !!cleanItem.openInNewTab
+            };
+          });
+
+          return ok({
+            success: true,
+            categories: formatted,
+            items: formatted,
+            settings
+          });
+        }
+
+        // 6. POST /api/admin/categories or /api/admin/category-showcase (Create category)
+        if (parts.length === 1 && method === 'POST') {
+          if (!hasPermission(admin, 'products.create') && !hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied', 403);
+          }
+          const b = await request.json().catch(() => ({}));
+          if (!b.name || !b.name.trim()) return err('Category name is required', 400);
+
+          const name = b.name.trim();
+          const slug = (b.slug || name.toLowerCase().replace(/[^a-z0-9_-]/g, '-')).trim();
+          const imgUrl = (b.img || b.imageUrl || '').trim();
+          const link = (b.link || `/shop?category=${slug}`).trim();
+          const count = await db.collection('categories').countDocuments();
+          const orderNum = b.displayOrder !== undefined ? Number(b.displayOrder) : (b.order !== undefined ? Number(b.order) : count + 1);
+          const activeStatus = b.active !== false && b.enabled !== false && b.isActive !== false;
+
+          const doc = {
+            id: uuidv4(),
+            name,
+            slug,
+            img: imgUrl,
+            imageUrl: imgUrl,
+            link,
+            buttonText: (b.buttonText || '').trim(),
+            description: (b.description || '').trim(),
+            order: orderNum,
+            displayOrder: orderNum,
+            active: activeStatus,
+            enabled: activeStatus,
+            openInNewTab: !!b.openInNewTab,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          };
+
+          await db.collection('categories').insertOne(doc);
+          await syncCategoryAndCollectionFilterOptions(db);
+
+          _cache.delete('cats');
+          _cache.delete('admin_categories');
+          _cache.delete('homepage_data');
+          _cache.delete('product_filters');
+          cacheBust('cats');
+          cacheBust('product_filters');
+          invalidateSiteDataCache('homepage_data');
+          try { revalidatePath('/', 'layout'); } catch (e) {}
+
+          await logAdminActivity(db, {
+            admin,
+            action: 'CATEGORY_CREATED',
+            module: 'CATEGORIES',
+            targetId: doc.id,
+            targetName: doc.name,
+            metadata: { slug: doc.slug },
+            request
+          });
+
+          return ok({ success: true, item: clean(doc), category: clean(doc) });
+        }
+
+        // 7. PUT /api/admin/categories/:id or /api/admin/category-showcase/:id (Update category)
+        if (parts.length === 2 && parts[1] !== 'settings' && parts[1] !== 'reorder' && method === 'PUT') {
+          if (!hasPermission(admin, 'products.edit') && !hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied', 403);
+          }
+          const id = parts[1];
+          const b = await request.json().catch(() => ({}));
+          const existing = await db.collection('categories').findOne({ id });
+          if (!existing) return err('Category not found', 404);
+
+          const updateDoc = {};
+          if (b.name !== undefined) updateDoc.name = b.name.trim();
+          if (b.slug !== undefined) updateDoc.slug = b.slug.trim();
+          if (b.img !== undefined || b.imageUrl !== undefined) {
+            updateDoc.img = (b.img || b.imageUrl || '').trim();
+            updateDoc.imageUrl = updateDoc.img;
+          }
+          if (b.link !== undefined) updateDoc.link = b.link.trim();
+          if (b.buttonText !== undefined) updateDoc.buttonText = b.buttonText.trim();
+          if (b.description !== undefined) updateDoc.description = b.description.trim();
+          if (b.order !== undefined || b.displayOrder !== undefined) {
+            const ord = Number(b.order ?? b.displayOrder);
+            updateDoc.order = ord;
+            updateDoc.displayOrder = ord;
+          }
+          if (b.active !== undefined || b.enabled !== undefined || b.isActive !== undefined) {
+            const act = b.active !== false && b.enabled !== false && b.isActive !== false;
+            updateDoc.active = act;
+            updateDoc.enabled = act;
+          }
+          if (b.openInNewTab !== undefined) updateDoc.openInNewTab = !!b.openInNewTab;
+          updateDoc.updatedAt = new Date();
+
+          await db.collection('categories').updateOne({ id }, { $set: updateDoc });
+          await syncCategoryAndCollectionFilterOptions(db);
+
+          _cache.delete('cats');
+          _cache.delete('admin_categories');
+          _cache.delete('homepage_data');
+          _cache.delete('product_filters');
+          cacheBust('cats');
+          cacheBust('product_filters');
+          invalidateSiteDataCache('homepage_data');
+          try { revalidatePath('/', 'layout'); } catch (e) {}
+
+          const up = await db.collection('categories').findOne({ id });
+          return ok({ success: true, item: clean(up), category: clean(up) });
+        }
+
+        // 8. DELETE /api/admin/categories/:id or /api/admin/category-showcase/:id (Delete category)
+        if (parts.length === 2 && parts[1] !== 'settings' && parts[1] !== 'reorder' && method === 'DELETE') {
+          if (!hasPermission(admin, 'products.delete') && !hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied', 403);
+          }
+          const id = parts[1];
+          const catDoc = await db.collection('categories').findOne({ id });
+          if (!catDoc) return err('Category not found', 404);
+
+          // Check if assigned to products
+          const assignedCount = await db.collection('products').countDocuments({
+            $or: [
+              { category: catDoc.slug },
+              { category: catDoc.name }
+            ]
+          });
+          if (assignedCount > 0) {
+            return err(`Cannot delete category "${catDoc.name}": ${assignedCount} product(s) are currently assigned to it. Please reassign or delete the products first.`, 400);
+          }
+
+          // Clean up unused upload if local
+          if (catDoc.img) {
+            try {
+              const imgUrl = catDoc.img;
+              const count = await db.collection('categories').countDocuments({ img: imgUrl, id: { $ne: id } });
+              if (count === 0) {
+                let filename = '';
+                if (imgUrl.includes('/api/uploads/')) filename = imgUrl.split('/api/uploads/')[1];
+                else if (imgUrl.includes('/uploads/')) filename = imgUrl.split('/uploads/')[1];
+                if (filename) {
+                  await db.collection('uploads').deleteOne({ filename });
+                  const filePath = pathModule.join(process.cwd(), 'public', 'uploads', filename);
+                  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+                }
+              }
+            } catch (delErr) {
+              console.warn('Failed to clean up category media:', delErr.message);
+            }
+          }
+
+          await db.collection('categories').deleteOne({ id });
+          await syncCategoryAndCollectionFilterOptions(db);
+
+          _cache.delete('cats');
+          _cache.delete('admin_categories');
+          _cache.delete('homepage_data');
+          _cache.delete('product_filters');
+          cacheBust('cats');
+          cacheBust('product_filters');
+          invalidateSiteDataCache('homepage_data');
+          try { revalidatePath('/', 'layout'); } catch (e) {}
+
+          await logAdminActivity(db, {
+            admin,
+            action: 'CATEGORY_DELETED',
+            module: 'CATEGORIES',
+            targetId: id,
+            targetName: catDoc.name,
+            metadata: { slug: catDoc.slug },
+            request
+          });
+
+          return ok({ ok: true, success: true });
+        }
+      }
+
+      // Collections, Banners, Coupons CRUD (uniform)
+      for (const col of ['collections', 'banners', 'coupons']) {
         if (sub === col && method === 'GET') {
           const cached = cacheGet('admin_' + col);
           if (cached) return ok(cached);
@@ -5275,9 +5704,6 @@ async function handleRoute(request, { params }) {
         }
         if (sub === col && method === 'POST') {
           const b = await request.json();
-          if (col === 'categories' && (!b.name || !b.name.trim())) {
-            return err('Category name is required', 400);
-          }
           if (col === 'collections') {
             if (!b.name || !b.name.trim()) return err('Collection name is required', 400);
             if (!b.slug || !b.slug.trim()) return err('Collection slug is required', 400);
@@ -5285,11 +5711,7 @@ async function handleRoute(request, { params }) {
           if (col === 'coupons') {
             const rawCode = (b.code || '').trim().toUpperCase();
             if (!rawCode) return err('Coupon code is required', 400);
-            if (rawCode.length < 3) return err('Coupon code must be at least 3 characters', 400);
-            const escaped = rawCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const existing = await db.collection('coupons').findOne({
-              code: { $regex: new RegExp(`^${escaped}$`, 'i') }
-            });
+            const existing = await db.collection('coupons').findOne({ code: rawCode });
             if (existing) return err(`Coupon code '${rawCode}' already exists`, 400);
 
             const type = b.type === 'flat' ? 'flat' : 'percent';
@@ -5306,20 +5728,12 @@ async function handleRoute(request, { params }) {
             b.active = b.active !== false;
           }
           const doc = { id: uuidv4(), createdAt: new Date(), ...b };
-          try {
-            await db.collection(col).insertOne(doc);
-          } catch (dbErr) {
-            if (dbErr.code === 11000) {
-              return err(`Coupon code '${b.code || ''}' already exists`, 400);
-            }
-            throw dbErr;
-          }
+          await db.collection(col).insertOne(doc);
           _cache.delete('admin_' + col);
-          if (col === 'categories' || col === 'collections') {
+          if (col === 'collections') {
             await syncCategoryAndCollectionFilterOptions(db);
             _cache.delete('product_filters');
             cacheBust('product_filters');
-            _cache.delete('cats');
             _cache.delete('cols');
           }
           return ok({ item: clean(doc) });
@@ -5335,12 +5749,7 @@ async function handleRoute(request, { params }) {
             if (b.code !== undefined) {
               const rawCode = (b.code || '').trim().toUpperCase();
               if (!rawCode) return err('Coupon code is required', 400);
-              if (rawCode.length < 3) return err('Coupon code must be at least 3 characters', 400);
-              const escaped = rawCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-              const existing = await db.collection('coupons').findOne({
-                code: { $regex: new RegExp(`^${escaped}$`, 'i') },
-                id: { $ne: id }
-              });
+              const existing = await db.collection('coupons').findOne({ code: rawCode, id: { $ne: id } });
               if (existing) return err(`Coupon code '${rawCode}' already exists`, 400);
               b.code = rawCode;
             }
@@ -5357,20 +5766,12 @@ async function handleRoute(request, { params }) {
               b.minOrder = Math.max(0, Number(b.minOrder) || 0);
             }
           }
-          try {
-            await db.collection(col).updateOne({ id }, { $set: b });
-          } catch (dbErr) {
-            if (dbErr.code === 11000) {
-              return err(`Coupon code '${b.code || ''}' already exists`, 400);
-            }
-            throw dbErr;
-          }
+          await db.collection(col).updateOne({ id }, { $set: b });
           _cache.delete('admin_' + col);
-          if (col === 'categories' || col === 'collections') {
+          if (col === 'collections') {
             await syncCategoryAndCollectionFilterOptions(db);
             _cache.delete('product_filters');
             cacheBust('product_filters');
-            _cache.delete('cats');
             _cache.delete('cols');
           }
           const up = await db.collection(col).findOne({ id });
@@ -5380,23 +5781,7 @@ async function handleRoute(request, { params }) {
           const id = sub.split('/')[1];
           _cache.delete('admin_' + col);
 
-          // Check category dependencies before deletion
-          if (col === 'categories') {
-            const catDoc = await db.collection('categories').findOne({ id });
-            if (catDoc) {
-              const assignedCount = await db.collection('products').countDocuments({
-                $or: [
-                  { category: catDoc.slug },
-                  { category: catDoc.name }
-                ]
-              });
-              if (assignedCount > 0) {
-                return err(`Cannot delete category "${catDoc.name}": ${assignedCount} product(s) are currently assigned to it. Please reassign or delete the products first.`, 400);
-              }
-            }
-          }
-
-          if (col === 'banners' || col === 'categories') {
+          if (col === 'banners') {
             try {
               const doc = await db.collection(col).findOne({ id });
               if (doc && doc.img) {
@@ -5423,11 +5808,10 @@ async function handleRoute(request, { params }) {
             }
           }
           await db.collection(col).deleteOne({ id });
-          if (col === 'categories' || col === 'collections') {
+          if (col === 'collections') {
             await syncCategoryAndCollectionFilterOptions(db);
             _cache.delete('product_filters');
             cacheBust('product_filters');
-            _cache.delete('cats');
             _cache.delete('cols');
           }
           return ok({ ok: true });
@@ -5461,10 +5845,6 @@ async function handleRoute(request, { params }) {
               { 'address.phone': reg },
               { 'items.name': reg },
               { guestEmail: reg },
-              { carrier: reg },
-              { trackingNumber: reg },
-              { 'courier.carrier': reg },
-              { 'courier.trackingNumber': reg },
               { userId: { $in: matchingUserIds } }
             ]
           };
@@ -5508,10 +5888,6 @@ async function handleRoute(request, { params }) {
                   { 'address.phone': reg },
                   { 'items.name': reg },
                   { guestEmail: reg },
-                  { carrier: reg },
-                  { trackingNumber: reg },
-                  { 'courier.carrier': reg },
-                  { 'courier.trackingNumber': reg },
                   { userId: { $in: matchingUserIds } }
                 ]
               }
@@ -5545,48 +5921,23 @@ async function handleRoute(request, { params }) {
           packed: 'Order packed & ready to ship.',
           shipped: 'Shipped via courier.',
           delivered: 'Delivered successfully.',
-          cancelled: 'Cancelled by mikumantra',
+          cancelled: 'Cancelled by MikuMantra',
           confirmed: 'Order confirmed.'
         };
-        const setDoc = {};
-        if (b.status !== undefined) {
-          setDoc.status = b.status;
-        }
-
-        const effectiveStatus = b.status || existingOrder.status || 'confirmed';
-
+        const setDoc = { status: b.status };
         if (b.status === 'delivered') {
           setDoc.deliveredAt = new Date();
         }
-
-        let courierDoc = null;
-        if (b.courier && typeof b.courier === 'object') {
-          const shippedAt = b.courier.shippedAt || (b.status === 'shipped' || existingOrder.status === 'shipped' ? new Date() : (existingOrder.shippedAt || new Date()));
-          courierDoc = {
-            carrier: (b.courier.carrier || '').trim(),
-            trackingNumber: (b.courier.trackingNumber || '').trim(),
-            trackingUrl: (b.courier.trackingUrl || '').trim(),
-            notes: (b.courier.notes || '').trim(),
-            shippedAt: shippedAt
-          };
-          setDoc.courier = courierDoc;
-          setDoc.carrier = courierDoc.carrier;
-          setDoc.trackingNumber = courierDoc.trackingNumber;
-          setDoc.trackingUrl = courierDoc.trackingUrl;
-          if (courierDoc.shippedAt) setDoc.shippedAt = courierDoc.shippedAt;
-        } else if (b.status === 'shipped') {
-          const shippedAt = existingOrder.shippedAt || new Date();
-          setDoc.shippedAt = shippedAt;
-          if (existingOrder.courier) {
-            setDoc['courier.shippedAt'] = existingOrder.courier.shippedAt || shippedAt;
-          }
-        }
-
         if (b.status === 'cancelled') {
+          if (!hasPermission(admin, 'orders.cancel') && !hasPermission(admin, 'orders.update')) {
+            return err('Permission denied: orders.cancel required', 403);
+          }
           const now = new Date();
           setDoc.cancelledAt = now;
-          setDoc.cancelledBy = 'mikumantra';
-          setDoc.cancellationReason = b.reason || 'Cancelled by mikumantra';
+          setDoc.cancelledBy = 'admin';
+          setDoc.cancelledByUserId = admin.id;
+          setDoc.cancelledByRole = 'admin';
+          setDoc.cancellationReason = b.reason || 'Cancelled by MikuMantra';
           if (b.note) setDoc.cancellationNote = b.note;
 
           const isPaid = existingOrder.paymentStatus === 'paid' || (existingOrder.payment !== 'cod' && existingOrder.paymentStatus !== 'pending');
@@ -5600,38 +5951,18 @@ async function handleRoute(request, { params }) {
           }
         }
 
-        let historyEntry = null;
-        if (b.status && b.status !== existingOrder.status) {
-          let note = b.note;
-          if (!note) {
-            if (b.status === 'shipped' && courierDoc?.carrier) {
-              const awbPart = courierDoc.trackingNumber ? ` (AWB: ${courierDoc.trackingNumber})` : '';
-              note = `Shipped via ${courierDoc.carrier}${awbPart}.${courierDoc.notes ? ' ' + courierDoc.notes : ''}`.trim();
-            } else {
-              note = notes[b.status] || '';
-            }
-          }
-          historyEntry = {
-            status: b.status,
-            at: new Date(),
-            note
-          };
-        } else if (courierDoc) {
-          historyEntry = {
-            status: effectiveStatus,
-            at: new Date(),
-            note: b.note || `Courier tracking updated: ${courierDoc.carrier || 'Carrier'}${courierDoc.trackingNumber ? ' (AWB: ' + courierDoc.trackingNumber + ')' : ''}`
-          };
-        }
-
-        const updateOperation = { $set: setDoc };
-        if (historyEntry) {
-          updateOperation.$push = { statusHistory: historyEntry };
-        }
-
         const updateResult = await db.collection('orders').updateOne(
           { id, status: { $ne: 'cancelled' } },
-          updateOperation
+          {
+            $set: setDoc,
+            $push: {
+              statusHistory: {
+                status: b.status,
+                at: new Date(),
+                note: b.note || notes[b.status] || ''
+              }
+            }
+          }
         );
 
         if (updateResult.modifiedCount === 0) {
@@ -5653,6 +5984,24 @@ async function handleRoute(request, { params }) {
         const up = await db.collection('orders').findOne({ id });
 
         if (b.status === 'cancelled') {
+          try {
+            await logAdminActivity(db, {
+              admin,
+              action: 'ORDER_CANCELLED',
+              module: 'Orders',
+              targetId: existingOrder.id,
+              targetName: `Order #${existingOrder.orderNumber}`,
+              metadata: {
+                cancelledBy: 'admin',
+                reason: setDoc.cancellationReason,
+                note: setDoc.cancellationNote || null
+              },
+              request
+            });
+          } catch (logErr) {
+            console.error('Failed to log admin cancellation activity:', logErr);
+          }
+
           try {
             await sendOrderCancelledNotification({ order: up, user: null, db });
           } catch (notifErr) {

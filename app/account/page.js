@@ -7,6 +7,7 @@ import { useWishlist } from '@/lib/cart-store';
 import { PRODUCTS, formatINR, formatRating } from '@/lib/products';
 import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound, RotateCcw, Clock, Star, Sparkles, CheckCircle2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
+import { getCancellationLabel } from '@/lib/utils';
 
 export default function AccountPage() {
   const { user, loading, logout, refresh, changePassword } = useAuth();
@@ -718,9 +719,7 @@ export default function AccountPage() {
                                   : 'bg-[#FAF5EB] text-[#9C6B30] border-[#9C6B30]/30'
                                 }`}>
                                 {o.status === 'cancelled'
-                                  ? ((o.cancelledBy === 'admin' || o.cancelledBy === 'mikumantra' || (o.statusHistory || []).some(h => h.status === 'cancelled' && ((h.note || '').toLowerCase().includes('admin') || (h.note || '').toLowerCase().includes('mikumantra'))))
-                                      ? 'Cancelled by mikumantra'
-                                      : 'Cancelled by customer')
+                                  ? (getCancellationLabel(o) || 'Cancelled')
                                   : o.status}
                               </span>
                               {o.returnStatus && (
