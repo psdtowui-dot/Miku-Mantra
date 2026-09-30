@@ -7,6 +7,7 @@ import { formatINR, formatRating } from '@/lib/products';
 import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft, Star, Edit3, Trash2, Upload, Camera, Image as ImageIcon, Building2, Smartphone, ShieldCheck } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
+import { getCancellationLabel, getCancellationActor } from '@/lib/utils';
 
 const STEPS = [
   { key: 'confirmed', label: 'Confirmed', icon: CheckCircle2 },
@@ -795,8 +796,8 @@ function OrderInner() {
 
   // Cancellation eligibility
   const isCancellable = ['confirmed', 'placed', 'processing', 'packed'].includes(order.status) && order.status !== 'cancelled';
-  const isCancelledByAdmin = (order.cancelledBy === 'admin' || order.cancelledBy === 'mikumantra' || (order.statusHistory || []).some(h => h.status === 'cancelled' && ((h.note || '').toLowerCase().includes('admin') || (h.note || '').toLowerCase().includes('mikumantra'))));
-  const cancellationDisplayText = isCancelledByAdmin ? 'Cancelled by mikumantra' : 'Cancelled by customer';
+  const cancellationDisplayText = getCancellationLabel(order) || 'Cancelled';
+  const cancellationActor = getCancellationActor(order);
 
   return (
     <main className="bg-white min-h-screen">
@@ -1269,7 +1270,11 @@ function OrderInner() {
                 {cancellationDisplayText}
               </div>
               <p className="text-neutral-700">
-                Cancelled by <span className="font-medium capitalize">{isCancelledByAdmin ? 'mikumantra' : 'customer'}</span>
+                {cancellationActor ? (
+                  <>Cancelled by <span className="font-medium">{cancellationActor}</span></>
+                ) : (
+                  <span>Order cancelled</span>
+                )}
                 {order.cancelledAt && <span> on {new Date(order.cancelledAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
               </p>
               {order.cancellationReason && (

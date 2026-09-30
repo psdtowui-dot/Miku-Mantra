@@ -375,6 +375,13 @@ export default function AdminProducts() {
                     </td>
                   </tr>
                 ))}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="py-12 text-center text-sm text-neutral-500">
+                      Product not found
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -383,11 +390,17 @@ export default function AdminProducts() {
 
       <AnimatePresence>
         {editing && (
-          <div
+          <motion.div
+            key="product-drawer-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
             className="fixed inset-0 bg-[#1A1A1A]/40 backdrop-blur-xs z-50 flex justify-end"
             onClick={(e) => { if (e.target === e.currentTarget) setEditing(null); }}
           >
             <motion.div
+              key="product-drawer-panel"
               initial={{ x: '100%' }}
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
@@ -892,7 +905,7 @@ export default function AdminProducts() {
                 </button>
               </div>
             </motion.div>
-          </div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

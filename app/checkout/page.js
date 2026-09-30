@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 import { Loader2, ShieldCheck, Truck, Lock, MapPin, Wallet, ChevronRight, CreditCard, BookmarkCheck, Plus, Check } from 'lucide-react';
 
 export default function CheckoutPage() {
-  const { items, subtotal, clear, hydrated } = useCart();
+  const { items, subtotal, clear, coupon: storeCoupon, discount: storeDiscount, removeCoupon, hydrated } = useCart();
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const [step, setStep] = useState('address');
@@ -85,9 +85,9 @@ export default function CheckoutPage() {
   const threshold = Number(shippingConfig?.freeShippingThreshold ?? 2000);
   const standardCharge = Number(shippingConfig?.standardShippingCharge ?? 500);
 
-  const discount = coupon?.discount || 0;
+  const discount = coupon?.discount ?? storeDiscount ?? 0;
   const shipping = subtotal === 0 ? 0 : (freeEnabled && subtotal >= threshold ? 0 : standardCharge);
-  const tax = Math.round((subtotal - discount) * 0.03);
+  const tax = Math.round(Math.max(0, subtotal - discount) * 0.03);
   const giftWrap = gift ? 250 : 0;
   const total = Math.max(0, subtotal - discount + shipping + tax + giftWrap);
 
@@ -285,17 +285,61 @@ export default function CheckoutPage() {
       const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';
       const giftKey = user?.id ? `mikumantra_gift_${user.id}` : 'mikumantra_gift_guest';
       const c = JSON.parse(sessionStorage.getItem(couponKey) || sessionStorage.getItem('mikumantra_coupon') || 'null');
-      if (c) setCoupon(c);
+      const activeC = storeCoupon || c;
+      if (activeC) setCoupon(activeC);
       if (sessionStorage.getItem(giftKey) === '1' || sessionStorage.getItem('mikumantra_gift') === '1') setGift(true);
     } catch { }
-  }, [user]);
+  }, [user, storeCoupon]);
+
+  // Revalidate coupon & cart pricing with backend on mount and upon cart change
+  useEffect(() => {
+    if (!hydrated || items.length === 0) return;
+    const activeCode = coupon?.code || storeCoupon?.code;
+    let isMounted = true;
+
+    authFetch('/api/cart/pricing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        items: items.map(i => ({ id: i.id, qty: i.qty, price: i.price })),
+        coupon: activeCode || null,
+        giftWrap: gift
+      })
+    })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!data || !isMounted) return;
+        if (data.couponValid === false && (coupon || storeCoupon)) {
+          setCoupon(null);
+          removeCoupon();
+          const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';
+          sessionStorage.removeItem(couponKey);
+          sessionStorage.removeItem('mikumantra_coupon');
+          localStorage.removeItem(couponKey);
+          localStorage.removeItem('mikumantra_coupon');
+          toast.error(data.couponError || 'Coupon is no longer eligible and has been removed.', {
+            id: 'coupon-checkout-invalidated'
+          });
+        } else if (data.coupon && data.couponValid) {
+          setCoupon(data.coupon);
+        }
+      })
+      .catch(err => console.warn('Pricing validation error:', err));
+
+    return () => { isMounted = false; };
+  }, [hydrated, items, subtotal, gift, user]);
 
   async function payWithRazorpay() {
     try {
       const orderRes = await authFetch('/api/payment/razorpay/order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: total })
+        body: JSON.stringify({
+          amount: total,
+          items: items.map(i => ({ id: i.id, qty: i.qty })),
+          coupon: coupon?.code || storeCoupon?.code || null,
+          giftWrap: gift
+        })
       });
       const rzOrder = await orderRes.json();
       if (!orderRes.ok) {
@@ -344,6 +388,7 @@ export default function CheckoutPage() {
     try {
       if (!Array.isArray(items) || items.length === 0) { toast.error('Cart is empty'); setPlacing(false); return; }
 
+      // Validate stock availability
       const valRes = await authFetch('/api/cart/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -360,13 +405,51 @@ export default function CheckoutPage() {
         }
       }
 
+      // Re-verify coupon eligibility immediately before payment
+      const activeCode = coupon?.code || storeCoupon?.code;
+      if (activeCode) {
+        const priceCheck = await authFetch('/api/cart/pricing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            items: items.map(i => ({ id: i.id, qty: i.qty })),
+            coupon: activeCode,
+            giftWrap: gift
+          })
+        });
+        if (priceCheck.ok) {
+          const pCheckData = await priceCheck.json();
+          if (pCheckData.couponValid === false) {
+            setCoupon(null);
+            removeCoupon();
+            const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';
+            sessionStorage.removeItem(couponKey);
+            sessionStorage.removeItem('mikumantra_coupon');
+            localStorage.removeItem(couponKey);
+            localStorage.removeItem('mikumantra_coupon');
+            toast.error(pCheckData.couponError || 'Coupon is no longer eligible. Pricing has been updated.');
+            setPlacing(false);
+            return;
+          }
+        }
+      }
+
       let razorpayPaymentId = null;
       if (payment === 'razorpay') {
         const res = await payWithRazorpay();
         if (!res.paid) { toast.error('Payment cancelled'); setPlacing(false); return; }
         razorpayPaymentId = res.paymentId;
       }
-      const body = { items: items.map(i => ({ id: i.id, slug: i.slug, name: i.name, image: i.image, price: i.price, qty: i.qty })), address: addr, payment, email: user ? undefined : email, coupon: coupon?.code, discount, giftWrap: gift, razorpayPaymentId };
+      const body = {
+        items: items.map(i => ({ id: i.id, slug: i.slug, name: i.name, image: i.image, price: i.price, qty: i.qty })),
+        address: addr,
+        payment,
+        email: user ? undefined : email,
+        coupon: coupon?.code || storeCoupon?.code || null,
+        discount,
+        giftWrap: gift,
+        razorpayPaymentId
+      };
       const r = await authFetch('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json();
       if (!r.ok) { console.error('Order API error', r.status, d); toast.error(d.error || 'Order failed'); return; }
@@ -374,10 +457,13 @@ export default function CheckoutPage() {
       const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';
       const giftKey = user?.id ? `mikumantra_gift_${user.id}` : 'mikumantra_gift_guest';
       clear(); 
+      removeCoupon();
       sessionStorage.removeItem(couponKey); 
       sessionStorage.removeItem(giftKey);
       sessionStorage.removeItem('mikumantra_coupon');
       sessionStorage.removeItem('mikumantra_gift');
+      localStorage.removeItem(couponKey);
+      localStorage.removeItem('mikumantra_coupon');
       
       toast.success('Order placed successfully');
       router.push(`/orders/${d.order.id}?success=1`);

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { formatINR } from '@/lib/products';
 import { Loader2, Eye, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { getCancellationLabel, getCancellationActor } from '@/lib/utils';
 import OrderDetailModal from '@/components/ui/order-detail-modal';
 
 export default function AdminOrders(){
@@ -126,9 +127,14 @@ export default function AdminOrders(){
                     <td className="p-3 uppercase text-[11px] font-medium text-neutral-600">{o.payment}</td>
                     <td className="p-3">
                       {o.status === 'cancelled' ? (
-                        <span className="inline-block px-2.5 py-1 text-xs uppercase font-bold text-red-700 bg-red-50 border border-red-200 rounded select-none" title="Status cannot be changed after cancellation">
-                          Cancelled
-                        </span>
+                        <div className="flex flex-col items-start gap-0.5">
+                          <span className="inline-block px-2 py-0.5 text-[10px] uppercase font-bold text-red-700 bg-red-50 border border-red-200 rounded select-none" title="Status cannot be changed after cancellation">
+                            Cancelled
+                          </span>
+                          <span className="text-[10px] text-neutral-500 font-medium">
+                            By {getCancellationActor(o) || 'Unavailable'}
+                          </span>
+                        </div>
                       ) : (
                         <select 
                           value={o.status} 

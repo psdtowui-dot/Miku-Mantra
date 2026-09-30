@@ -1,12 +1,28 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Plus, Trash2, Loader2, Tag, Check, Power } from 'lucide-react';
+import { Plus, Trash2, Loader2, Tag, Check, Power, Sparkles, Eye } from 'lucide-react';
 import { toast } from 'sonner';
+
+function renderFormattedPreview(text) {
+  if (!text) return null;
+  const parts = text.split(/(\b[A-Z0-9]{3,}\b)/g);
+  return parts.map((part, i) => {
+    if (/^[A-Z0-9]{3,}$/.test(part) && !/^\d+$/.test(part)) {
+      return <span key={i} className="font-semibold text-[#9C6B30]">{part}</span>;
+    }
+    return part;
+  });
+}
 
 export default function CouponsPage() {
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
+  // Customer Coupon Display / Helper Text State
+  const [helperText, setHelperText] = useState('');
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [lastSavedText, setLastSavedText] = useState(null);
 
   // Form State
   const [form, setForm] = useState({
@@ -23,6 +39,49 @@ export default function CouponsPage() {
     value: '',
     minOrder: ''
   });
+
+  const loadCouponSettings = async () => {
+    try {
+      const res = await fetch('/api/admin/coupons/settings', {
+        credentials: 'include',
+        cache: 'no-store'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.data?.helperText ?? data.helperText ?? '';
+        setHelperText(text);
+        setLastSavedText(text);
+      }
+    } catch (err) {
+      console.error('Failed to load coupon settings:', err);
+    }
+  };
+
+  const handleSaveHelperText = async () => {
+    setSavingSettings(true);
+    try {
+      const res = await fetch('/api/admin/coupons/settings', {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ helperText })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const saved = data.data?.helperText ?? data.helperText ?? helperText;
+        setHelperText(saved);
+        setLastSavedText(saved);
+        toast.success('Coupon display text updated successfully.');
+      } else {
+        toast.error(data.error || 'Unable to save coupon display text. Please try again.');
+      }
+    } catch (err) {
+      console.error('Failed to save coupon display text:', err);
+      toast.error('Unable to save coupon display text. Please try again.');
+    } finally {
+      setSavingSettings(false);
+    }
+  };
 
   const loadCoupons = async () => {
     setLoading(true);
@@ -43,6 +102,7 @@ export default function CouponsPage() {
 
   useEffect(() => {
     loadCoupons();
+    loadCouponSettings();
   }, []);
 
   const validateField = (field, val, currentType = form.type) => {
@@ -331,6 +391,92 @@ export default function CouponsPage() {
           </button>
         </div>
       </form>
+
+      {/* Customer Coupon Display / Helper Text Settings */}
+      <div className="bg-white rounded-xl border border-neutral-200 p-4 sm:p-6 mb-8 shadow-sm">
+        <div className="text-xs uppercase tracking-widest text-[#9C6B30] font-semibold mb-2 flex items-center gap-1.5">
+          <Sparkles size={14} /> Customer Coupon Display
+        </div>
+        <p className="text-xs text-neutral-500 mb-5">
+          Configure the suggestion or helper text displayed directly below the coupon input on the customer cart page.
+        </p>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Left: Input & Save */}
+          <div className="lg:col-span-7 space-y-4">
+            <div>
+              <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold block mb-1">
+                Helper Text
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Try MIKUMANTRA10 or WELCOME2000"
+                value={helperText}
+                onChange={e => setHelperText(e.target.value)}
+                className="w-full px-3.5 py-2.5 border border-neutral-200 rounded text-sm focus:outline-none focus:border-[#9C6B30] transition-colors"
+              />
+              <p className="text-[11px] text-neutral-400 mt-1.5">
+                Leave empty to hide the helper text completely on the customer cart page. Supports symbols: ₹, %, -, &, !, ., ,, ()
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={handleSaveHelperText}
+                disabled={savingSettings}
+                className="flex items-center justify-center gap-2 bg-[#1A1A1A] text-white px-6 py-2.5 text-[11px] tracking-widest uppercase rounded hover:bg-[#9C6B30] transition-colors disabled:opacity-50 cursor-pointer font-medium"
+              >
+                {savingSettings ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                Save Settings
+              </button>
+              {lastSavedText !== null && lastSavedText === helperText && (
+                <span className="text-xs text-emerald-600 flex items-center gap-1">
+                  <Check size={12} /> Saved in database
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Right: Live Customer Preview */}
+          <div className="lg:col-span-5 bg-[#FAF6EF]/60 border border-[#E8E8E8] rounded-xl p-4 sm:p-5">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[10px] uppercase tracking-widest text-[#9C6B30] font-bold flex items-center gap-1.5">
+                <Eye size={13} /> Customer Preview
+              </span>
+              <span className="text-[9px] uppercase tracking-wider text-neutral-400 font-mono bg-white px-2 py-0.5 rounded border border-neutral-200">
+                Live Preview
+              </span>
+            </div>
+
+            <div className="bg-white rounded-lg p-3 border border-[#E8E8E8] shadow-xs">
+              <div className="text-[11px] font-medium text-neutral-600 mb-2">Order Summary</div>
+              <div className="flex gap-2 mb-2">
+                <div className="flex-1 flex items-center border border-[#E8E8E8] rounded-md px-2.5 py-1.5 text-xs text-neutral-400 bg-neutral-50/50">
+                  <Tag size={13} className="text-[#9C6B30] mr-2 shrink-0" />
+                  ENTER COUPON
+                </div>
+                <button type="button" className="px-3 py-1.5 bg-[#1A1A1A] text-white text-[10px] tracking-widest uppercase rounded font-medium opacity-90 cursor-default">
+                  Apply
+                </button>
+              </div>
+
+              {helperText.trim() ? (
+                <div className="text-[10px] text-neutral-500 transition-all font-normal">
+                  {renderFormattedPreview(helperText)}
+                </div>
+              ) : (
+                <div className="text-[10px] text-neutral-400 italic">
+                  (Hidden on cart — no empty space)
+                </div>
+              )}
+            </div>
+            <p className="text-[10px] text-neutral-400 mt-2.5">
+              Updates in real-time as you type. Click &quot;Save Settings&quot; to apply to the customer storefront.
+            </p>
+          </div>
+        </div>
+      </div>
 
       {/* Coupons List */}
       <div className="mb-4 flex items-center justify-between">
