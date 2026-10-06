@@ -166,7 +166,10 @@ export default function Footer({ initialData }) {
               <ul className="space-y-3 text-sm text-white/70">
                 {col.links.filter(l => l.isActive).map((link, linkIdx) => (
                   <li key={linkIdx}>
-                    <Link href={link.url} className="hover:text-[#D4AF37]">
+                    <Link
+                      href={(!link.url || link.url === '#') && link.label?.toLowerCase().includes('track') ? '/track-order' : link.url}
+                      className="hover:text-[#D4AF37]"
+                    >
                       {link.label}
                     </Link>
                   </li>

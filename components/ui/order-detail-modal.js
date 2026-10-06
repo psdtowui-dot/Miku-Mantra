@@ -345,7 +345,7 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
                 onClick={() => setShowShippingSlip(true)}
                 className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-[#9C6B30] text-white text-xs font-semibold tracking-widest uppercase rounded-lg hover:bg-[#855B29] transition-all shadow-xs w-full sm:w-auto text-center"
               >
-                <FileText size={14} /> Generate Shipping Slip
+                <FileText size={14} /> Generate Shipping Slips (2 Copies)
               </button>
             </div>
 

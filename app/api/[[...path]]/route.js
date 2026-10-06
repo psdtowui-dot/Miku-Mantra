@@ -11,7 +11,8 @@ import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS a
 import { buildInvoicePDF } from '@/lib/pdf-invoice'
 import { buildShippingSlipPDF } from '@/lib/pdf-shippingslip'
 import { WAREHOUSE_PINCODE } from '@/lib/constants'
-import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification } from '@/lib/notifications'
+import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendOrderShippedNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification } from '@/lib/notifications'
+import { generateTrackingUrl } from '@/lib/courier'
 import { sendPasswordResetEmail } from '@/lib/email-service'
 import { seedRbacIfEmpty, resolveUserPermissions, hasPermission, logAdminActivity, validatePrivilegeEscalation, PERMISSIONS, DEFAULT_ROLES } from '@/lib/rbac'
 import { invalidateSiteDataCache } from '@/lib/db-site-settings'
@@ -63,7 +64,7 @@ const DEFAULT_FOOTER = {
     {
       title: 'Support',
       links: [
-        { label: 'Track Order', url: '#', isActive: true },
+        { label: 'Track Order', url: '/track-order', isActive: true },
         { label: 'Shipping', url: '#', isActive: true },
         { label: 'Returns', url: '#', isActive: true },
         { label: 'Care Guide', url: '#', isActive: true },
@@ -2600,6 +2601,92 @@ async function handleRoute(request, { params }) {
         order: clean(updatedOrder)
       });
     }
+
+    // ============ PUBLIC / CUSTOMER ORDER TRACKING ENDPOINT ============
+    if (route === '/orders/track' && method === 'GET') {
+      const sp = request.nextUrl.searchParams;
+      const orderNumber = (sp.get('orderNumber') || '').trim();
+      const contact = (sp.get('contact') || '').trim().toLowerCase();
+      const awb = (sp.get('awb') || '').trim();
+      const u = await getCurrentUser(db, request);
+
+      if (!orderNumber && !awb) {
+        return err('Please enter an Order Number or AWB Tracking Number', 400);
+      }
+
+      let query = {};
+      if (awb) {
+        query = {
+          $or: [
+            { 'courier.trackingNumber': { $regex: `^${awb}$`, $options: 'i' } },
+            { trackingNumber: { $regex: `^${awb}$`, $options: 'i' } }
+          ]
+        };
+      } else if (orderNumber) {
+        query = {
+          $or: [
+            { orderNumber: { $regex: `^${orderNumber}$`, $options: 'i' } },
+            { id: orderNumber }
+          ]
+        };
+      }
+
+      const o = await db.collection('orders').findOne(query);
+      if (!o) {
+        return err('No matching order found. Please check your order details and try again.', 404);
+      }
+
+      // Security verification: if searched by orderNumber without AWB
+      if (!awb) {
+        const isOwner = u && (o.userId === u.id || u.role === 'admin');
+        const phone = (o.address?.phone || '').replace(/[^0-9]/g, '');
+        const cleanContact = contact.replace(/[^0-9]/g, '');
+        const emailMatch = contact && o.customerEmail && o.customerEmail.toLowerCase() === contact;
+        const phoneMatch = cleanContact && phone && (phone.endsWith(cleanContact) || cleanContact.endsWith(phone));
+
+        if (!isOwner && !emailMatch && !phoneMatch) {
+          if (!contact && !u) {
+            return err('Please enter your registered phone number or email to view tracking details.', 400);
+          }
+          if (!emailMatch && !phoneMatch) {
+            return err('The phone number or email does not match our order records.', 403);
+          }
+        }
+      }
+
+      const isOwnerOrAdmin = u && (o.userId === u.id || u.role === 'admin');
+      const safeAddress = isOwnerOrAdmin ? o.address : {
+        city: o.address?.city,
+        state: o.address?.state,
+        pincode: o.address?.pincode,
+        fullName: o.address?.fullName ? (o.address.fullName.split(' ')[0] + ' ***') : ''
+      };
+
+      return ok({
+        order: {
+          id: o.id,
+          orderNumber: o.orderNumber,
+          status: o.status,
+          placedAt: o.placedAt,
+          estimatedDelivery: o.estimatedDelivery,
+          courier: o.courier || null,
+          carrier: o.courier?.carrier || o.carrier || null,
+          trackingNumber: o.courier?.trackingNumber || o.trackingNumber || null,
+          trackingUrl: o.courier?.trackingUrl || o.trackingUrl || null,
+          statusHistory: o.statusHistory || [],
+          items: (o.items || []).map(it => ({
+            name: it.name,
+            qty: it.qty,
+            image: it.image,
+            price: it.price
+          })),
+          address: safeAddress,
+          payment: o.payment,
+          total: o.amounts?.total || 0
+        }
+      });
+    }
+
     if (route.startsWith('/orders/') && method === 'GET') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const id = route.split('/')[2];
@@ -5843,9 +5930,13 @@ async function handleRoute(request, { params }) {
               { orderNumber: reg },
               { 'address.fullName': reg },
               { 'address.phone': reg },
-              { 'items.name': reg },
+              { items: { $elemMatch: { name: reg } } },
               { guestEmail: reg },
-              { userId: { $in: matchingUserIds } }
+              { userId: { $in: matchingUserIds } },
+              { trackingNumber: reg },
+              { carrier: reg },
+              { 'courier.trackingNumber': reg },
+              { 'courier.carrier': reg }
             ]
           };
         }
@@ -5886,9 +5977,13 @@ async function handleRoute(request, { params }) {
                   { orderNumber: reg },
                   { 'address.fullName': reg },
                   { 'address.phone': reg },
-                  { 'items.name': reg },
+                  { items: { $elemMatch: { name: reg } } },
                   { guestEmail: reg },
-                  { userId: { $in: matchingUserIds } }
+                  { userId: { $in: matchingUserIds } },
+                  { trackingNumber: reg },
+                  { carrier: reg },
+                  { 'courier.trackingNumber': reg },
+                  { 'courier.carrier': reg }
                 ]
               }
             ]
@@ -5908,7 +6003,7 @@ async function handleRoute(request, { params }) {
       if (sub.startsWith('orders/') && method === 'PUT') {
         if (!hasPermission(admin, 'orders.update')) return err('Permission denied: orders.update required', 403);
         const id = sub.split('/')[1];
-        const b = await request.json();
+        const b = await request.json().catch(() => ({}));
 
         const existingOrder = await db.collection('orders').findOne({ id });
         if (!existingOrder) return err('Order not found', 404);
@@ -5921,13 +6016,63 @@ async function handleRoute(request, { params }) {
           packed: 'Order packed & ready to ship.',
           shipped: 'Shipped via courier.',
           delivered: 'Delivered successfully.',
-          cancelled: 'Cancelled by MikuMantra',
+          cancelled: 'Order cancelled.',
           confirmed: 'Order confirmed.'
         };
-        const setDoc = { status: b.status };
-        if (b.status === 'delivered') {
+
+        const setDoc = {};
+        const isStatusChanging = Boolean(b.status && b.status !== existingOrder.status);
+        const targetStatus = b.status || existingOrder.status;
+
+        // Check if courier data was submitted
+        const hasCourierInput = Boolean(
+          b.courier !== undefined ||
+          b.carrier !== undefined ||
+          b.trackingNumber !== undefined ||
+          b.trackingUrl !== undefined ||
+          b.notes !== undefined
+        );
+
+        let courierDoc = null;
+        if (hasCourierInput || targetStatus === 'shipped') {
+          const rawCarrier = b.courier?.carrier !== undefined ? b.courier.carrier : (b.carrier !== undefined ? b.carrier : (existingOrder.courier?.carrier || existingOrder.carrier || ''));
+          const rawTrackingNum = b.courier?.trackingNumber !== undefined ? b.courier.trackingNumber : (b.trackingNumber !== undefined ? b.trackingNumber : (existingOrder.courier?.trackingNumber || existingOrder.trackingNumber || ''));
+          let rawTrackingUrl = b.courier?.trackingUrl !== undefined ? b.courier.trackingUrl : (b.trackingUrl !== undefined ? b.trackingUrl : (existingOrder.courier?.trackingUrl || existingOrder.trackingUrl || ''));
+          const rawNotes = b.courier?.notes !== undefined ? b.courier.notes : (b.notes !== undefined ? b.notes : (existingOrder.courier?.notes || ''));
+
+          const carrier = (rawCarrier || '').trim();
+          const trackingNumber = (rawTrackingNum || '').trim();
+          let trackingUrl = (rawTrackingUrl || '').trim();
+          if (!trackingUrl && carrier && trackingNumber) {
+            trackingUrl = generateTrackingUrl(carrier, trackingNumber);
+          }
+          const shippedAt = b.courier?.shippedAt ? new Date(b.courier.shippedAt) : (existingOrder.shippedAt || existingOrder.courier?.shippedAt || new Date());
+
+          courierDoc = {
+            carrier,
+            trackingNumber,
+            trackingUrl,
+            shippedAt,
+            notes: (rawNotes || '').trim()
+          };
+
+          setDoc.courier = courierDoc;
+          setDoc.carrier = carrier;
+          setDoc.trackingNumber = trackingNumber;
+          setDoc.trackingUrl = trackingUrl;
+          if (!existingOrder.shippedAt) {
+            setDoc.shippedAt = shippedAt;
+          }
+        }
+
+        if (b.status) {
+          setDoc.status = b.status;
+        }
+
+        if (targetStatus === 'delivered' && !existingOrder.deliveredAt) {
           setDoc.deliveredAt = new Date();
         }
+
         if (b.status === 'cancelled') {
           if (!hasPermission(admin, 'orders.cancel') && !hasPermission(admin, 'orders.update')) {
             return err('Permission denied: orders.cancel required', 403);
@@ -5951,21 +6096,46 @@ async function handleRoute(request, { params }) {
           }
         }
 
-        const updateResult = await db.collection('orders').updateOne(
-          { id, status: { $ne: 'cancelled' } },
-          {
-            $set: setDoc,
-            $push: {
-              statusHistory: {
-                status: b.status,
-                at: new Date(),
-                note: b.note || notes[b.status] || ''
-              }
+        const updateOps = { $set: setDoc };
+        let historyEntry = null;
+
+        if (isStatusChanging) {
+          let historyNote = b.note || notes[b.status] || '';
+          if (b.status === 'shipped') {
+            const carrier = courierDoc?.carrier || existingOrder.carrier || '';
+            const trackingNum = courierDoc?.trackingNumber || existingOrder.trackingNumber || '';
+            if (carrier && trackingNum) {
+              historyNote = b.note || `Shipped via ${carrier} (AWB: ${trackingNum})`;
+            } else if (carrier) {
+              historyNote = b.note || `Shipped via ${carrier}`;
             }
           }
+          historyEntry = {
+            status: b.status,
+            at: new Date(),
+            note: historyNote
+          };
+        } else if (hasCourierInput) {
+          // Tracking updated without changing status (e.g. edit tracking on shipped or delivered order)
+          const carrier = courierDoc?.carrier || existingOrder.carrier || '';
+          const trackingNum = courierDoc?.trackingNumber || existingOrder.trackingNumber || '';
+          historyEntry = {
+            status: existingOrder.status,
+            at: new Date(),
+            note: b.note || `Courier tracking updated: ${carrier || 'Courier'}${trackingNum ? ` (AWB: ${trackingNum})` : ''}`
+          };
+        }
+
+        if (historyEntry) {
+          updateOps.$push = { statusHistory: historyEntry };
+        }
+
+        const updateResult = await db.collection('orders').updateOne(
+          { id, status: { $ne: 'cancelled' } },
+          updateOps
         );
 
-        if (updateResult.modifiedCount === 0) {
+        if (updateResult.modifiedCount === 0 && updateResult.matchedCount === 0) {
           return err('Cancelled orders cannot be updated.', 400);
         }
 
@@ -5982,6 +6152,16 @@ async function handleRoute(request, { params }) {
         }
 
         const up = await db.collection('orders').findOne({ id });
+
+        // Trigger notifications if shipped or if courier details updated on a shipped/delivered order
+        if (targetStatus === 'shipped' || (existingOrder.status === 'shipped' && hasCourierInput)) {
+          const customerUser = up.userId ? await db.collection('users').findOne({ id: up.userId }) : null;
+          try {
+            await sendOrderShippedNotification({ order: up, user: customerUser, db });
+          } catch (notifErr) {
+            console.error('[Notification error] Order shipped notification:', notifErr);
+          }
+        }
 
         if (b.status === 'cancelled') {
           try {
