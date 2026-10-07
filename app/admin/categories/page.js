@@ -1,13 +1,12 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Plus, Trash2, Edit2, Loader2, X, Upload, Eye, EyeOff } from 'lucide-react';
+import { Plus, Trash2, Edit2, Loader2, X, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 
 const INITIAL_FORM = {
   name: '',
   slug: '',
-  img: '',
-  active: true
+  img: ''
 };
 
 export default function CategoriesPage() {
@@ -108,8 +107,6 @@ export default function CategoriesPage() {
 
       const bodyData = {
         ...form,
-        active: form.active !== false,
-        enabled: form.active !== false,
         img: finalImgUrl
       };
 
@@ -153,34 +150,12 @@ export default function CategoriesPage() {
     }
   };
 
-  const toggleActive = async (category) => {
-    const currentActive = category.active !== false && category.enabled !== false;
-    const newStatus = !currentActive;
-    try {
-      const res = await fetch(`/api/admin/categories/${category.id}`, {
-        method: 'PUT',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active: newStatus, enabled: newStatus })
-      });
-      if (res.ok) {
-        toast.success(`Category "${category.name}" ${newStatus ? 'enabled' : 'hidden'}`);
-        loadData();
-      } else {
-        toast.error('Failed to update category status');
-      }
-    } catch (err) {
-      toast.error('An error occurred while updating category status');
-    }
-  };
-
   const handleEdit = (category) => {
     setSelectedId(category.id);
     setForm({
       name: category.name || '',
       slug: category.slug || '',
-      img: category.img || '',
-      active: category.active !== false && category.enabled !== false
+      img: category.img || ''
     });
     setImageFile(null);
     setImagePreview(category.img || '');
@@ -297,19 +272,6 @@ export default function CategoriesPage() {
             </div>
           </div>
 
-          {/* Active status checkbox */}
-          <div className="pt-1">
-            <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-semibold text-neutral-700">
-              <input
-                type="checkbox"
-                checked={form.active !== false}
-                onChange={(e) => setForm({ ...form, active: e.target.checked })}
-                className="accent-[#9C6B30] h-4 w-4 rounded"
-              />
-              <span>Active (Visible on storefront & filters)</span>
-            </label>
-          </div>
-
           <div className="flex gap-2 justify-end">
             {selectedId && (
               <button
@@ -356,44 +318,22 @@ export default function CategoriesPage() {
                   <div className="flex items-center gap-3 min-w-0">
                     <img src={item.img} className="w-10 h-10 rounded object-cover border border-neutral-200 bg-neutral-100 shrink-0" alt="" />
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-medium text-sm text-neutral-800 truncate" title={item.name}>{item.name}</span>
-                        {item.active !== false && item.enabled !== false ? (
-                          <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded font-medium">
-                            Active
-                          </span>
-                        ) : (
-                          <span className="text-[10px] bg-neutral-100 text-neutral-500 border border-neutral-200 px-1.5 py-0.5 rounded font-medium">
-                            Hidden
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-neutral-500 font-mono mt-0.5">{item.slug}</div>
+                      <div className="font-medium text-sm text-neutral-800 truncate" title={item.name}>{item.name}</div>
+                      <div className="text-xs text-neutral-500 font-mono">{item.slug}</div>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2 self-end xs:self-center">
                     <button
-                      onClick={() => toggleActive(item)}
-                      className={`p-1.5 border rounded transition cursor-pointer ${
-                        item.active !== false && item.enabled !== false
-                          ? 'border-emerald-200 text-emerald-700 hover:bg-emerald-50 bg-white'
-                          : 'border-neutral-200 text-neutral-400 hover:bg-neutral-100 bg-white'
-                      }`}
-                      title={item.active !== false && item.enabled !== false ? 'Hide Category' : 'Enable Category'}
-                    >
-                      {item.active !== false && item.enabled !== false ? <Eye size={14} /> : <EyeOff size={14} />}
-                    </button>
-                    <button
                       onClick={() => handleEdit(item)}
-                      className="p-1.5 border border-neutral-200 rounded text-neutral-600 hover:text-[#9C6B30] hover:border-[#9C6B30] transition bg-white cursor-pointer"
+                      className="p-1.5 border border-neutral-200 rounded text-neutral-600 hover:text-[#9C6B30] hover:border-[#9C6B30] transition bg-white"
                       title="Edit Category"
                     >
                       <Edit2 size={14} />
                     </button>
                     <button
                       onClick={() => handleDelete(item.id)}
-                      className="p-1.5 border border-neutral-200 rounded text-neutral-600 hover:text-red-600 hover:border-red-600 transition bg-white cursor-pointer"
+                      className="p-1.5 border border-neutral-200 rounded text-neutral-600 hover:text-red-600 hover:border-red-600 transition bg-white"
                       title="Delete Category"
                     >
                       <Trash2 size={14} />

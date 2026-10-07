@@ -121,7 +121,7 @@ export default function AdminDashboard() {
     );
   }
 
-  const getStatusBadge = (status, order = {}) => {
+  const getStatusBadge = (status) => {
     switch (status?.toLowerCase()) {
       case 'delivered':
         return (
@@ -146,11 +146,10 @@ export default function AdminDashboard() {
           </span>
         );
       case 'cancelled':
-        const isCancelledByAdmin = (order?.cancelledBy === 'admin' || order?.cancelledBy === 'mikumantra' || (order?.statusHistory || []).some(h => h.status === 'cancelled' && ((h.note || '').toLowerCase().includes('admin') || (h.note || '').toLowerCase().includes('mikumantra'))));
         return (
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-rose-50 text-rose-800 border border-rose-200/90 shadow-2xs">
             <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.8)]" />
-            {isCancelledByAdmin ? 'Cancelled by mikumantra' : 'Cancelled by customer'}
+            Cancelled
           </span>
         );
       default:
@@ -642,7 +641,7 @@ export default function AdminDashboard() {
 
                       {/* Status */}
                       <td className="p-4">
-                        {getStatusBadge(o.status, o)}
+                        {getStatusBadge(o.status)}
                       </td>
 
                       {/* Payment */}

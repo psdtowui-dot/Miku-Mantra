@@ -4,7 +4,7 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/use-auth';
 import { formatINR, formatRating } from '@/lib/products';
-import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft, Star, Edit3, Trash2, Upload, Camera, Image as ImageIcon, Building2, Smartphone, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft, Star, Edit3, Trash2, Upload, Camera, Image as ImageIcon, Building2, Smartphone, ShieldCheck, Copy, ExternalLink, MapPin } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 
@@ -106,6 +106,19 @@ function OrderInner() {
   const [reviewModalErr, setReviewModalErr] = useState('');
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoInputMode, setPhotoInputMode] = useState('upload'); // 'upload' | 'url'
+  const [copiedAwb, setCopiedAwb] = useState(false);
+
+  const handleCopyAwb = (awb) => {
+    if (!awb) return;
+    try {
+      navigator.clipboard.writeText(awb);
+      setCopiedAwb(true);
+      toast.success('AWB Number copied to clipboard');
+      setTimeout(() => setCopiedAwb(false), 2500);
+    } catch (e) {
+      toast.info(`AWB: ${awb}`);
+    }
+  };
 
   const autoOpenedReviewRef = useRef(false);
   const autoOpenedReturnRef = useRef(false);
@@ -820,6 +833,23 @@ function OrderInner() {
             </div>
             <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
               <span className={`inline-block px-3 sm:px-4 py-1.5 text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full capitalize font-semibold ${order.status === 'cancelled' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-[#FAF6EF] text-[#9C6B30]'}`}>{order.status === 'cancelled' ? cancellationDisplayText : order.status}</span>
+              {(order.courier?.trackingUrl || order.trackingUrl) ? (
+                <a
+                  href={order.courier?.trackingUrl || order.trackingUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 bg-[#9C6B30] hover:bg-[#7A501F] text-white text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full font-semibold transition shadow-xs"
+                >
+                  <Truck size={12} /> Track Package
+                </a>
+              ) : (
+                <a
+                  href="#tracking"
+                  className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 border border-[#9C6B30] text-[#9C6B30] hover:bg-[#FAF6EF] text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full font-semibold transition"
+                >
+                  <Truck size={12} /> Track Order
+                </a>
+              )}
               <a href={`/api/orders/${order.id}/invoice`} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 border border-[#1A1A1A] text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full hover:bg-[#1A1A1A] hover:text-white transition"><Download size={12} /> Invoice</a>
             </div>
           </div>
@@ -1344,6 +1374,107 @@ function OrderInner() {
                   </li>
                 ))}
               </ol>
+            </div>
+          )}
+
+          {/* High-End Live Courier Tracking Card */}
+          {(order.status !== 'cancelled') && (
+            <div id="tracking" className="mb-6 rounded-2xl bg-gradient-to-br from-[#FAF8F5] via-white to-[#FAF6EF] border border-[#D4AF37]/40 p-5 sm:p-7 shadow-[0_4px_24px_rgba(156,107,48,0.08)] relative overflow-hidden">
+              {/* Subtle luxury ambient accent */}
+              <div className="absolute -right-8 -top-8 w-32 h-32 bg-[#D4AF37]/10 rounded-full blur-2xl pointer-events-none" />
+
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-5 relative z-10">
+                <div className="flex items-start gap-4">
+                  {/* Delivery truck emblem */}
+                  <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-[#0F0F10] text-[#D4AF37] border border-[#D4AF37]/30 flex items-center justify-center shrink-0 shadow-md">
+                    <Truck size={24} className="stroke-[2.2]" />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] sm:text-[11px] font-semibold tracking-[0.2em] uppercase text-[#9C6B30] bg-[#FAF5EB] px-2.5 py-0.5 rounded-full border border-[#D4AF37]/30">
+                        {order.status === 'delivered' ? 'Delivery Completed' : order.status === 'shipped' ? 'In Transit' : 'Preparing Shipment'}
+                      </span>
+                      {(order.courier?.shippedAt || order.shippedAt) && (
+                        <span className="text-xs text-neutral-400">
+                          Dispatched on {new Date(order.courier?.shippedAt || order.shippedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </span>
+                      )}
+                    </div>
+
+                    <h3 className="font-display text-lg sm:text-xl text-[#1A1A1A] font-medium mt-1">
+                      {order.status === 'delivered' ? 'Delivered via' : order.status === 'shipped' ? 'In Transit via' : 'Courier Partner:'}{' '}
+                      <span className="text-[#9C6B30]">{order.courier?.carrier || order.carrier || 'Pending Assignment'}</span>
+                    </h3>
+
+                    {/* AWB Number with 1-click copy */}
+                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                      <span className="text-xs text-neutral-500 font-medium">AWB / Consignment:</span>
+                      {(order.courier?.trackingNumber || order.trackingNumber) ? (
+                        <div className="inline-flex items-center gap-1.5 bg-white border border-[#EAE3D2] px-3 py-1 rounded-lg shadow-2xs">
+                          <code className="font-mono font-bold text-xs sm:text-sm text-neutral-900 tracking-wider">
+                            {order.courier?.trackingNumber || order.trackingNumber}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyAwb(order.courier?.trackingNumber || order.trackingNumber)}
+                            className="p-1 text-neutral-400 hover:text-[#9C6B30] hover:bg-neutral-50 rounded transition cursor-pointer"
+                            title="Copy AWB Tracking Number"
+                          >
+                            {copiedAwb ? (
+                              <Check size={14} className="text-emerald-600" />
+                            ) : (
+                              <Copy size={14} />
+                            )}
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="italic text-xs text-neutral-400">AWB assigned upon courier dispatch</span>
+                      )}
+                      {copiedAwb && (
+                        <span className="text-[11px] text-emerald-600 font-medium animate-in fade-in">
+                          Copied!
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Direct Gold CTA: Track Shipment ↗ */}
+                {(order.courier?.trackingUrl || order.trackingUrl) ? (
+                  <div className="shrink-0 pt-2 md:pt-0">
+                    <a
+                      href={order.courier?.trackingUrl || order.trackingUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-gradient-to-r from-[#9C6B30] to-[#B38747] hover:from-[#855B29] hover:to-[#9C6B30] text-white font-semibold text-xs uppercase tracking-widest rounded-xl transition-all shadow-md hover:shadow-lg w-full sm:w-auto"
+                    >
+                      Track Package <ExternalLink size={14} />
+                    </a>
+                  </div>
+                ) : (
+                  <div className="shrink-0 text-xs text-neutral-500 bg-[#FAF5EB] px-3.5 py-2.5 rounded-lg border border-[#D4AF37]/20 flex items-center gap-2">
+                    <Clock size={14} className="text-[#9C6B30]" />
+                    <span>Live portal active upon courier pickup</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Courier notes (if present) */}
+              {order.courier?.notes && (
+                <div className="mt-4 pt-3 border-t border-[#EAE3D2]/70 text-xs text-neutral-600 flex items-center gap-2">
+                  <span className="font-semibold text-neutral-700">Dispatch Note:</span>
+                  <span className="italic">{order.courier.notes}</span>
+                </div>
+              )}
+
+              {/* Luxury Assurance Statement */}
+              <div className="mt-4 pt-3.5 border-t border-[#EAE3D2] flex items-center gap-2.5 text-xs text-neutral-600 bg-white/60 -mx-5 -mb-5 sm:-mx-7 sm:-mb-7 px-5 sm:px-7 py-3 rounded-b-2xl">
+                <ShieldCheck size={16} className="text-[#9C6B30] shrink-0" />
+                <span className="font-medium text-[#4A3B2C] text-[11px] sm:text-xs">
+                  Your jewellery is fully insured in transit and packaged in tamper-evident velvet security casing.
+                </span>
+              </div>
             </div>
           )}
 

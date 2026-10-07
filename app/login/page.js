@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Script from 'next/script';
 import { useAuth } from '@/lib/use-auth';
+import { isNative, nativeGoogleLogin } from '@/lib/native-utils';
 import { toast } from 'sonner';
 import { Loader2, Mail, Lock, User as UserIcon, ShieldCheck, KeyRound, Eye, EyeOff, X, ArrowLeft, CheckCircle2 } from 'lucide-react';
 
@@ -19,7 +20,7 @@ function GoogleIcon({ className = "w-5 h-5" }) {
 }
 
 function LoginInner(){
-  const { user, loading, login, register, loginWithGoogle, forgotPassword, resetPassword } = useAuth();
+  const { login, register, loginWithGoogle, forgotPassword, resetPassword } = useAuth();
   const router = useRouter();
   const sp = useSearchParams();
   const redirect = sp.get('redirect') || '/account';
@@ -59,18 +60,10 @@ function LoginInner(){
   }, []);
 
   useEffect(() => {
-    if (!loading && user) {
-      if (user.role === 'admin' && (!redirect || redirect === '/account')) {
-        router.replace('/admin');
-      } else {
-        router.replace(redirect);
-      }
-      return;
-    }
     if (redirect && redirect.startsWith('/admin')) {
       router.replace('/admin/login?redirect=' + encodeURIComponent(redirect));
     }
-  }, [loading, user, redirect, router]);
+  }, [redirect, router]);
 
   const handleGoogleCredentialResponse = async (response) => {
     if (!response?.credential) return;
@@ -78,12 +71,8 @@ function LoginInner(){
     setErr('');
     try {
       const u = await loginWithGoogle(response.credential);
-      toast.success(`Welcome, ${u.name || 'valued member'}!`);
-      if (u?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
-        router.push('/admin');
-      } else {
-        router.push(redirect);
-      }
+      toast.success(`Welcome, ${u.name || 'valued customer'}!`);
+      router.push(redirect);
     } catch (ex) {
       console.error('Google sign-in error:', ex);
       setErr(ex.message || 'Google sign-in failed');
@@ -161,7 +150,7 @@ function LoginInner(){
     };
   }, [mode, clientId]);
 
-  const handleManualGoogleClick = () => {
+  const handleManualGoogleClick = async () => {
     if (!clientId) {
       toast.info(
         'Google Sign-In is configured on the app! To connect your Google project, please set your NEXT_PUBLIC_GOOGLE_CLIENT_ID in the .env file.',
@@ -173,7 +162,34 @@ function LoginInner(){
     setGoogleBusy(true);
     setErr('');
 
-    // Primary click method: Google OAuth2 popup token client
+    // Native mobile app authentication flow (Google Credential Manager)
+    if (isNative()) {
+      try {
+        const nativeAuth = await nativeGoogleLogin(clientId);
+        if (nativeAuth?.idToken || nativeAuth?.accessToken) {
+          const u = await loginWithGoogle(nativeAuth.idToken ? { credential: nativeAuth.idToken } : { accessToken: nativeAuth.accessToken });
+          toast.success(`Welcome, ${u.name || 'valued customer'}!`);
+          router.push(redirect);
+          return;
+        } else {
+          toast.info('Google sign-in was cancelled.');
+          return;
+        }
+      } catch (nativeErr) {
+        console.warn('Native Google login failed:', nativeErr);
+        const msg = nativeErr?.message || String(nativeErr);
+        if (msg.toLowerCase().includes('cancel') || msg.includes('16')) {
+          toast.info('Google sign-in was cancelled.');
+        } else {
+          toast.error('Google Sign-In is unavailable on this device. Please sign in with your Gmail and password below, or use "Forgot Password" to set a password.');
+        }
+        return;
+      } finally {
+        setGoogleBusy(false);
+      }
+    }
+
+    // Primary web click method: Google OAuth2 popup token client
     if (window.google?.accounts?.oauth2) {
       try {
         const tokenClient = window.google.accounts.oauth2.initTokenClient({
@@ -193,12 +209,8 @@ function LoginInner(){
             if (resp?.access_token) {
               try {
                 const u = await loginWithGoogle({ accessToken: resp.access_token });
-                toast.success(`Welcome, ${u.name || 'valued member'}!`);
-                if (u?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
-                  router.push('/admin');
-                } else {
-                  router.push(redirect);
-                }
+                toast.success(`Welcome, ${u.name || 'valued customer'}!`);
+                router.push(redirect);
               } catch (ex) {
                 setErr(ex.message || 'Google sign-in failed');
                 toast.error(ex.message || 'Google sign-in failed');
@@ -283,19 +295,11 @@ function LoginInner(){
     setBusy(true);
     try {
       if (mode === 'login') {
-        const u = await login(cleanEmail, form.password);
-        toast.success(`Welcome back${u?.name ? `, ${u.name}` : ''}!`);
-        if (u?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
-          router.push('/admin');
-          return;
-        }
+        await login(cleanEmail, form.password);
+        toast.success('Welcome back');
       } else {
-        const u = await register(form.name.trim(), cleanEmail, form.password);
-        toast.success('Account created successfully');
-        if (u?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
-          router.push('/admin');
-          return;
-        }
+        await register(form.name.trim(), cleanEmail, form.password);
+        toast.success('Account created');
       }
       router.push(redirect);
     } catch(ex){
@@ -617,16 +621,6 @@ function LoginInner(){
                 </button>
               </>
             )}
-          </div>
-
-          <div className="text-center mt-5 pt-4 border-t border-neutral-100 flex items-center justify-center gap-1.5 text-xs text-neutral-400">
-            <span>Staff or Administrator?</span>
-            <Link
-              href="/admin/login"
-              className="text-[#9C6B30] hover:underline font-medium inline-flex items-center gap-1"
-            >
-              Admin Sign In →
-            </Link>
           </div>
         </div>
       </div>

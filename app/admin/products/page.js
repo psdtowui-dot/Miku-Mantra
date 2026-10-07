@@ -1,10 +1,10 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { formatINR, formatRating, getNormalizedSpecs, getNormalizedBenefits, slugify } from '@/lib/products';
+import { formatINR, getNormalizedSpecs, getNormalizedBenefits } from '@/lib/products';
 import {
   Plus, Pencil, Trash2, X, Loader2, Search, Upload,
   Link as LinkIcon, Trash, Check, ArrowLeft, ArrowRight,
-  FileText, Sparkles, Settings, Image as ImageIcon, Eye, Award, Star
+  FileText, Sparkles, Settings, Image as ImageIcon, Eye, Award
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -28,7 +28,6 @@ export default function AdminProducts() {
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY);
-  const [isSlugCustomized, setIsSlugCustomized] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('basic');
   const [urlInput, setUrlInput] = useState('');
@@ -82,7 +81,6 @@ export default function AdminProducts() {
 
   const openNew = () => {
     setEditing('new');
-    setIsSlugCustomized(false);
     setForm({
       ...EMPTY,
       category: categories[0]?.slug || 'gold',
@@ -94,11 +92,9 @@ export default function AdminProducts() {
 
   const openEdit = (p) => {
     setEditing(p.id);
-    setIsSlugCustomized(true);
     setForm({
       ...EMPTY,
       ...p,
-      slug: p.slug || slugify(p.name || p.id),
       specifications: getNormalizedSpecs(p),
       productBenefits: getNormalizedBenefits(p),
       images: Array.isArray(p.images) ? [...p.images] : (p.images ? [p.images] : [])
@@ -109,27 +105,15 @@ export default function AdminProducts() {
   const handleNameChange = (nameVal) => {
     setForm(f => {
       const updates = { ...f, name: nameVal };
-      // Auto-suggest slug only when creating a new product and the slug hasn't been customized/typed
-      if (editing === 'new' && !isSlugCustomized) {
-        updates.slug = slugify(nameVal);
+      if (editing === 'new') {
+        updates.slug = nameVal
+          .toLowerCase()
+          .replace(/[^a-z0-9\s-]/g, '') // remove invalid chars
+          .replace(/\s+/g, '-')         // collapse whitespace and replace by -
+          .replace(/-+/g, '-');         // collapse dashes
       }
       return updates;
     });
-  };
-
-  const handleSlugChange = (val) => {
-    setIsSlugCustomized(true);
-    // Keep input URL-friendly while typing
-    const formatted = val
-      .toLowerCase()
-      .replace(/[\s_]+/g, '-')
-      .replace(/[^a-z0-9-]/g, '')
-      .replace(/-+/g, '-');
-    setForm(f => ({ ...f, slug: formatted }));
-  };
-
-  const handleSlugBlur = () => {
-    setForm(f => ({ ...f, slug: slugify(f.slug) }));
   };
 
   const handleImageUpload = async (e) => {
@@ -215,13 +199,7 @@ export default function AdminProducts() {
   };
 
   const save = async () => {
-    const cleanName = (form.name || '').trim();
-    const cleanSlug = slugify(form.slug || form.name);
-    if (!cleanName) return toast.error('Product name is required');
-    if (!cleanSlug) return toast.error('A valid URL-safe product slug is required');
-    if (form.price === '' || form.price === undefined || form.price === null || isNaN(Number(form.price))) {
-      return toast.error('Valid price is required');
-    }
+    if (!form.name || !form.slug || !form.price) return toast.error('Name, slug and price are required');
     setSaving(true);
 
     // Clean specifications: ignore completely empty rows (both label and value are empty)
@@ -261,8 +239,6 @@ export default function AdminProducts() {
 
     const body = {
       ...form,
-      name: cleanName,
-      slug: cleanSlug,
       specifications: cleanedSpecs,
       productBenefits: cleanedBenefits,
       metal: metalVal || form.metal || '',
@@ -272,7 +248,9 @@ export default function AdminProducts() {
       size: sizeVal || form.size || '',
       price: +form.price,
       mrp: +form.mrp || +form.price,
-      stock: +form.stock || 0
+      stock: +form.stock || 0,
+      rating: Number.isFinite(+form.rating) ? +form.rating : 0,
+      reviews: +form.reviews || 0
     };
     const url = editing === 'new' ? '/api/admin/products' : `/api/admin/products/${editing}`;
     const method = editing === 'new' ? 'POST' : 'PUT';
@@ -484,26 +462,10 @@ export default function AdminProducts() {
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                          <div className="flex items-center justify-between">
-                            <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold">Slug (URL Route)</label>
-                            {form.name && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const genSlug = slugify(form.name);
-                                  setForm(f => ({ ...f, slug: genSlug }));
-                                  setIsSlugCustomized(true);
-                                }}
-                                className="text-[10px] text-[#9C6B30] hover:underline uppercase font-medium cursor-pointer"
-                              >
-                                Generate from Name
-                              </button>
-                            )}
-                          </div>
+                          <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold">Slug (URL Route)</label>
                           <input
                             value={form.slug}
-                            onChange={e => handleSlugChange(e.target.value)}
-                            onBlur={handleSlugBlur}
+                            onChange={e => setForm({ ...form, slug: e.target.value })}
                             placeholder="mikumantra-solitaire-studs"
                             className="w-full mt-1.5 px-3 py-2.5 border border-neutral-200 rounded-lg text-sm bg-white focus:outline-none focus:border-[#9C6B30] focus:ring-1 focus:ring-[#9C6B30] transition-all font-mono"
                           />
@@ -628,16 +590,14 @@ export default function AdminProducts() {
                           />
                         </div>
                         <div>
-                          <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold">Dynamic Rating</label>
-                          <div className="w-full mt-1.5 px-3 py-2.5 border border-neutral-200 rounded-lg text-sm bg-neutral-50 flex items-center justify-between text-neutral-700">
-                            <span className="font-semibold flex items-center gap-1.5 text-neutral-800">
-                              <Star size={14} className={form.reviews > 0 ? "fill-[#D4AF37] stroke-[#D4AF37]" : "text-neutral-300"} />
-                              {formatRating(form.rating)} / 5.0
-                            </span>
-                            <span className="text-xs text-neutral-500">
-                              {form.reviews || 0} {(form.reviews === 1) ? 'review' : 'reviews'}
-                            </span>
-                          </div>
+                          <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold">Mock Rating</label>
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={form.rating}
+                            onChange={e => setForm({ ...form, rating: e.target.value })}
+                            className="w-full mt-1.5 px-3 py-2.5 border border-neutral-200 rounded-lg text-sm bg-white focus:outline-none focus:border-[#9C6B30] focus:ring-1 focus:ring-[#9C6B30] transition-all"
+                          />
                         </div>
                       </div>
                     </div>

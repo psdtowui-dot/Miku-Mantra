@@ -7,11 +7,12 @@ import fs from 'fs'
 import pathModule from 'path'
 import { cookies } from 'next/headers'
 import crypto from 'crypto'
-import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS as SEED_COLLECTIONS, DEFAULT_PRODUCT_BENEFITS, DEFAULT_PRODUCT_FILTERS, slugify } from '@/lib/products'
+import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS as SEED_COLLECTIONS, DEFAULT_PRODUCT_BENEFITS } from '@/lib/products'
 import { buildInvoicePDF } from '@/lib/pdf-invoice'
 import { buildShippingSlipPDF } from '@/lib/pdf-shippingslip'
 import { WAREHOUSE_PINCODE } from '@/lib/constants'
-import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification } from '@/lib/notifications'
+import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendOrderShippedNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification, sendPushNotification } from '@/lib/notifications'
+import { generateTrackingUrl } from '@/lib/courier'
 import { sendPasswordResetEmail } from '@/lib/email-service'
 import { seedRbacIfEmpty, resolveUserPermissions, hasPermission, logAdminActivity, validatePrivilegeEscalation, PERMISSIONS, DEFAULT_ROLES } from '@/lib/rbac'
 import { invalidateSiteDataCache } from '@/lib/db-site-settings'
@@ -134,21 +135,9 @@ function calculateShippingCharge(subtotal, shippingConfig = {}) {
 async function recalculateProductRating(db, productId) {
   if (!db || !productId) return;
   try {
-    const prod = await db.collection('products').findOne({ $or: [{ id: productId }, { slug: productId }] });
-    const targetIds = [productId];
-    if (prod) {
-      if (prod.id && !targetIds.includes(prod.id)) targetIds.push(prod.id);
-      if (prod.slug && !targetIds.includes(prod.slug)) targetIds.push(prod.slug);
-    }
-
     const publishedReviews = await db.collection('reviews').find({
-      $or: [
-        { productId: { $in: targetIds } },
-        { productSlug: { $in: targetIds } }
-      ],
-      $and: [
-        { $or: [{ status: 'published' }, { status: { $exists: false }, approved: true }] }
-      ]
+      productId,
+      $or: [{ status: 'published' }, { status: { $exists: false }, approved: true }]
     }).toArray();
 
     const totalReviews = publishedReviews.length;
@@ -168,60 +157,8 @@ async function recalculateProductRating(db, productId) {
       { $or: [{ id: productId }, { slug: productId }] },
       { $set: { rating: averageRating, reviews: totalReviews, breakdown } }
     );
-
-    // Dynamic cache busting
-    cacheBust('products:');
-    _cache.delete('admin_products');
-    _cache.delete('admin_dashboard');
-    _cache.delete('homepage_data');
-    invalidateSiteDataCache('homepage_data');
-    invalidateSiteDataCache('site_settings');
   } catch (err) {
     console.error('Failed to recalculate product rating:', err);
-  }
-}
-
-async function syncAllProductRatings(db) {
-  if (!db) return;
-  try {
-    const products = await db.collection('products').find({}).toArray();
-    for (const p of products) {
-      const targetIds = [p.id, p.slug].filter(Boolean);
-      const reviews = await db.collection('reviews').find({
-        $or: [
-          { productId: { $in: targetIds } },
-          { productSlug: { $in: targetIds } }
-        ],
-        $and: [
-          { $or: [{ status: 'published' }, { status: { $exists: false }, approved: true }] }
-        ]
-      }).toArray();
-
-      const totalReviews = reviews.length;
-      let averageRating = 0;
-      const breakdown = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
-      if (totalReviews > 0) {
-        const sum = reviews.reduce((acc, r) => {
-          const ratingVal = Math.min(5, Math.max(1, Number(r.rating) || 5));
-          breakdown[ratingVal] = (breakdown[ratingVal] || 0) + 1;
-          return acc + ratingVal;
-        }, 0);
-        averageRating = Math.round((sum / totalReviews) * 10) / 10;
-      }
-
-      await db.collection('products').updateOne(
-        { _id: p._id },
-        { $set: { rating: averageRating, reviews: totalReviews, breakdown } }
-      );
-    }
-    cacheBust('products:');
-    _cache.delete('admin_products');
-    _cache.delete('admin_dashboard');
-    _cache.delete('homepage_data');
-    invalidateSiteDataCache('homepage_data');
-    invalidateSiteDataCache('site_settings');
-  } catch (err) {
-    console.error('Failed to sync all product ratings:', err);
   }
 }
 
@@ -239,12 +176,12 @@ async function connectToMongo() {
           dns.setServers(['8.8.8.8', '1.1.1.1']);
         } catch (e) {}
         try {
-          client = new MongoClient(mongoUrl, { tls: true, serverSelectionTimeoutMS: 10000 });
+          client = new MongoClient(mongoUrl, { serverSelectionTimeoutMS: 10000 });
           await client.connect();
         } catch (srvErr) {
           if (directUrl && mongoUrl !== directUrl) {
             console.log('MongoDB connection attempt failed, falling back to direct replica set...');
-            client = new MongoClient(directUrl, { tls: true, serverSelectionTimeoutMS: 10000 });
+            client = new MongoClient(directUrl, { serverSelectionTimeoutMS: 10000 });
             await client.connect();
           } else {
             throw srvErr;
@@ -272,7 +209,11 @@ async function ensureIndexes(database) {
       database.collection('categories').createIndex({ id: 1 }),
       database.collection('collections').createIndex({ id: 1 }),
       database.collection('activity_logs').createIndex({ timestamp: -1 }),
-      database.collection('wishlist').createIndex({ userId: 1, productId: 1 }, { unique: true })
+      database.collection('wishlist').createIndex({ userId: 1, productId: 1 }, { unique: true }),
+      database.collection('orders').createIndex({ trackingNumber: 1 }),
+      database.collection('orders').createIndex({ 'courier.trackingNumber': 1 }),
+      database.collection('device_tokens').createIndex({ token: 1 }, { unique: true }),
+      database.collection('device_tokens').createIndex({ userId: 1 })
     ]);
   } catch (e) {
     console.warn('Index creation notice:', e.message);
@@ -287,7 +228,6 @@ async function ensureIndexes(database) {
         const database = db;
         await syncEnvAdminEmailsWithDatabase(database);
         await seedRbacIfEmpty(database);
-        await syncAllProductRatings(database);
         return database;
       } catch (err) {
         connectPromise = null; // Reset connection promise so subsequent requests can retry
@@ -322,12 +262,6 @@ async function seedIfEmpty(db) {
     { id: uuidv4(), code: 'MIKUMANTRA10', type: 'percent', value: 10, minOrder: 0, active: true, createdAt: new Date() },
     { id: uuidv4(), code: 'WELCOME2000', type: 'flat', value: 2000, minOrder: 10000, active: true, createdAt: new Date() },
   ])
-  try {
-    await db.collection('coupons').createIndex(
-      { code: 1 },
-      { unique: true, collation: { locale: 'en', strength: 2 }, name: 'uniq_coupon_code' }
-    );
-  } catch (_) {}
   const fc = await db.collection('footer').countDocuments()
   if (fc === 0) {
     await db.collection('footer').insertOne({
@@ -548,75 +482,100 @@ async function seedIfEmpty(db) {
   await seedFiltersIfEmpty(db);
 }
 
+const DEFAULT_PRODUCT_FILTERS = [
+  {
+    id: 'filter-category',
+    name: 'Category',
+    key: 'category',
+    type: 'options',
+    enabled: true,
+    order: 0,
+    options: [
+      { id: 'opt-cat-gold', name: 'Gold', value: 'gold', enabled: true, order: 0 },
+      { id: 'opt-cat-diamond', name: 'Diamond', value: 'diamond', enabled: true, order: 1 },
+      { id: 'opt-cat-wedding', name: 'Wedding', value: 'wedding', enabled: true, order: 2 },
+      { id: 'opt-cat-daily-wear', name: 'Daily Wear', value: 'daily-wear', enabled: true, order: 3 },
+      { id: 'opt-cat-men', name: 'Men', value: 'men', enabled: true, order: 4 },
+      { id: 'opt-cat-women', name: 'Women', value: 'women', enabled: true, order: 5 }
+    ],
+    createdAt: new Date()
+  },
+  {
+    id: 'filter-gender',
+    name: 'Gender',
+    key: 'gender',
+    type: 'options',
+    enabled: true,
+    order: 1,
+    options: [
+      { id: 'opt-gen-women', name: 'Women', value: 'women', enabled: true, order: 0 },
+      { id: 'opt-gen-men', name: 'Men', value: 'men', enabled: true, order: 1 }
+    ],
+    createdAt: new Date()
+  },
+  {
+    id: 'filter-collection',
+    name: 'Collection',
+    key: 'collection',
+    type: 'options',
+    enabled: true,
+    order: 2,
+    options: [
+      { id: 'opt-col-trending', name: 'Trending', value: 'trending', enabled: true, order: 0 },
+      { id: 'opt-col-bestsellers', name: 'Best Sellers', value: 'best-sellers', enabled: true, order: 1 },
+      { id: 'opt-col-newarrival', name: 'New Arrival', value: 'new-arrival', enabled: true, order: 2 },
+      { id: 'opt-col-editorschoice', name: "Editors Choice", value: 'editors-choice', enabled: true, order: 3 }
+    ],
+    createdAt: new Date()
+  },
+  {
+    id: 'filter-metal',
+    name: 'Metal',
+    key: 'metal',
+    type: 'options',
+    enabled: true,
+    order: 3,
+    options: [
+      { id: 'opt-met-yg', name: 'Yellow Gold', value: 'Yellow Gold', enabled: true, order: 0 },
+      { id: 'opt-met-rg', name: 'Rose Gold', value: 'Rose Gold', enabled: true, order: 1 },
+      { id: 'opt-met-wg', name: 'White Gold', value: 'White Gold', enabled: true, order: 2 },
+      { id: 'opt-met-pt', name: 'Platinum', value: 'Platinum', enabled: true, order: 3 }
+    ],
+    createdAt: new Date()
+  },
+  {
+    id: 'filter-stone',
+    name: 'Stone',
+    key: 'stone',
+    type: 'options',
+    enabled: true,
+    order: 4,
+    options: [
+      { id: 'opt-stn-dia', name: 'Diamond', value: 'Diamond', enabled: true, order: 0 },
+      { id: 'opt-stn-polki', name: 'Polki', value: 'Uncut Polki', enabled: true, order: 1 },
+      { id: 'opt-stn-emr', name: 'Emerald', value: 'Emerald', enabled: true, order: 2 },
+      { id: 'opt-stn-onyx', name: 'Onyx', value: 'Onyx', enabled: true, order: 3 },
+      { id: 'opt-stn-none', name: 'None', value: 'None', enabled: true, order: 4 }
+    ],
+    createdAt: new Date()
+  },
+  {
+    id: 'filter-price',
+    name: 'Price',
+    key: 'price',
+    type: 'price',
+    enabled: true,
+    order: 5,
+    priceConfig: { min: 0, max: 1000000, step: 5000 },
+    options: [],
+    createdAt: new Date()
+  }
+];
+
 async function seedFiltersIfEmpty(db) {
   const count = await db.collection('product_filters').countDocuments();
   if (count === 0) {
     await db.collection('product_filters').insertMany(DEFAULT_PRODUCT_FILTERS);
-  }
-}
-
-async function syncCategoryAndCollectionFilterOptions(db) {
-  if (!db) return;
-  try {
-    // 1. Sync Categories from categories collection into product_filters
-    const dbCats = await db.collection('categories').find({}).sort({ order: 1, createdAt: 1 }).toArray();
-    const existingCatGroup = await db.collection('product_filters').findOne({ key: 'category' });
-    if (existingCatGroup) {
-      const existingOpts = existingCatGroup.options || [];
-      const existingOptsByVal = new Map(existingOpts.map(o => [String(o.value || o.name).toLowerCase(), o]));
-      const existingOptsById = new Map(existingOpts.filter(o => o.id).map(o => [String(o.id), o]));
-
-      const catOptions = dbCats.map((c, idx) => {
-        const val = c.slug || c.name.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '-');
-        const existingOpt = existingOptsById.get(String(c.id)) || existingOptsByVal.get(val.toLowerCase()) || existingOptsByVal.get(c.name.toLowerCase());
-        const isCatActive = c.active !== false && c.enabled !== false;
-        const isOptEnabled = existingOpt ? (existingOpt.enabled !== false && isCatActive) : isCatActive;
-
-        return {
-          id: c.id || existingOpt?.id || `opt-cat-${val}`,
-          name: c.name,
-          value: val,
-          enabled: isOptEnabled,
-          order: existingOpt?.order !== undefined ? existingOpt.order : (c.order !== undefined ? Number(c.order) : idx)
-        };
-      });
-
-      await db.collection('product_filters').updateOne(
-        { key: 'category' },
-        { $set: { options: catOptions, updatedAt: new Date() } }
-      );
-    }
-
-    // 2. Sync Collections from collections collection into product_filters
-    const dbCols = await db.collection('collections').find({}).sort({ order: 1, createdAt: 1 }).toArray();
-    const existingColGroup = await db.collection('product_filters').findOne({ key: 'collection' });
-    if (existingColGroup) {
-      const existingOpts = existingColGroup.options || [];
-      const existingOptsByVal = new Map(existingOpts.map(o => [String(o.value || o.name).toLowerCase(), o]));
-      const existingOptsById = new Map(existingOpts.filter(o => o.id).map(o => [String(o.id), o]));
-
-      const colOptions = dbCols.map((c, idx) => {
-        const val = c.slug || c.name.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '-');
-        const existingOpt = existingOptsById.get(String(c.id)) || existingOptsByVal.get(val.toLowerCase()) || existingOptsByVal.get(c.name.toLowerCase());
-        const isColActive = c.active !== false && c.enabled !== false;
-        const isOptEnabled = existingOpt ? (existingOpt.enabled !== false && isColActive) : isColActive;
-
-        return {
-          id: c.id || existingOpt?.id || `opt-col-${val}`,
-          name: c.name,
-          value: val,
-          enabled: isOptEnabled,
-          order: existingOpt?.order !== undefined ? existingOpt.order : (c.order !== undefined ? Number(c.order) : idx)
-        };
-      });
-
-      await db.collection('product_filters').updateOne(
-        { key: 'collection' },
-        { $set: { options: colOptions, updatedAt: new Date() } }
-      );
-    }
-  } catch (err) {
-    console.error('Failed to syncCategoryAndCollectionFilterOptions:', err);
   }
 }
 
@@ -949,6 +908,79 @@ async function handleRoute(request, { params }) {
 
     if (route === '/' && method === 'GET') return ok({ ok: true, app: 'MikuMantra API' })
 
+    // ============ MOBILE APP CONFIGURATION ============
+    if (route === '/app/config' && method === 'GET') {
+      const siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+      const footerDoc = await db.collection('footer').findOne({ id: 'default' });
+      return ok({
+        name: 'MikuMantra',
+        appId: 'com.mikumantra.app',
+        version: '1.0.0',
+        minVersion: '1.0.0',
+        forceUpdate: false,
+        maintenanceMode: false,
+        maintenanceMessage: '',
+        updateUrl: 'https://play.google.com/store/apps/details?id=com.mikumantra.app',
+        supportPhone: footerDoc?.company?.phone || '+918076108369',
+        supportEmail: footerDoc?.company?.email || 'concierge@mikumantra.jewels',
+        whatsappSupport: '+918076108369',
+        shipping: siteSettings?.shipping || DEFAULT_SITE_SETTINGS.shipping,
+        paymentMethods: {
+          cod: siteSettings?.paymentSettings?.cod?.enabled !== false,
+          razorpay: siteSettings?.paymentSettings?.razorpay?.enabled !== false
+        },
+        brandColors: {
+          primary: '#FAF6EF',
+          accent: '#9C6B30',
+          dark: '#1A1A1A'
+        }
+      });
+    }
+
+    // ============ ANDROID DIGITAL ASSET LINKS ============
+    if ((route === '/.well-known/assetlinks.json' || route === '/assetlinks.json') && method === 'GET') {
+      return handleCORS(NextResponse.json([
+        {
+          relation: ["delegate_permission/common.handle_all_urls"],
+          target: {
+            namespace: "android_app",
+            package_name: "com.mikumantra.app",
+            sha256_cert_fingerprints: [
+              "14:6D:E9:7F:0F:7F:02:8F:A4:4E:95:C0:D3:2F:3A:42:01:E6:36:2C:C6:6F:A5:68:55:04:1B:54:27:0C:FB:56"
+            ]
+          }
+        }
+      ]));
+    }
+
+    // ============ DEVICE TOKEN REGISTRATION (FCM PUSH NOTIFICATIONS) ============
+    if (route === '/notifications/device-token' && method === 'POST') {
+      const b = await request.json().catch(() => ({}));
+      const token = (b.token || b.fcmToken || '').trim();
+      const platform = (b.platform || 'android').toLowerCase();
+      const deviceId = (b.deviceId || '').trim();
+      if (!token) return err('Device push token is required', 400);
+
+      const currentUser = await getCurrentUser(db, request);
+      const now = new Date();
+      await db.collection('device_tokens').updateOne(
+        { token },
+        {
+          $set: {
+            token,
+            platform,
+            deviceId: deviceId || uuidv4(),
+            userId: currentUser?.id || null,
+            userEmail: currentUser?.email || null,
+            updatedAt: now
+          },
+          $setOnInsert: { createdAt: now }
+        },
+        { upsert: true }
+      );
+      return ok({ ok: true, registered: true });
+    }
+
     if (route.startsWith('/uploads/') && method === 'GET') {
       const filename = route.split('/')[2];
       if (!filename) return err('File name required', 400);
@@ -1147,29 +1179,13 @@ async function handleRoute(request, { params }) {
     }
     if (route.startsWith('/products/') && method === 'GET') {
       const slug = route.split('/')[2]
-      const cleanSlug = slugify(slug)
-      let p = await db.collection('products').findOne({ $or: [{ slug }, { slug: cleanSlug }, { id: slug }] })
-      if (!p) {
-        const allProds = await db.collection('products').find({}).toArray();
-        p = allProds.find(item => {
-          const s = (item.slug || item.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-          return s === slug || s === cleanSlug || item.id === slug;
-        });
-      }
+      const p = await db.collection('products').findOne({ slug })
       if (!p) return err('Not found', 404)
-      const [related, siteSettings] = await Promise.all([
-        db.collection('products').find({ category: p.category, id: { $ne: p.id } }).limit(4).toArray(),
-        db.collection('site_settings').findOne({ id: 'default' })
-      ]);
-      const mergedZoom = {
-        ...DEFAULT_SITE_SETTINGS.zoomSettings,
-        ...(siteSettings?.zoomSettings || {}),
-        ...(p.zoomMode && p.zoomMode !== 'default' ? { mode: p.zoomMode } : {})
-      };
-      return ok({ product: clean(p), related: related.map(clean), zoomSettings: mergedZoom })
+      const related = await db.collection('products').find({ category: p.category, id: { $ne: p.id } }).limit(4).toArray()
+      return ok({ product: clean(p), related: related.map(clean) })
     }
-    if (route === '/categories' && method === 'GET') { const c = cacheGet('cats'); if (c) return ok(c); const list = await db.collection('categories').find({}).toArray(); const r = { categories: list.map(clean) }; cacheSet('cats', r, 3000); return ok(r) }
-    if (route === '/collections' && method === 'GET') { const c = cacheGet('cols'); if (c) return ok(c); const list = await db.collection('collections').find({}).toArray(); const r = { collections: list.map(clean) }; cacheSet('cols', r, 3000); return ok(r) }
+    if (route === '/categories' && method === 'GET') { const c = cacheGet('cats'); if (c) return ok(c); const list = await db.collection('categories').find({}).toArray(); const r = { categories: list.map(clean) }; cacheSet('cats', r, 300000); return ok(r) }
+    if (route === '/collections' && method === 'GET') { const c = cacheGet('cols'); if (c) return ok(c); const list = await db.collection('collections').find({}).toArray(); const r = { collections: list.map(clean) }; cacheSet('cols', r, 300000); return ok(r) }
     if (route === '/banners' && method === 'GET') {
       const c = cacheGet('bans');
       if (c) return ok(c);
@@ -1215,10 +1231,6 @@ async function handleRoute(request, { params }) {
           ...DEFAULT_SITE_SETTINGS.shipping,
           ...((settings && settings.shipping) || {})
         },
-        zoomSettings: {
-          ...DEFAULT_SITE_SETTINGS.zoomSettings,
-          ...((settings && settings.zoomSettings) || {})
-        },
         paymentSettings: {
           razorpay: {
             enabled: rawPay?.razorpay?.enabled !== false,
@@ -1259,10 +1271,9 @@ async function handleRoute(request, { params }) {
       const c = cacheGet('product_filters');
       if (c) return ok(c);
       await seedFiltersIfEmpty(db);
-      await syncCategoryAndCollectionFilterOptions(db);
       const list = await db.collection('product_filters').find({}).sort({ order: 1 }).toArray();
       const r = { groups: list.map(clean) };
-      cacheSet('product_filters', r, 5000);
+      cacheSet('product_filters', r, 300000);
       return ok(r);
     }
 
@@ -1785,49 +1796,30 @@ async function handleRoute(request, { params }) {
     if (route === '/wishlist' && method === 'GET') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const list = await db.collection('wishlist').find({ userId: u.id }).sort({ createdAt: -1 }).toArray();
-      const rawProductIds = list.map(w => w.productId).filter(Boolean);
+      const productIds = list.map(w => w.productId).filter(Boolean);
       let prods = [];
-      if (rawProductIds.length > 0) {
-        prods = await db.collection('products').find({
-          $or: [
-            { id: { $in: rawProductIds } },
-            { slug: { $in: rawProductIds } }
-          ]
-        }).toArray();
+      if (productIds.length > 0) {
+        prods = await db.collection('products').find({ id: { $in: productIds } }).toArray();
       }
-
-      const foundIds = new Set();
-      prods.forEach(p => {
-        if (p.id) foundIds.add(p.id);
-        if (p.slug) foundIds.add(p.slug);
-      });
-
-      const validList = list.filter(w => foundIds.has(w.productId));
-      const orphanIds = rawProductIds.filter(id => !foundIds.has(id));
-
-      if (orphanIds.length > 0) {
-        db.collection('wishlist').deleteMany({ userId: u.id, productId: { $in: orphanIds } }).catch(() => {});
-      }
-
-      return ok({ wishlist: validList.map(clean), products: prods.map(clean) });
+      return ok({ wishlist: list.map(clean), products: prods.map(clean) })
     }
     if (route === '/wishlist' && method === 'POST') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const b = await request.json();
       if (!b.productId) return err('Product ID is required.', 400);
-      const p = await db.collection('products').findOne({ $or: [{ id: b.productId }, { slug: b.productId }] });
+      const p = await db.collection('products').findOne({ id: b.productId });
       if (!p) return err('Product not found.', 404);
-      const existing = await db.collection('wishlist').findOne({ userId: u.id, productId: p.id });
+      const existing = await db.collection('wishlist').findOne({ userId: u.id, productId: b.productId });
       if (existing) return ok({ wishlist: clean(existing) });
-      const item = { id: uuidv4(), userId: u.id, productId: p.id, createdAt: new Date() };
+      const item = { id: uuidv4(), userId: u.id, productId: b.productId, createdAt: new Date() };
       await db.collection('wishlist').insertOne(item);
-      return ok({ wishlist: clean(item) });
+      return ok({ wishlist: clean(item) })
     }
     if (route.startsWith('/wishlist/') && method === 'DELETE') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const productId = route.split('/')[2];
-      await db.collection('wishlist').deleteMany({ userId: u.id, productId });
-      return ok({ ok: true });
+      await db.collection('wishlist').deleteOne({ userId: u.id, productId });
+      return ok({ ok: true })
     }
 
     // ============ DATABASE CART PERSISTENCE ============
@@ -1858,19 +1850,12 @@ async function handleRoute(request, { params }) {
 
     // ============ COUPONS (public validate) ============
     if (route === '/coupons/validate' && method === 'POST') {
-      const { code, subtotal } = await request.json().catch(() => ({}));
-      const rawCode = (code || '').trim().toUpperCase();
-      if (!rawCode) return err('Please enter a coupon code', 400);
-      const escaped = rawCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const c = await db.collection('coupons').findOne({
-        code: { $regex: new RegExp(`^${escaped}$`, 'i') },
-        active: true
-      });
-      if (!c) return err('Invalid or inactive coupon code', 404);
-      const minReq = Number(c.minOrder || 0);
-      if (minReq > (subtotal || 0)) return err(`Minimum order ₹${minReq.toLocaleString('en-IN')} required for coupon ${c.code}`, 400);
-      const discount = c.type === 'percent' ? Math.round(subtotal * c.value / 100) : c.value;
-      return ok({ code: c.code, discount, type: c.type, value: c.value });
+      const { code, subtotal } = await request.json()
+      const c = await db.collection('coupons').findOne({ code: (code || '').toUpperCase(), active: true })
+      if (!c) return err('Invalid coupon', 404)
+      if ((c.minOrder || 0) > subtotal) return err(`Minimum order ₹${c.minOrder} required`)
+      const discount = c.type === 'percent' ? Math.round(subtotal * c.value / 100) : c.value
+      return ok({ code: c.code, discount, type: c.type, value: c.value })
     }
 
     // ============ CART VALIDATION ============
@@ -2003,21 +1988,15 @@ async function handleRoute(request, { params }) {
       let calculatedDiscount = 0;
       let couponCode = null;
       if (body.coupon && typeof body.coupon === 'string') {
-        const rawCode = body.coupon.trim().toUpperCase();
-        if (rawCode) {
-          const escaped = rawCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const couponDoc = await db.collection('coupons').findOne({
-            code: { $regex: new RegExp(`^${escaped}$`, 'i') },
-            active: true
-          });
-          if (couponDoc) {
-            if (calculatedSubtotal >= (couponDoc.minOrder || 0)) {
-              couponCode = couponDoc.code;
-              calculatedDiscount = couponDoc.type === 'percent'
-                ? Math.round(calculatedSubtotal * couponDoc.value / 100)
-                : couponDoc.value;
-              calculatedDiscount = Math.min(calculatedDiscount, calculatedSubtotal);
-            }
+        const code = body.coupon.trim().toUpperCase();
+        const couponDoc = await db.collection('coupons').findOne({ code, active: true });
+        if (couponDoc) {
+          if (calculatedSubtotal >= (couponDoc.minOrder || 0)) {
+            couponCode = couponDoc.code;
+            calculatedDiscount = couponDoc.type === 'percent'
+              ? Math.round(calculatedSubtotal * couponDoc.value / 100)
+              : couponDoc.value;
+            calculatedDiscount = Math.min(calculatedDiscount, calculatedSubtotal);
           }
         }
       }
@@ -2121,54 +2100,6 @@ async function handleRoute(request, { params }) {
       await db.collection('orders').insertOne(order);
       cacheBust('products:');
 
-      // Remove successfully ordered items from customer's database cart
-      if (u?.id) {
-        try {
-          const userCart = await db.collection('cart').findOne({ userId: u.id });
-          if (userCart && Array.isArray(userCart.items) && userCart.items.length > 0) {
-            const pendingOrders = validatedItems.map(vi => ({
-              id: String(vi.id || ''),
-              slug: vi.slug ? String(vi.slug) : '',
-              qty: parseInt(vi.qty) || 1
-            }));
-
-            const updatedCartItems = [];
-            for (const item of userCart.items) {
-              const itemId = String(item.id || '');
-              const itemSlug = item.slug ? String(item.slug) : '';
-
-              const match = pendingOrders.find(po =>
-                po.qty > 0 && (
-                  (po.id && po.id === itemId) ||
-                  (po.slug && itemSlug && po.slug === itemSlug) ||
-                  (po.slug && po.slug === itemId) ||
-                  (itemSlug && po.id === itemSlug)
-                )
-              );
-
-              if (!match) {
-                updatedCartItems.push(item);
-              } else if (item.qty > match.qty) {
-                updatedCartItems.push({
-                  ...item,
-                  qty: item.qty - match.qty
-                });
-                match.qty = 0;
-              } else {
-                match.qty -= item.qty;
-              }
-            }
-
-            await db.collection('cart').updateOne(
-              { userId: u.id },
-              { $set: { items: updatedCartItems, updatedAt: new Date() } }
-            );
-          }
-        } catch (cartSyncErr) {
-          console.error('Failed to update user cart in database after order placement:', cartSyncErr);
-        }
-      }
-
       // Trigger WhatsApp & SMS notification for order placement
       await sendOrderPlacedNotification({ order, user: u, db });
 
@@ -2243,7 +2174,7 @@ async function handleRoute(request, { params }) {
       };
 
       const pdf = await buildInvoicePDF(order, companyConfig);
-      return handleCORS(new NextResponse(pdf, { status: 200, headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="MikuMantra-Invoice-${order.orderNumber}.pdf"` } }));
+      return handleCORS(new NextResponse(pdf, { status: 200, headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="Invoice-${order.orderNumber}.pdf"` } }));
     }
     if (route.startsWith('/orders/') && route.endsWith('/shippingslip') && method === 'GET') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
@@ -2322,7 +2253,7 @@ async function handleRoute(request, { params }) {
           $set: {
             status: 'cancelled',
             cancelledAt: now,
-            cancelledBy: u.role === 'admin' ? 'mikumantra' : 'customer',
+            cancelledBy: u.role === 'admin' ? 'admin' : 'customer',
             cancellationReason: reason,
             cancellationNote: note,
             ...refundDoc
@@ -2331,7 +2262,7 @@ async function handleRoute(request, { params }) {
             statusHistory: {
               status: 'cancelled',
               at: now,
-              note: `Cancelled by ${u.role === 'admin' ? 'mikumantra' : 'customer'}: ${cancellationReasonStr}`
+              note: `Cancelled by ${u.role === 'admin' ? 'admin' : 'customer'}: ${cancellationReasonStr}`
             }
           }
         }
@@ -2363,6 +2294,94 @@ async function handleRoute(request, { params }) {
         order: clean(updatedOrder)
       });
     }
+
+    // ============ PUBLIC ORDER TRACKING ============
+    if ((route === '/orders/track' || route === '/track') && method === 'GET') {
+      const orderNumber = (q.get('orderNumber') || q.get('order') || '').trim();
+      const contact = (q.get('contact') || q.get('phone') || q.get('email') || '').trim();
+      const awb = (q.get('awb') || q.get('trackingNumber') || '').trim();
+
+      if (!orderNumber && !awb) {
+        return err('Order Number or AWB Tracking Number is required.', 400);
+      }
+
+      let order = null;
+      if (awb) {
+        const escapedAwb = awb.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
+        order = await db.collection('orders').findOne({
+          $or: [
+            { trackingNumber: { $regex: `^${escapedAwb}$`, $options: 'i' } },
+            { 'courier.trackingNumber': { $regex: `^${escapedAwb}$`, $options: 'i' } }
+          ]
+        });
+      } else if (orderNumber) {
+        const cleanOrderNum = orderNumber.replace(/[^a-zA-Z0-9-]/g, '');
+        const orderCandidates = await db.collection('orders').find({
+          $or: [
+            { orderNumber: { $regex: cleanOrderNum, $options: 'i' } },
+            { id: orderNumber }
+          ]
+        }).toArray();
+
+        if (orderCandidates.length > 0) {
+          const currentUser = await getCurrentUser(db, request);
+          if (currentUser) {
+            order = orderCandidates.find(o => o.userId === currentUser.id) || null;
+          }
+
+          if (!order && contact) {
+            const rawDigits = contact.replace(/[^0-9]/g, '');
+            const phoneEnd = rawDigits.slice(-10);
+            const contactLower = contact.toLowerCase();
+
+            order = orderCandidates.find(o => {
+              const orderPhoneDigits = (o.address?.phone || '').replace(/[^0-9]/g, '');
+              const phoneMatches = phoneEnd && orderPhoneDigits.endsWith(phoneEnd);
+              const emailMatches = (o.guestEmail && o.guestEmail.toLowerCase() === contactLower);
+              return phoneMatches || emailMatches;
+            }) || null;
+          } else if (!order && !contact && (currentUser?.role === 'admin' || orderCandidates.length === 1)) {
+            order = orderCandidates[0];
+          }
+        }
+      }
+
+      if (!order) {
+        return err('No matching order found. Please check your order details and contact number.', 404);
+      }
+
+      // Return sanitized order details for public tracking
+      const sanitizedOrder = {
+        id: order.id,
+        orderNumber: order.orderNumber,
+        status: order.status,
+        statusHistory: order.statusHistory || [],
+        placedAt: order.placedAt,
+        estimatedDelivery: order.estimatedDelivery,
+        courier: order.courier || null,
+        carrier: order.carrier || order.courier?.carrier || null,
+        trackingNumber: order.trackingNumber || order.courier?.trackingNumber || null,
+        trackingUrl: order.trackingUrl || order.courier?.trackingUrl || null,
+        items: (order.items || []).map(i => ({
+          id: i.id,
+          name: i.name,
+          image: i.image,
+          qty: i.qty,
+          price: i.price,
+          subtotal: i.subtotal
+        })),
+        amounts: order.amounts,
+        address: {
+          fullName: order.address?.fullName,
+          city: order.address?.city,
+          state: order.address?.state,
+          pincode: order.address?.pincode
+        }
+      };
+
+      return ok({ order: sanitizedOrder });
+    }
+
     if (route.startsWith('/orders/') && method === 'GET') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const id = route.split('/')[2];
@@ -4102,13 +4121,11 @@ async function handleRoute(request, { params }) {
 
       if (sub.startsWith('product-filters')) {
         _cache.delete('product_filters');
-        cacheBust('product_filters');
         const parts = sub.split('/');
 
         // GET /api/admin/product-filters
         if (parts.length === 1 && method === 'GET') {
           await seedFiltersIfEmpty(db);
-          await syncCategoryAndCollectionFilterOptions(db);
           const list = await db.collection('product_filters').find({}).sort({ order: 1 }).toArray();
           return ok({ groups: list.map(clean) });
         }
@@ -4149,8 +4166,6 @@ async function handleRoute(request, { params }) {
           if (body.groupId && Array.isArray(body.options)) {
             await db.collection('product_filters').updateOne({ id: body.groupId }, { $set: { options: body.options } });
           }
-          _cache.delete('product_filters');
-          cacheBust('product_filters');
           return ok({ ok: true });
         }
 
@@ -4169,8 +4184,6 @@ async function handleRoute(request, { params }) {
           updateDoc.updatedAt = new Date();
 
           await db.collection('product_filters').updateOne({ id }, { $set: updateDoc });
-          _cache.delete('product_filters');
-          cacheBust('product_filters');
           const updated = await db.collection('product_filters').findOne({ id });
           return ok({ group: clean(updated) });
         }
@@ -4179,8 +4192,6 @@ async function handleRoute(request, { params }) {
         if (parts.length === 2 && method === 'DELETE') {
           const id = parts[1];
           await db.collection('product_filters').deleteOne({ id });
-          _cache.delete('product_filters');
-          cacheBust('product_filters');
           return ok({ ok: true });
         }
 
@@ -4205,48 +4216,6 @@ async function handleRoute(request, { params }) {
           };
 
           await db.collection('product_filters').updateOne({ id }, { $push: { options: newOpt } });
-
-          // If added to Category filter group, also ensure it exists in categories collection
-          if (group.key === 'category') {
-            const catSlug = val.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-            const catExists = await db.collection('categories').findOne({ $or: [{ slug: catSlug }, { name: body.name.trim() }] });
-            if (!catExists) {
-              await db.collection('categories').insertOne({
-                id: newOpt.id,
-                name: body.name.trim(),
-                slug: catSlug,
-                img: 'https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?crop=entropy&cs=srgb&fm=jpg&q=85',
-                active: newOpt.enabled,
-                enabled: newOpt.enabled,
-                order: newOpt.order,
-                createdAt: new Date()
-              });
-            }
-            _cache.delete('cats');
-            cacheBust('cats');
-          }
-
-          // If added to Collection filter group, also ensure it exists in collections collection
-          if (group.key === 'collection') {
-            const colSlug = val.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-            const colExists = await db.collection('collections').findOne({ $or: [{ slug: colSlug }, { name: body.name.trim() }] });
-            if (!colExists) {
-              await db.collection('collections').insertOne({
-                id: newOpt.id,
-                name: body.name.trim(),
-                slug: colSlug,
-                active: newOpt.enabled,
-                enabled: newOpt.enabled,
-                order: newOpt.order,
-                createdAt: new Date()
-              });
-            }
-            _cache.delete('cols');
-            cacheBust('cols');
-          }
-
-          _cache.delete('product_filters');
-          cacheBust('product_filters');
           return ok({ option: newOpt });
         }
 
@@ -4259,57 +4228,20 @@ async function handleRoute(request, { params }) {
           const group = await db.collection('product_filters').findOne({ id });
           if (!group) return err('Filter group not found', 404);
 
-          let updatedOpt = null;
           const updatedOptions = (group.options || []).map(opt => {
             if (opt.id === optionId) {
-              updatedOpt = {
+              return {
                 ...opt,
                 name: body.name !== undefined ? body.name.trim() : opt.name,
                 value: body.value !== undefined ? body.value.trim() : opt.value,
                 enabled: body.enabled !== undefined ? !!body.enabled : opt.enabled,
                 order: body.order !== undefined ? parseInt(body.order) : opt.order
               };
-              return updatedOpt;
             }
             return opt;
           });
 
           await db.collection('product_filters').updateOne({ id }, { $set: { options: updatedOptions } });
-
-          // If this is Category filter, sync enabled/name changes with categories collection
-          if (group.key === 'category' && updatedOpt) {
-            const catQuery = { $or: [{ id: optionId }, { slug: updatedOpt.value }, { name: updatedOpt.name }] };
-            const catUpdate = {};
-            if (body.enabled !== undefined) {
-              catUpdate.active = !!body.enabled;
-              catUpdate.enabled = !!body.enabled;
-            }
-            if (body.name !== undefined) catUpdate.name = body.name.trim();
-            if (Object.keys(catUpdate).length > 0) {
-              await db.collection('categories').updateMany(catQuery, { $set: catUpdate });
-            }
-            _cache.delete('cats');
-            cacheBust('cats');
-          }
-
-          // If this is Collection filter, sync enabled/name changes with collections collection
-          if (group.key === 'collection' && updatedOpt) {
-            const colQuery = { $or: [{ id: optionId }, { slug: updatedOpt.value }, { name: updatedOpt.name }] };
-            const colUpdate = {};
-            if (body.enabled !== undefined) {
-              colUpdate.active = !!body.enabled;
-              colUpdate.enabled = !!body.enabled;
-            }
-            if (body.name !== undefined) colUpdate.name = body.name.trim();
-            if (Object.keys(colUpdate).length > 0) {
-              await db.collection('collections').updateMany(colQuery, { $set: colUpdate });
-            }
-            _cache.delete('cols');
-            cacheBust('cols');
-          }
-
-          _cache.delete('product_filters');
-          cacheBust('product_filters');
           return ok({ ok: true });
         }
 
@@ -4317,27 +4249,7 @@ async function handleRoute(request, { params }) {
         if (parts.length === 4 && parts[2] === 'options' && method === 'DELETE') {
           const id = parts[1];
           const optionId = parts[3];
-          const group = await db.collection('product_filters').findOne({ id });
-          const targetOpt = (group?.options || []).find(o => o.id === optionId);
-
           await db.collection('product_filters').updateOne({ id }, { $pull: { options: { id: optionId } } });
-
-          // If category group, also remove or deactivate from categories collection
-          if (group?.key === 'category' && targetOpt) {
-            await db.collection('categories').deleteMany({ $or: [{ id: optionId }, { slug: targetOpt.value }] });
-            _cache.delete('cats');
-            cacheBust('cats');
-          }
-
-          // If collection group, also remove or deactivate from collections collection
-          if (group?.key === 'collection' && targetOpt) {
-            await db.collection('collections').deleteMany({ $or: [{ id: optionId }, { slug: targetOpt.value }] });
-            _cache.delete('cols');
-            cacheBust('cols');
-          }
-
-          _cache.delete('product_filters');
-          cacheBust('product_filters');
           return ok({ ok: true });
         }
       }
@@ -4408,10 +4320,6 @@ async function handleRoute(request, { params }) {
             shipping: {
               ...DEFAULT_SITE_SETTINGS.shipping,
               ...((settings && settings.shipping) || {})
-            },
-            zoomSettings: {
-              ...DEFAULT_SITE_SETTINGS.zoomSettings,
-              ...((settings && settings.zoomSettings) || {})
             },
             paymentSettings: {
               razorpay: {
@@ -4491,29 +4399,6 @@ async function handleRoute(request, { params }) {
             });
           }
 
-          if (updates.zoomSettings) {
-            const z = updates.zoomSettings;
-            updates.zoomSettings = {
-              enabled: z.enabled !== false,
-              mode: ['side-by-side', 'inner', 'both', 'disabled'].includes(z.mode) ? z.mode : 'side-by-side',
-              zoomLevel: Math.max(1.5, Math.min(4, Number(z.zoomLevel) || 2.5)),
-              showCrosshair: z.showCrosshair !== false,
-              lensSize: Math.max(100, Math.min(260, Number(z.lensSize) || 160)),
-              lensBorderColor: z.lensBorderColor || '#D4AF37',
-              allowCustomerToggle: z.allowCustomerToggle !== false,
-              modalZoomEnabled: z.modalZoomEnabled !== false
-            };
-            await logAdminActivity(db, {
-              admin,
-              action: 'ZOOM_SETTINGS_UPDATED',
-              module: 'SITE_SETTINGS',
-              targetId: 'default',
-              targetName: 'Product Zoom Settings',
-              metadata: updates.zoomSettings,
-              request
-            });
-          }
-
           await db.collection('site_settings').updateOne(
             { id: 'default' },
             { $set: { ...updates, updatedAt: new Date() } },
@@ -4552,10 +4437,6 @@ async function handleRoute(request, { params }) {
             shipping: {
               ...DEFAULT_SITE_SETTINGS.shipping,
               ...((updated && updated.shipping) || {})
-            },
-            zoomSettings: {
-              ...DEFAULT_SITE_SETTINGS.zoomSettings,
-              ...((updated && updated.zoomSettings) || {})
             },
             paymentSettings: {
               razorpay: {
@@ -4650,15 +4531,15 @@ async function handleRoute(request, { params }) {
 
           // Image/SVG upload validations
           const fileType = file.type || 'image/jpeg';
-          const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon'];
+          const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
           if (!allowedTypes.includes(fileType)) {
-            return err('Invalid MIME type. Only image/jpeg, image/png, image/webp, image/svg+xml, and image/x-icon are allowed.', 400);
+            return err('Invalid MIME type. Only image/jpeg, image/png, image/webp, and image/svg+xml are allowed.', 400);
           }
 
           const originalName = file.name || 'image.jpg';
           const ext = pathModule.extname(originalName).toLowerCase();
-          if (!['.jpg', '.jpeg', '.png', '.webp', '.svg', '.ico'].includes(ext)) {
-            return err('Invalid file extension. Only .jpg, .jpeg, .png, .webp, .svg, and .ico are allowed.', 400);
+          if (!['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext)) {
+            return err('Invalid file extension. Only .jpg, .jpeg, .png, .webp, and .svg are allowed.', 400);
           }
 
           if (file.size > 5 * 1024 * 1024) {
@@ -4708,62 +4589,6 @@ async function handleRoute(request, { params }) {
         }
       }
 
-      if (sub === 'upload-batch' && method === 'POST') {
-        try {
-          const formData = await request.formData();
-          const files = formData.getAll('files');
-          if (!files || !files.length) return err('No files provided', 400);
-
-          const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon'];
-          const uploads = [];
-          const uploadsDir = pathModule.join(process.cwd(), 'public', 'uploads');
-          if (!fs.existsSync(uploadsDir)) {
-            fs.mkdirSync(uploadsDir, { recursive: true });
-          }
-
-          for (const file of files) {
-            try {
-              const fileType = file.type || 'image/jpeg';
-              const originalName = file.name || 'image.jpg';
-              const ext = pathModule.extname(originalName).toLowerCase();
-              if (!['.jpg', '.jpeg', '.png', '.webp', '.svg', '.ico'].includes(ext)) {
-                continue;
-              }
-              if (file.size > 10 * 1024 * 1024) continue;
-
-              const bytes = await file.arrayBuffer();
-              const buffer = Buffer.from(bytes);
-              const filename = `${uuidv4()}-${originalName.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-
-              let savedToDb = false;
-              try {
-                await db.collection('uploads').insertOne({
-                  filename,
-                  contentType: fileType,
-                  data: buffer,
-                  createdAt: new Date()
-                });
-                savedToDb = true;
-              } catch (_) {}
-
-              try {
-                fs.writeFileSync(pathModule.join(uploadsDir, filename), buffer);
-              } catch (_) {}
-
-              const url = savedToDb ? `/api/uploads/${filename}` : `/uploads/${filename}`;
-              uploads.push({ originalName, filename, url });
-            } catch (singleErr) {
-              console.warn('Batch single file upload error:', singleErr);
-            }
-          }
-
-          return ok({ uploads });
-        } catch (e) {
-          console.error('Batch upload error:', e);
-          return err('Batch upload failed: ' + e.message, 500);
-        }
-      }
-
       // Global Banner settings transitions
       if (sub === 'bannerSettings') {
         if (method === 'GET') {
@@ -4807,18 +4632,10 @@ async function handleRoute(request, { params }) {
         if (isNaN(mrp) || mrp < price) return err('MRP cannot be less than selling price', 400);
         if (isNaN(stock) || stock < 0) return err('Stock quantity cannot be negative', 400);
 
-        const slug = slugify(b.slug || name);
-        if (!slug) return err('A valid URL-safe product slug is required', 400);
-
-        const existingSlug = await db.collection('products').findOne({ slug });
-        if (existingSlug) {
-          return err(`A product with the slug "${slug}" already exists. Slugs must be unique.`, 400);
-        }
-
+        const slug = b.slug ? b.slug.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-') : name.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
         const images = Array.isArray(b.images) ? b.images : (b.images || '').split('\n').map(s => s.trim()).filter(Boolean);
 
         const p = {
-          ...b,
           id: uuidv4(),
           slug,
           name,
@@ -4827,7 +4644,14 @@ async function handleRoute(request, { params }) {
           mrp,
           stock,
           images,
-          createdAt: new Date()
+          createdAt: new Date(),
+          ...b,
+          name,
+          category,
+          price,
+          mrp,
+          stock,
+          images
         };
         await db.collection('products').insertOne(p);
         cacheBust('products:');
@@ -4835,468 +4659,13 @@ async function handleRoute(request, { params }) {
         _cache.delete('admin_dashboard');
         return ok({ product: clean(p) });
       }
-
-      // Products Bulk Import (takes all information from .js or .json file including description, specs, benefits, etc.)
-      if (sub === 'products/import' && method === 'POST') {
-        if (!hasPermission(admin, 'products.create') && !hasPermission(admin, 'products.edit')) {
-          return err('Permission denied: products.create or products.edit required', 403);
-        }
-        const b = await request.json();
-        const rawProducts = Array.isArray(b.products) ? b.products : [];
-        if (!rawProducts.length) return err('No products provided for import', 400);
-
-        const matchMode = b.matchMode || 'update'; // 'update' | 'skip' | 'create_new'
-        const overwriteImages = Boolean(b.overwriteImages);
-
-        let createdCount = 0;
-        let updatedCount = 0;
-        let skippedCount = 0;
-        const errors = [];
-        const now = new Date();
-
-        const normalizeImportDesc = (d) => {
-          if (d === undefined || d === null) return '';
-          if (typeof d === 'string') return d.trim();
-          if (Array.isArray(d)) return d.map(item => typeof item === 'string' ? item : (item?.text || JSON.stringify(item))).join('\n\n').trim();
-          if (typeof d === 'object') return (d.text || d.en || d.value || JSON.stringify(d)).trim();
-          return String(d).trim();
-        };
-
-        for (let i = 0; i < rawProducts.length; i++) {
-          const item = rawProducts[i];
-          const name = (item.name || '').trim();
-          if (!name) {
-            errors.push({ index: i, error: 'Product name is required' });
-            continue;
-          }
-
-          const price = Number(item.price);
-          if (isNaN(price) || price < 0) {
-            errors.push({ index: i, name, error: 'Price must be a valid non-negative number' });
-            continue;
-          }
-
-          const mrp = item.mrp !== undefined && item.mrp !== '' && !isNaN(Number(item.mrp))
-            ? Number(item.mrp)
-            : price;
-          const stock = item.stock !== undefined && !isNaN(parseInt(item.stock))
-            ? parseInt(item.stock)
-            : 10;
-
-          const category = (item.category || 'gold').trim();
-          const collection = (item.collection || 'trending').trim();
-          const gender = (item.gender || 'women').trim();
-          const sku = (item.sku || '').trim();
-          const description = normalizeImportDesc(item.description ?? item.longDesc ?? item.desc ?? item.shortDesc ?? item.caption ?? item.details ?? item.about ?? item.productDescription ?? item.info ?? item.summary ?? item.content);
-          const badge = (item.badge || item.tag || '').trim();
-          const metal = (item.metal || item.metalComposition || '').trim();
-          const purity = (item.purity || item.goldPurity || '').trim();
-          const stone = (item.stone || item.stoneDetails || '').trim();
-          const weight = (item.weight || '').trim();
-          const size = (item.size || item.productSize || '').trim();
-          const video = (item.video || '').trim();
-          const rating = item.rating !== undefined && !isNaN(Number(item.rating)) ? Number(item.rating) : 0;
-          const reviews = item.reviews !== undefined && !isNaN(parseInt(item.reviews)) ? parseInt(item.reviews) : 0;
-          const featured = item.featured !== undefined ? Boolean(item.featured) : (badge.toLowerCase() === 'bestseller' || badge.toLowerCase() === 'trending');
-          const bestseller = item.bestseller !== undefined ? Boolean(item.bestseller) : (badge.toLowerCase() === 'bestseller' || collection === 'best-sellers');
-          const newArrival = item.newArrival !== undefined ? Boolean(item.newArrival) : (badge.toLowerCase() === 'new' || collection === 'new-arrival');
-          const seoTitle = (item.seoTitle || `${name} | MikuMantra Fine Jewellery`).trim();
-          const seoDescription = (item.seoDescription || (description ? description.slice(0, 155) : '')).trim();
-
-          // Normalize specifications
-          let specifications = [];
-          const rawSpecs = item.specifications ?? item.specs ?? item.specification;
-          if (Array.isArray(rawSpecs) && rawSpecs.length > 0) {
-            specifications = rawSpecs
-              .map((s, idx) => {
-                if (!s) return null;
-                if (typeof s === 'string') {
-                  const parts = s.split(/[:=]/);
-                  return {
-                    id: uuidv4(),
-                    label: (parts[0] || '').trim(),
-                    value: (parts.slice(1).join(':') || '').trim(),
-                    enabled: true,
-                    order: idx
-                  };
-                }
-                return {
-                  id: s.id || uuidv4(),
-                  label: (s.label || s.key || s.name || s.title || '').trim(),
-                  value: (s.value !== undefined ? String(s.value) : (s.val !== undefined ? String(s.val) : (s.detail || ''))).trim(),
-                  enabled: s.enabled !== false,
-                  order: s.order !== undefined && !isNaN(s.order) ? +s.order : idx
-                };
-              })
-              .filter(s => s && (s.label || s.value));
-          } else if (rawSpecs && typeof rawSpecs === 'object') {
-            specifications = Object.entries(rawSpecs).map(([lbl, val], idx) => ({
-              id: uuidv4(),
-              label: lbl.trim(),
-              value: (typeof val === 'object' ? JSON.stringify(val) : String(val)).trim(),
-              enabled: true,
-              order: idx
-            }));
-          }
-
-          // Augment with legacy top-level attributes if not already in specifications
-          const hasSpecLabel = (lbl) => specifications.some(s => s.label.toLowerCase() === lbl.toLowerCase());
-          let sOrder = specifications.length;
-          if (metal && !hasSpecLabel('metal')) specifications.push({ id: 'legacy-metal', label: 'Metal', value: metal, enabled: true, order: sOrder++ });
-          if (purity && !hasSpecLabel('purity')) specifications.push({ id: 'legacy-purity', label: 'Purity', value: purity, enabled: true, order: sOrder++ });
-          if (stone && stone !== '—' && !hasSpecLabel('stone')) specifications.push({ id: 'legacy-stone', label: 'Stone', value: stone, enabled: true, order: sOrder++ });
-          if (weight && !hasSpecLabel('weight')) specifications.push({ id: 'legacy-weight', label: 'Weight', value: weight, enabled: true, order: sOrder++ });
-          if (size && size !== '—' && !hasSpecLabel('size')) specifications.push({ id: 'legacy-size', label: 'Size', value: size, enabled: true, order: sOrder++ });
-
-          // Normalize product benefits
-          let productBenefits = null;
-          if (Array.isArray(item.productBenefits) && item.productBenefits.length > 0) {
-            productBenefits = item.productBenefits
-              .filter(b => b && b.title?.trim())
-              .map((b, idx) => ({
-                id: b.id || uuidv4(),
-                title: b.title.trim(),
-                icon: b.icon?.trim() || 'ShieldCheck',
-                description: b.description?.trim() || '',
-                enabled: b.enabled !== false,
-                order: b.order !== undefined && !isNaN(b.order) ? +b.order : idx
-              }));
-          }
-
-          // Normalize images
-          let incomingImages = [];
-          if (Array.isArray(item.images)) {
-            incomingImages = item.images.map(s => String(s).trim()).filter(Boolean);
-          } else if (typeof item.images === 'string' && item.images.trim()) {
-            incomingImages = item.images.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-          } else if (item.image) {
-            incomingImages = [String(item.image).trim()];
-          } else if (item.img) {
-            incomingImages = [String(item.img).trim()];
-          } else if (item.icon) {
-            incomingImages = [String(item.icon).trim()];
-          }
-
-          // Search existing product by id, sku, slug, or case-insensitive exact name
-          let existing = null;
-          if (matchMode !== 'create_new') {
-            const queryConditions = [];
-            if (item.id) queryConditions.push({ id: item.id });
-            if (sku) queryConditions.push({ sku });
-            if (item.slug) queryConditions.push({ slug: item.slug.trim().toLowerCase() });
-            queryConditions.push({ name: { $regex: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } });
-
-            existing = await db.collection('products').findOne({ $or: queryConditions });
-          }
-
-          if (existing && matchMode === 'skip') {
-            skippedCount++;
-            continue;
-          }
-
-          let newProd = null;
-          if (existing && matchMode === 'update') {
-            let finalImages = existing.images || [];
-            if (overwriteImages) {
-              if (incomingImages.length > 0) finalImages = incomingImages;
-            } else {
-              if (incomingImages.length > 0) {
-                finalImages = Array.from(new Set([...incomingImages, ...finalImages]));
-              }
-            }
-
-            const updateDoc = {
-              ...item,
-              name,
-              category,
-              collection,
-              gender,
-              price,
-              mrp,
-              stock: item.stock !== undefined ? stock : (existing.stock ?? stock),
-              description: description || existing.description || '',
-              sku: sku || existing.sku || '',
-              badge: badge || existing.badge || '',
-              metal: metal || existing.metal || '',
-              purity: purity || existing.purity || '',
-              stone: stone || existing.stone || '',
-              weight: weight || existing.weight || '',
-              size: size || existing.size || '',
-              video: video || existing.video || '',
-              rating: item.rating !== undefined ? rating : (existing.rating ?? 0),
-              reviews: item.reviews !== undefined ? reviews : (existing.reviews ?? 0),
-              featured: item.featured !== undefined ? featured : (existing.featured ?? featured),
-              bestseller: item.bestseller !== undefined ? bestseller : (existing.bestseller ?? bestseller),
-              newArrival: item.newArrival !== undefined ? newArrival : (existing.newArrival ?? newArrival),
-              seoTitle: seoTitle || existing.seoTitle || '',
-              seoDescription: seoDescription || existing.seoDescription || '',
-              specifications: specifications.length > 0 ? specifications : (existing.specifications || []),
-              productBenefits: productBenefits || existing.productBenefits || DEFAULT_PRODUCT_BENEFITS,
-              images: finalImages,
-              updatedAt: now
-            };
-            delete updateDoc._id;
-            if (item.id) {
-              updateDoc.id = item.id;
-            } else {
-              delete updateDoc.id;
-            }
-
-            await db.collection('products').updateOne({ _id: existing._id }, { $set: updateDoc });
-            updatedCount++;
-          } else {
-            let slug = item.slug
-              ? slugify(item.slug)
-              : slugify(item.id || name);
-            let existingSlug = await db.collection('products').findOne({ slug });
-            if (existingSlug) {
-              slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
-            }
-
-            newProd = {
-              ...item,
-              id: item.id || uuidv4(),
-              slug,
-              name,
-              category,
-              collection,
-              gender,
-              price,
-              mrp,
-              stock,
-              description,
-              sku,
-              badge,
-              metal,
-              purity,
-              stone,
-              weight,
-              size,
-              video,
-              rating,
-              reviews,
-              featured,
-              bestseller,
-              newArrival,
-              seoTitle,
-              seoDescription,
-              specifications,
-              productBenefits: productBenefits || DEFAULT_PRODUCT_BENEFITS,
-              images: incomingImages,
-              createdAt: now,
-              updatedAt: now
-            };
-
-            await db.collection('products').insertOne(newProd);
-            createdCount++;
-          }
-
-          const targetProdId = existing ? existing.id : newProd?.id;
-          const targetProdSlug = existing ? existing.slug : newProd?.slug;
-
-          // Process and persist reviews from .js or .json file
-          const rawReviewsList = Array.isArray(item.extractedReviews) && item.extractedReviews.length > 0
-            ? item.extractedReviews
-            : (Array.isArray(item.reviewsList) && item.reviewsList.length > 0
-                ? item.reviewsList
-                : (Array.isArray(item.reviews) && item.reviews.length > 0 && typeof item.reviews[0] === 'object'
-                    ? item.reviews
-                    : (Array.isArray(item.customerReviews) && item.customerReviews.length > 0
-                        ? item.customerReviews
-                        : [])));
-
-          if (rawReviewsList.length > 0 && targetProdId) {
-            for (let revIdx = 0; revIdx < rawReviewsList.length; revIdx++) {
-              const r = rawReviewsList[revIdx];
-              if (!r) continue;
-              const rComment = typeof r === 'string' ? r.trim() : (r.comment || r.review || r.text || r.content || r.body || '').trim();
-              const rTitle = typeof r === 'object' ? (r.title || r.headline || '').trim().slice(0, 150) : '';
-              const rRatingNum = typeof r === 'object' ? Number(r.rating || r.stars || r.score || r.rate) : 5;
-              const rRatingVal = isNaN(rRatingNum) ? 5 : Math.min(5, Math.max(1, rRatingNum));
-              const rName = typeof r === 'object' && (r.reviewerName || r.author || r.name || r.user || r.userName || r.customerName)
-                ? String(r.reviewerName || r.author || r.name || r.user || r.userName || r.customerName).trim().slice(0, 100)
-                : 'Verified Customer';
-              const rEmail = typeof r === 'object' && (r.reviewerEmail || r.email) ? String(r.reviewerEmail || r.email).trim().toLowerCase() : '';
-              const rImages = Array.isArray(r.images) ? r.images : [];
-              const rawDate = typeof r === 'object' ? (r.date || r.createdAt || r.timestamp) : null;
-              const rDate = rawDate ? new Date(rawDate) : now;
-
-              if (rComment || rTitle || rRatingVal) {
-                const existingRev = await db.collection('reviews').findOne({
-                  productId: targetProdId,
-                  $or: [
-                    ...(r.id ? [{ id: r.id }] : []),
-                    { reviewerName: rName, comment: rComment }
-                  ]
-                });
-
-                if (existingRev) {
-                  await db.collection('reviews').updateOne(
-                    { _id: existingRev._id },
-                    {
-                      $set: {
-                        productSlug: targetProdSlug,
-                        productName: name,
-                        productImage: (incomingImages && incomingImages[0]) || existing?.images?.[0] || '',
-                        rating: rRatingVal,
-                        title: rTitle || existingRev.title || '',
-                        comment: rComment || existingRev.comment || '',
-                        status: 'published',
-                        approved: true,
-                        updatedAt: now
-                      }
-                    }
-                  );
-                } else {
-                  await db.collection('reviews').insertOne({
-                    id: r.id || uuidv4(),
-                    productId: targetProdId,
-                    productSlug: targetProdSlug,
-                    productName: name,
-                    productImage: (incomingImages && incomingImages[0]) || existing?.images?.[0] || '',
-                    userId: `import_${Math.random().toString(36).slice(2, 8)}`,
-                    reviewerName: rName,
-                    reviewerEmail: rEmail,
-                    rating: rRatingVal,
-                    title: rTitle,
-                    comment: rComment,
-                    images: rImages,
-                    status: 'published',
-                    verifiedPurchase: r.verifiedPurchase !== false,
-                    approved: true,
-                    createdAt: isNaN(rDate.getTime()) ? now : rDate,
-                    updatedAt: now
-                  });
-                }
-              }
-            }
-
-            // Sync rating, reviews count and star breakdown on product document
-            await recalculateProductRating(db, targetProdId);
-          }
-        }
-
-        cacheBust('products:');
-        _cache.delete('admin_products');
-        _cache.delete('admin_dashboard');
-
-        return ok({
-          ok: true,
-          createdCount,
-          updatedCount,
-          skippedCount,
-          total: rawProducts.length,
-          errors
-        });
-      }
-
-      // Products Bulk Delete
-      if (sub === 'products/bulk-delete' && method === 'POST') {
-        if (!hasPermission(admin, 'products.delete')) return err('Permission denied: products.delete required', 403);
-        const { ids } = await request.json();
-        if (!Array.isArray(ids) || !ids.length) return err('No product IDs provided', 400);
-        const res = await db.collection('products').deleteMany({ id: { $in: ids } });
-        cacheBust('products:');
-        _cache.delete('admin_products');
-        _cache.delete('admin_dashboard');
-        return ok({ ok: true, deletedCount: res.deletedCount || ids.length });
-      }
-
-      // Products Bulk Actions (duplicate, update category/collection/stock/flags)
-      if (sub === 'products/bulk-action' && method === 'POST') {
-        if (!hasPermission(admin, 'products.edit')) return err('Permission denied: products.edit required', 403);
-        const { action, ids, data } = await request.json();
-        if (!Array.isArray(ids) || !ids.length) return err('No product IDs provided', 400);
-
-        let affected = 0;
-        if (action === 'duplicate') {
-          const prods = await db.collection('products').find({ id: { $in: ids } }).toArray();
-          const clones = prods.map(p => {
-            const shortId = Math.random().toString(36).slice(2, 6);
-            const { _id, ...rest } = p;
-            return {
-              ...rest,
-              id: uuidv4(),
-              slug: `${slugify(p.slug || p.name)}-copy-${shortId}`,
-              name: `${p.name} (Copy)`,
-              createdAt: new Date(),
-              updatedAt: new Date()
-            };
-          });
-          if (clones.length) {
-            await db.collection('products').insertMany(clones);
-            affected = clones.length;
-          }
-        } else if (action === 'update_category' && data?.category) {
-          const r = await db.collection('products').updateMany({ id: { $in: ids } }, { $set: { category: data.category, updatedAt: new Date() } });
-          affected = r.modifiedCount || ids.length;
-        } else if (action === 'update_collection' && data?.collection) {
-          const r = await db.collection('products').updateMany({ id: { $in: ids } }, { $set: { collection: data.collection, updatedAt: new Date() } });
-          affected = r.modifiedCount || ids.length;
-        } else if (action === 'add_stock') {
-          const qty = Number(data?.quantity) || 0;
-          if (data?.isIncrement) {
-            const r = await db.collection('products').updateMany({ id: { $in: ids } }, { $inc: { stock: qty }, $set: { updatedAt: new Date() } });
-            affected = r.modifiedCount || ids.length;
-          } else {
-            const r = await db.collection('products').updateMany({ id: { $in: ids } }, { $set: { stock: qty, updatedAt: new Date() } });
-            affected = r.modifiedCount || ids.length;
-          }
-        } else if (action === 'set_flags' && data) {
-          const r = await db.collection('products').updateMany({ id: { $in: ids } }, {
-            $set: {
-              ...(data.featured !== undefined ? { featured: Boolean(data.featured) } : {}),
-              ...(data.bestseller !== undefined ? { bestseller: Boolean(data.bestseller) } : {}),
-              ...(data.newArrival !== undefined ? { newArrival: Boolean(data.newArrival) } : {}),
-              updatedAt: new Date()
-            }
-          });
-          affected = r.modifiedCount || ids.length;
-        } else {
-          return err('Invalid bulk action', 400);
-        }
-
-        cacheBust('products:');
-        _cache.delete('admin_products');
-        _cache.delete('admin_dashboard');
-        return ok({ ok: true, count: affected });
-      }
-
       if (sub.startsWith('products/') && method === 'PUT') {
         if (!hasPermission(admin, 'products.edit')) return err('Permission denied: products.edit required', 403);
         const id = sub.split('/')[1];
         const b = await request.json();
-
-        const existing = await db.collection('products').findOne({ id });
-        if (!existing) return err('Product not found', 404);
-
         const updateData = { ...b, updatedAt: new Date() };
-        delete updateData._id;
-        delete updateData.id;
 
-        // Name handling: changing name must NOT touch or regenerate slug
-        if (b.name !== undefined) {
-          const cleanName = b.name.trim();
-          if (!cleanName) return err('Product name cannot be empty', 400);
-          updateData.name = cleanName;
-        }
-
-        // Slug handling: independent from name
-        if (b.slug !== undefined) {
-          const cleanSlug = slugify(b.slug);
-          if (!cleanSlug) return err('Product slug cannot be empty and must be URL-safe', 400);
-          if (cleanSlug !== existing.slug) {
-            const slugConflict = await db.collection('products').findOne({ slug: cleanSlug, id: { $ne: id } });
-            if (slugConflict) {
-              return err(`A product with the slug "${cleanSlug}" already exists. Slugs must be unique.`, 400);
-            }
-          }
-          updateData.slug = cleanSlug;
-        } else {
-          // If slug was not provided in the payload, preserve existing slug unconditionally
-          delete updateData.slug;
-        }
-
+        if (b.name !== undefined && !b.name.trim()) return err('Product name cannot be empty', 400);
         if (b.category !== undefined && !b.category.trim()) return err('Product category cannot be empty', 400);
         if (b.price !== undefined) {
           const price = Number(b.price);
@@ -5317,13 +4686,7 @@ async function handleRoute(request, { params }) {
           updateData.images = b.images.split('\n').map(s => s.trim()).filter(Boolean);
         }
 
-        // Ratings & reviews are computed dynamically from actual reviews
-        delete updateData.rating;
-        delete updateData.reviews;
-        delete updateData.breakdown;
-
         await db.collection('products').updateOne({ id }, { $set: updateData });
-        await recalculateProductRating(db, id);
         cacheBust('products:');
         _cache.delete('admin_products');
         _cache.delete('admin_dashboard');
@@ -5334,7 +4697,6 @@ async function handleRoute(request, { params }) {
         if (!hasPermission(admin, 'products.delete')) return err('Permission denied: products.delete required', 403);
         const id = sub.split('/')[1];
         await db.collection('products').deleteOne({ id });
-        await db.collection('wishlist').deleteMany({ productId: id });
         cacheBust('products:');
         _cache.delete('admin_products');
         _cache.delete('admin_dashboard');
@@ -5360,46 +4722,9 @@ async function handleRoute(request, { params }) {
             if (!b.name || !b.name.trim()) return err('Collection name is required', 400);
             if (!b.slug || !b.slug.trim()) return err('Collection slug is required', 400);
           }
-          if (col === 'coupons') {
-            const rawCode = (b.code || '').trim().toUpperCase();
-            if (!rawCode) return err('Coupon code is required', 400);
-            if (rawCode.length < 3) return err('Coupon code must be at least 3 characters', 400);
-            const escaped = rawCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const existing = await db.collection('coupons').findOne({
-              code: { $regex: new RegExp(`^${escaped}$`, 'i') }
-            });
-            if (existing) return err(`Coupon code '${rawCode}' already exists`, 400);
-
-            const type = b.type === 'flat' ? 'flat' : 'percent';
-            const numVal = Number(b.value);
-            if (isNaN(numVal) || numVal <= 0) return err('Discount value must be a number greater than 0', 400);
-            if (type === 'percent' && numVal > 100) return err('Percentage discount cannot exceed 100%', 400);
-
-            const minOrderNum = Math.max(0, Number(b.minOrder) || 0);
-
-            b.code = rawCode;
-            b.type = type;
-            b.value = numVal;
-            b.minOrder = minOrderNum;
-            b.active = b.active !== false;
-          }
           const doc = { id: uuidv4(), createdAt: new Date(), ...b };
-          try {
-            await db.collection(col).insertOne(doc);
-          } catch (dbErr) {
-            if (dbErr.code === 11000) {
-              return err(`Coupon code '${b.code || ''}' already exists`, 400);
-            }
-            throw dbErr;
-          }
+          await db.collection(col).insertOne(doc);
           _cache.delete('admin_' + col);
-          if (col === 'categories' || col === 'collections') {
-            await syncCategoryAndCollectionFilterOptions(db);
-            _cache.delete('product_filters');
-            cacheBust('product_filters');
-            _cache.delete('cats');
-            _cache.delete('cols');
-          }
           return ok({ item: clean(doc) });
         }
         if (sub.startsWith(col + '/') && method === 'PUT') {
@@ -5409,48 +4734,8 @@ async function handleRoute(request, { params }) {
             if (b.name !== undefined && !b.name.trim()) return err('Collection name is required', 400);
             if (b.slug !== undefined && !b.slug.trim()) return err('Collection slug is required', 400);
           }
-          if (col === 'coupons') {
-            if (b.code !== undefined) {
-              const rawCode = (b.code || '').trim().toUpperCase();
-              if (!rawCode) return err('Coupon code is required', 400);
-              if (rawCode.length < 3) return err('Coupon code must be at least 3 characters', 400);
-              const escaped = rawCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-              const existing = await db.collection('coupons').findOne({
-                code: { $regex: new RegExp(`^${escaped}$`, 'i') },
-                id: { $ne: id }
-              });
-              if (existing) return err(`Coupon code '${rawCode}' already exists`, 400);
-              b.code = rawCode;
-            }
-            if (b.type !== undefined) {
-              b.type = b.type === 'flat' ? 'flat' : 'percent';
-            }
-            if (b.value !== undefined) {
-              const numVal = Number(b.value);
-              if (isNaN(numVal) || numVal <= 0) return err('Discount value must be a number greater than 0', 400);
-              if (b.type === 'percent' && numVal > 100) return err('Percentage discount cannot exceed 100%', 400);
-              b.value = numVal;
-            }
-            if (b.minOrder !== undefined) {
-              b.minOrder = Math.max(0, Number(b.minOrder) || 0);
-            }
-          }
-          try {
-            await db.collection(col).updateOne({ id }, { $set: b });
-          } catch (dbErr) {
-            if (dbErr.code === 11000) {
-              return err(`Coupon code '${b.code || ''}' already exists`, 400);
-            }
-            throw dbErr;
-          }
+          await db.collection(col).updateOne({ id }, { $set: b });
           _cache.delete('admin_' + col);
-          if (col === 'categories' || col === 'collections') {
-            await syncCategoryAndCollectionFilterOptions(db);
-            _cache.delete('product_filters');
-            cacheBust('product_filters');
-            _cache.delete('cats');
-            _cache.delete('cols');
-          }
           const up = await db.collection(col).findOne({ id });
           return ok({ item: clean(up) });
         }
@@ -5501,13 +4786,6 @@ async function handleRoute(request, { params }) {
             }
           }
           await db.collection(col).deleteOne({ id });
-          if (col === 'categories' || col === 'collections') {
-            await syncCategoryAndCollectionFilterOptions(db);
-            _cache.delete('product_filters');
-            cacheBust('product_filters');
-            _cache.delete('cats');
-            _cache.delete('cols');
-          }
           return ok({ ok: true });
         }
       }
@@ -5535,14 +4813,14 @@ async function handleRoute(request, { params }) {
             $or: [
               { id: reg },
               { orderNumber: reg },
+              { trackingNumber: reg },
+              { 'courier.trackingNumber': reg },
+              { carrier: reg },
+              { 'courier.carrier': reg },
               { 'address.fullName': reg },
               { 'address.phone': reg },
               { 'items.name': reg },
               { guestEmail: reg },
-              { carrier: reg },
-              { trackingNumber: reg },
-              { 'courier.carrier': reg },
-              { 'courier.trackingNumber': reg },
               { userId: { $in: matchingUserIds } }
             ]
           };
@@ -5586,10 +4864,6 @@ async function handleRoute(request, { params }) {
                   { 'address.phone': reg },
                   { 'items.name': reg },
                   { guestEmail: reg },
-                  { carrier: reg },
-                  { trackingNumber: reg },
-                  { 'courier.carrier': reg },
-                  { 'courier.trackingNumber': reg },
                   { userId: { $in: matchingUserIds } }
                 ]
               }
@@ -5619,52 +4893,71 @@ async function handleRoute(request, { params }) {
           return err('Cancelled orders cannot be updated. Cancelled is a terminal state.', 400);
         }
 
+        const targetStatus = b.status || existingOrder.status;
+        const isStatusChanging = b.status && b.status !== existingOrder.status;
+        const hasCourierInput = Boolean(
+          b.courier !== undefined ||
+          b.carrier !== undefined ||
+          b.trackingNumber !== undefined ||
+          b.trackingUrl !== undefined ||
+          b.notes !== undefined
+        );
+
         const notes = {
           packed: 'Order packed & ready to ship.',
           shipped: 'Shipped via courier.',
           delivered: 'Delivered successfully.',
-          cancelled: 'Cancelled by mikumantra',
+          cancelled: 'Order cancelled.',
           confirmed: 'Order confirmed.'
         };
         const setDoc = {};
-        if (b.status !== undefined) {
-          setDoc.status = b.status;
-        }
-
-        const effectiveStatus = b.status || existingOrder.status || 'confirmed';
-
+        if (b.status) setDoc.status = b.status;
         if (b.status === 'delivered') {
           setDoc.deliveredAt = new Date();
         }
 
         let courierDoc = null;
-        if (b.courier && typeof b.courier === 'object') {
-          const shippedAt = b.courier.shippedAt || (b.status === 'shipped' || existingOrder.status === 'shipped' ? new Date() : (existingOrder.shippedAt || new Date()));
+        if (hasCourierInput || targetStatus === 'shipped') {
+          const rawCarrier = b.courier?.carrier !== undefined ? b.courier.carrier : (b.carrier !== undefined ? b.carrier : (existingOrder.courier?.carrier || existingOrder.carrier || ''));
+          const rawTrackingNum = b.courier?.trackingNumber !== undefined ? b.courier.trackingNumber : (b.trackingNumber !== undefined ? b.trackingNumber : (existingOrder.courier?.trackingNumber || existingOrder.trackingNumber || ''));
+          let rawTrackingUrl = b.courier?.trackingUrl !== undefined ? b.courier.trackingUrl : (b.trackingUrl !== undefined ? b.trackingUrl : (existingOrder.courier?.trackingUrl || existingOrder.trackingUrl || ''));
+          const rawNotes = b.courier?.notes !== undefined ? b.courier.notes : (b.notes !== undefined ? b.notes : (existingOrder.courier?.notes || ''));
+
+          const carrier = (rawCarrier || '').trim();
+          const trackingNumber = (rawTrackingNum || '').trim();
+          let trackingUrl = (rawTrackingUrl || '').trim();
+          if (!trackingUrl && carrier && trackingNumber) {
+            trackingUrl = generateTrackingUrl(carrier, trackingNumber);
+          }
+          const shippedAt = b.courier?.shippedAt ? new Date(b.courier.shippedAt) : (existingOrder.shippedAt || existingOrder.courier?.shippedAt || new Date());
+
           courierDoc = {
-            carrier: (b.courier.carrier || '').trim(),
-            trackingNumber: (b.courier.trackingNumber || '').trim(),
-            trackingUrl: (b.courier.trackingUrl || '').trim(),
-            notes: (b.courier.notes || '').trim(),
-            shippedAt: shippedAt
+            carrier,
+            trackingNumber,
+            trackingUrl,
+            shippedAt,
+            notes: (rawNotes || '').trim()
           };
+
           setDoc.courier = courierDoc;
-          setDoc.carrier = courierDoc.carrier;
-          setDoc.trackingNumber = courierDoc.trackingNumber;
-          setDoc.trackingUrl = courierDoc.trackingUrl;
-          if (courierDoc.shippedAt) setDoc.shippedAt = courierDoc.shippedAt;
-        } else if (b.status === 'shipped') {
-          const shippedAt = existingOrder.shippedAt || new Date();
-          setDoc.shippedAt = shippedAt;
-          if (existingOrder.courier) {
-            setDoc['courier.shippedAt'] = existingOrder.courier.shippedAt || shippedAt;
+          setDoc.carrier = carrier;
+          setDoc.trackingNumber = trackingNumber;
+          setDoc.trackingUrl = trackingUrl;
+          if (!existingOrder.shippedAt) {
+            setDoc.shippedAt = shippedAt;
           }
         }
 
         if (b.status === 'cancelled') {
+          if (!hasPermission(admin, 'orders.cancel') && !hasPermission(admin, 'orders.update')) {
+            return err('Permission denied: orders.cancel required', 403);
+          }
           const now = new Date();
           setDoc.cancelledAt = now;
-          setDoc.cancelledBy = 'mikumantra';
-          setDoc.cancellationReason = b.reason || 'Cancelled by mikumantra';
+          setDoc.cancelledBy = 'admin';
+          setDoc.cancelledByUserId = admin.id;
+          setDoc.cancelledByRole = 'admin';
+          setDoc.cancellationReason = b.reason || 'Cancelled by MikuMantra';
           if (b.note) setDoc.cancellationNote = b.note;
 
           const isPaid = existingOrder.paymentStatus === 'paid' || (existingOrder.payment !== 'cod' && existingOrder.paymentStatus !== 'pending');
@@ -5678,41 +4971,39 @@ async function handleRoute(request, { params }) {
           }
         }
 
-        let historyEntry = null;
-        if (b.status && b.status !== existingOrder.status) {
-          let note = b.note;
-          if (!note) {
-            if (b.status === 'shipped' && courierDoc?.carrier) {
-              const awbPart = courierDoc.trackingNumber ? ` (AWB: ${courierDoc.trackingNumber})` : '';
-              note = `Shipped via ${courierDoc.carrier}${awbPart}.${courierDoc.notes ? ' ' + courierDoc.notes : ''}`.trim();
-            } else {
-              note = notes[b.status] || '';
-            }
+        let historyNote = b.note || (b.status ? notes[b.status] : '') || '';
+        if (targetStatus === 'shipped') {
+          const carrier = courierDoc?.carrier || existingOrder.carrier || '';
+          const trackingNum = courierDoc?.trackingNumber || existingOrder.trackingNumber || '';
+          if (carrier && trackingNum) {
+            historyNote = b.note || `Shipped via ${carrier} (AWB: ${trackingNum})`;
+          } else if (carrier) {
+            historyNote = b.note || `Shipped via ${carrier}`;
           }
-          historyEntry = {
-            status: b.status,
-            at: new Date(),
-            note
-          };
-        } else if (courierDoc) {
-          historyEntry = {
-            status: effectiveStatus,
-            at: new Date(),
-            note: b.note || `Courier tracking updated: ${courierDoc.carrier || 'Carrier'}${courierDoc.trackingNumber ? ' (AWB: ' + courierDoc.trackingNumber + ')' : ''}`
-          };
+        } else if (hasCourierInput) {
+          const carrier = courierDoc?.carrier || existingOrder.carrier || '';
+          const trackingNum = courierDoc?.trackingNumber || existingOrder.trackingNumber || '';
+          historyNote = b.note || `Courier tracking updated: ${carrier || 'Courier'}${trackingNum ? ` (AWB: ${trackingNum})` : ''}`;
         }
 
-        const updateOperation = { $set: setDoc };
-        if (historyEntry) {
-          updateOperation.$push = { statusHistory: historyEntry };
+        const effectiveStatus = b.status || existingOrder.status;
+        const updateOps = { $set: setDoc };
+        if (historyNote || isStatusChanging) {
+          updateOps.$push = {
+            statusHistory: {
+              status: effectiveStatus,
+              at: new Date(),
+              note: historyNote
+            }
+          };
         }
 
         const updateResult = await db.collection('orders').updateOne(
           { id, status: { $ne: 'cancelled' } },
-          updateOperation
+          updateOps
         );
 
-        if (updateResult.modifiedCount === 0) {
+        if (updateResult.matchedCount === 0) {
           return err('Cancelled orders cannot be updated.', 400);
         }
 
@@ -5730,11 +5021,59 @@ async function handleRoute(request, { params }) {
 
         const up = await db.collection('orders').findOne({ id });
 
+        // Trigger notifications if shipped or if courier details updated on a shipped/delivered order
+        if (targetStatus === 'shipped' || (existingOrder.status === 'shipped' && hasCourierInput)) {
+          const customerUser = up.userId ? await db.collection('users').findOne({ id: up.userId }) : null;
+          try {
+            await sendOrderShippedNotification({ order: up, user: customerUser, db });
+          } catch (notifErr) {
+            console.error('[Notification error] Order shipped notification:', notifErr);
+          }
+        }
+
         if (b.status === 'cancelled') {
+          try {
+            await logAdminActivity(db, {
+              admin,
+              action: 'ORDER_CANCELLED',
+              module: 'Orders',
+              targetId: existingOrder.id,
+              targetName: `Order #${existingOrder.orderNumber}`,
+              metadata: {
+                cancelledBy: 'admin',
+                reason: setDoc.cancellationReason,
+                note: setDoc.cancellationNote || null
+              },
+              request
+            });
+          } catch (logErr) {
+            console.error('Failed to log admin cancellation activity:', logErr);
+          }
+
           try {
             await sendOrderCancelledNotification({ order: up, user: null, db });
           } catch (notifErr) {
             console.error('Failed to send order cancellation notification:', notifErr);
+          }
+        }
+
+        // Dispatch push notification to customer's mobile devices
+        if (up && up.userId && b.status) {
+          const statusMessages = {
+            packed: { title: 'Order Packed! 📦', body: `Your order #${up.orderNumber} has been packed and is ready for dispatch.` },
+            shipped: { title: 'Order Shipped! 🚚', body: `Your order #${up.orderNumber} is on its way${up.carrier ? ' via ' + up.carrier : ''}! Track your delivery.` },
+            out_for_delivery: { title: 'Out for Delivery! 🛵', body: `Your order #${up.orderNumber} is out for delivery today!` },
+            delivered: { title: 'Order Delivered! 🎉', body: `Your order #${up.orderNumber} has been delivered. Thank you for choosing MikuMantra!` }
+          };
+          const msg = statusMessages[b.status];
+          if (msg) {
+            sendPushNotification({
+              db,
+              userId: up.userId,
+              title: msg.title,
+              body: msg.body,
+              data: { orderId: up.id, orderNumber: up.orderNumber, status: b.status, type: 'order_status_update' }
+            }).catch(() => {});
           }
         }
 

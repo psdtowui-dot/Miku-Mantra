@@ -67,7 +67,7 @@ export default function AdminLayout({ children }) {
       .then(d => {
         if (d?.logo) setSiteLogo(d.logo);
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   // Admin password change modal state
@@ -79,15 +79,15 @@ export default function AdminLayout({ children }) {
   const [showAdminNew, setShowAdminNew] = useState(false);
   const [showAdminConf, setShowAdminConf] = useState(false);
 
-  const isLoginPage = pathname === '/admin/login' || pathname?.startsWith('/admin/login');
+  const isLoginPage = pathname === '/admin/login';
 
   useEffect(() => {
     if (isLoginPage) return;
     if (!loading) {
       if (!user) {
-        router.replace('/admin/login?redirect=' + encodeURIComponent(pathname));
+        router.push('/admin/login?redirect=' + encodeURIComponent(pathname));
       } else if (user.role !== 'admin') {
-        router.replace('/admin/login?error=forbidden&redirect=' + encodeURIComponent(pathname));
+        router.push('/admin/login?error=forbidden&redirect=' + encodeURIComponent(pathname));
       }
     }
   }, [loading, user, router, pathname, isLoginPage]);
@@ -161,7 +161,7 @@ export default function AdminLayout({ children }) {
   }
 
   return (
-    <div className="min-h-screen bg-[#F7F5F0] flex">
+    <div className="h-screen max-h-screen w-full bg-[#F7F5F0] flex overflow-hidden">
       {/* Mobile Drawer Backdrop Overlay */}
       {open && (
         <div
@@ -172,7 +172,7 @@ export default function AdminLayout({ children }) {
 
       {/* Sidebar Drawer */}
       <aside
-        className={`${open ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 fixed lg:sticky top-0 z-50 h-screen w-[85vw] max-w-[320px] lg:w-72 bg-[#0F0F10] text-white flex flex-col transition-transform duration-300 ease-in-out shadow-2xl lg:shadow-none`}
+        className={`${open ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 fixed lg:sticky top-0 left-0 z-50 h-screen w-[85vw] max-w-[320px] lg:w-72 bg-[#0F0F10] text-white flex flex-col transition-transform duration-300 ease-in-out shadow-2xl lg:shadow-none shrink-0`}
       >
         <div className="p-4 xs:p-6 border-b border-white/10 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
@@ -190,9 +190,8 @@ export default function AdminLayout({ children }) {
                 key={n.href}
                 href={n.href}
                 onClick={() => setOpen(false)}
-                className={`flex items-center gap-3 px-5 xs:px-6 py-3 text-xs sm:text-sm transition ${
-                  Active ? 'bg-white/10 text-[#D4AF37] border-l-2 border-[#D4AF37]' : 'text-white/70 hover:bg-white/5'
-                }`}
+                className={`flex items-center gap-3 px-5 xs:px-6 py-3 text-xs sm:text-sm transition ${Active ? 'bg-white/10 text-[#D4AF37] border-l-2 border-[#D4AF37]' : 'text-white/70 hover:bg-white/5'
+                  }`}
               >
                 <n.icon size={16} className="shrink-0" />
                 <span className="truncate">{n.label}</span>
@@ -206,11 +205,10 @@ export default function AdminLayout({ children }) {
               <div className="mx-5 xs:mx-6 my-2 border-t border-white/10" />
               <button
                 onClick={() => setAdminExpanded(!adminExpanded)}
-                className={`w-full flex items-center justify-between px-5 xs:px-6 py-2.5 text-xs sm:text-sm transition ${
-                  pathname?.startsWith('/admin/admins') || pathname?.startsWith('/admin/roles') || pathname?.startsWith('/admin/permissions') || pathname?.startsWith('/admin/activity-logs')
+                className={`w-full flex items-center justify-between px-5 xs:px-6 py-2.5 text-xs sm:text-sm transition ${pathname?.startsWith('/admin/admins') || pathname?.startsWith('/admin/roles') || pathname?.startsWith('/admin/permissions') || pathname?.startsWith('/admin/activity-logs')
                     ? 'text-[#D4AF37] hover:bg-white/5 font-medium'
                     : 'text-white/70 hover:bg-white/5'
-                }`}
+                  }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <Shield size={16} className="shrink-0 text-[#D4AF37]" />
@@ -229,11 +227,10 @@ export default function AdminLayout({ children }) {
                         key={n.href}
                         href={n.href}
                         onClick={() => setOpen(false)}
-                        className={`flex items-center pl-8 xs:pl-10 pr-4 xs:pr-6 py-2 text-xs sm:text-sm transition ${
-                          Active
+                        className={`flex items-center pl-8 xs:pl-10 pr-4 xs:pr-6 py-2 text-xs sm:text-sm transition ${Active
                             ? 'text-[#D4AF37] font-medium bg-white/5 border-l-2 border-[#D4AF37] pl-[30px] xs:pl-[38px]'
                             : 'text-white/60 hover:text-white hover:bg-white/[0.02]'
-                        }`}
+                          }`}
                       >
                         <span className="text-white/30 font-mono mr-1.5 text-xs shrink-0">{isLast ? '└──' : '├──'}</span>
                         <n.icon size={14} className="mr-2 shrink-0" />
@@ -252,11 +249,10 @@ export default function AdminLayout({ children }) {
               <div className="mx-5 xs:mx-6 my-2 border-t border-white/10" />
               <button
                 onClick={() => setUiExpanded(!uiExpanded)}
-                className={`w-full flex items-center justify-between px-5 xs:px-6 py-2.5 text-xs sm:text-sm transition ${
-                  pathname?.startsWith('/admin/payment-settings') || pathname?.startsWith('/admin/banners') || pathname?.startsWith('/admin/header') || pathname?.startsWith('/admin/footer') || pathname?.startsWith('/admin/product-filter') || pathname?.startsWith('/admin/site-settings') || pathname?.startsWith('/admin/homepage')
+                className={`w-full flex items-center justify-between px-5 xs:px-6 py-2.5 text-xs sm:text-sm transition ${pathname?.startsWith('/admin/payment-settings') || pathname?.startsWith('/admin/banners') || pathname?.startsWith('/admin/header') || pathname?.startsWith('/admin/footer') || pathname?.startsWith('/admin/product-filter') || pathname?.startsWith('/admin/site-settings') || pathname?.startsWith('/admin/homepage')
                     ? 'text-[#D4AF37] hover:bg-white/5 font-medium'
                     : 'text-white/70 hover:bg-white/5'
-                }`}
+                  }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <Layout size={16} className="shrink-0" />
@@ -275,11 +271,10 @@ export default function AdminLayout({ children }) {
                         key={n.href}
                         href={n.href}
                         onClick={() => setOpen(false)}
-                        className={`flex items-center pl-8 xs:pl-10 pr-4 xs:pr-6 py-2 text-xs sm:text-sm transition ${
-                          Active
+                        className={`flex items-center pl-8 xs:pl-10 pr-4 xs:pr-6 py-2 text-xs sm:text-sm transition ${Active
                             ? 'text-[#D4AF37] font-medium bg-white/5 border-l-2 border-[#D4AF37] pl-[30px] xs:pl-[38px]'
                             : 'text-white/60 hover:text-white hover:bg-white/[0.02]'
-                        }`}
+                          }`}
                       >
                         <span className="text-white/30 font-mono mr-1.5 text-xs shrink-0">{isLast ? '└──' : '├──'}</span>
                         <n.icon size={14} className="mr-2 shrink-0" />
@@ -320,9 +315,9 @@ export default function AdminLayout({ children }) {
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="flex-1 min-w-0 flex flex-col h-screen overflow-y-auto">
         {/* Mobile Header Bar */}
-        <header className="lg:hidden bg-[#0F0F10] text-white border-b border-white/10 px-3.5 py-3 flex items-center justify-between sticky top-0 z-30">
+        <header className="lg:hidden bg-[#0F0F10] text-white border-b border-white/10 px-3.5 py-3 flex items-center justify-between sticky top-0 z-30 shrink-0">
           <button onClick={() => setOpen(true)} className="p-1 hover:text-[#D4AF37] transition-colors" aria-label="Open sidebar">
             <Menu size={20} />
           </button>

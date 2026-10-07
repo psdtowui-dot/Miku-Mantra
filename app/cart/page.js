@@ -77,7 +77,7 @@ export default function CartPage() {
     if (!coupon.trim()) return;
     setApplying(true);
     try {
-      const r = await authFetch('/api/coupons/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: coupon.trim(), subtotal }) });
+      const r = await authFetch('/api/coupons/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: coupon, subtotal }) });
       const d = await r.json();
       if (r.ok) { setDiscount(d.discount); setCouponCode(d.code); toast.success(`${d.code} applied — ${d.type === 'percent' ? d.value + '%' : '₹' + d.value} off`); }
       else { setDiscount(0); setCouponCode(''); toast.error(d.error || 'Invalid coupon'); }
@@ -87,7 +87,7 @@ export default function CartPage() {
   if (items.length === 0) {
     return (
       <main className="bg-white min-h-screen">
-        <div className="max-w-lg mx-auto text-center py-32 px-6">
+        <div className="max-w-lg mx-auto text-center py-16 sm:py-32 px-4 sm:px-6">
           <div className="w-24 h-24 mx-auto rounded-full bg-[#FAF6EF] flex items-center justify-center mb-6 text-[#9C6B30]"><ShoppingBag size={36} /></div>
           <h1 className="font-display text-4xl text-[#1A1A1A] font-light">Your bag awaits</h1>
           <div className="gold-line w-16 mx-auto my-5" />
@@ -126,7 +126,7 @@ export default function CartPage() {
 
   return (
     <main className="bg-white min-h-screen">
-      <div className="max-w-[1400px] mx-auto px-4 md:px-8 py-12">
+      <div className="max-w-[1400px] mx-auto px-4 md:px-8 py-6 sm:py-12">
         <div className="text-center mb-8 sm:mb-10">
           <div className="text-[10px] sm:text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-2">Your Selection</div>
           <h1 className="font-display text-2xl xs:text-3xl sm:text-4xl md:text-5xl font-light text-[#1A1A1A] break-words">Shopping Bag</h1>
