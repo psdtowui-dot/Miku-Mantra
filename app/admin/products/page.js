@@ -1,10 +1,10 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { formatINR, getNormalizedSpecs, getNormalizedBenefits } from '@/lib/products';
+import { formatINR, formatRating, getNormalizedSpecs, getNormalizedBenefits } from '@/lib/products';
 import {
   Plus, Pencil, Trash2, X, Loader2, Search, Upload,
   Link as LinkIcon, Trash, Check, ArrowLeft, ArrowRight,
-  FileText, Sparkles, Settings, Image as ImageIcon, Eye, Award
+  FileText, Sparkles, Settings, Image as ImageIcon, Eye, Award, Star
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -248,9 +248,7 @@ export default function AdminProducts() {
       size: sizeVal || form.size || '',
       price: +form.price,
       mrp: +form.mrp || +form.price,
-      stock: +form.stock || 0,
-      rating: Number.isFinite(+form.rating) ? +form.rating : 0,
-      reviews: +form.reviews || 0
+      stock: +form.stock || 0
     };
     const url = editing === 'new' ? '/api/admin/products' : `/api/admin/products/${editing}`;
     const method = editing === 'new' ? 'POST' : 'PUT';
@@ -377,6 +375,13 @@ export default function AdminProducts() {
                     </td>
                   </tr>
                 ))}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="py-12 text-center text-sm text-neutral-500">
+                      Product not found
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -385,11 +390,17 @@ export default function AdminProducts() {
 
       <AnimatePresence>
         {editing && (
-          <div
+          <motion.div
+            key="product-drawer-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
             className="fixed inset-0 bg-[#1A1A1A]/40 backdrop-blur-xs z-50 flex justify-end"
             onClick={(e) => { if (e.target === e.currentTarget) setEditing(null); }}
           >
             <motion.div
+              key="product-drawer-panel"
               initial={{ x: '100%' }}
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
@@ -590,14 +601,16 @@ export default function AdminProducts() {
                           />
                         </div>
                         <div>
-                          <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold">Mock Rating</label>
-                          <input
-                            type="number"
-                            step="0.1"
-                            value={form.rating}
-                            onChange={e => setForm({ ...form, rating: e.target.value })}
-                            className="w-full mt-1.5 px-3 py-2.5 border border-neutral-200 rounded-lg text-sm bg-white focus:outline-none focus:border-[#9C6B30] focus:ring-1 focus:ring-[#9C6B30] transition-all"
-                          />
+                          <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold">Dynamic Rating</label>
+                          <div className="w-full mt-1.5 px-3 py-2.5 border border-neutral-200 rounded-lg text-sm bg-neutral-50 flex items-center justify-between text-neutral-700">
+                            <span className="font-semibold flex items-center gap-1.5 text-neutral-800">
+                              <Star size={14} className={form.reviews > 0 ? "fill-[#D4AF37] stroke-[#D4AF37]" : "text-neutral-300"} />
+                              {formatRating(form.rating)} / 5.0
+                            </span>
+                            <span className="text-xs text-neutral-500">
+                              {form.reviews || 0} {(form.reviews === 1) ? 'review' : 'reviews'}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -892,7 +905,7 @@ export default function AdminProducts() {
                 </button>
               </div>
             </motion.div>
-          </div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

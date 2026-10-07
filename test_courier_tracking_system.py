@@ -35,11 +35,7 @@ def run_tests():
     p_data = prod_res.json()
     products = p_data.get("products", []) if isinstance(p_data, dict) else (p_data if isinstance(p_data, list) else [])
     assert len(products) > 0, "No products found in DB"
-    test_prod = next((p for p in products if p.get('stock', 0) > 0), None)
-    if not test_prod:
-        # If no product has stock, update first product's stock to 10
-        session.put(f"{BASE_URL}/admin/products/{products[0]['id']}", json={"stock": 10})
-        test_prod = products[0]
+    test_prod = products[0]
 
     order_payload = {
         "items": [{ "id": test_prod["id"], "qty": 1 }],

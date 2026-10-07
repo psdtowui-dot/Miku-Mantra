@@ -9,13 +9,33 @@ import { Minus, Plus, X, ShoppingBag, Truck, ShieldCheck, Gift, ArrowRight, Tag 
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 
+function renderFormattedHelperText(text) {
+  if (!text) return null;
+  const parts = text.split(/(\b[A-Z0-9]{3,}\b)/g);
+  return parts.map((part, i) => {
+    if (/^[A-Z0-9]{3,}$/.test(part) && !/^\d+$/.test(part)) {
+      return <span key={i} className="font-semibold text-[#9C6B30]">{part}</span>;
+    }
+    return part;
+  });
+}
+
 export default function CartPage() {
   const { user } = useAuth();
-  const { items, setQty, remove, subtotal } = useCart();
+  const {
+    items,
+    setQty,
+    remove,
+    subtotal,
+    coupon: activeCoupon,
+    couponCode,
+    discount,
+    applyCoupon: storeApplyCoupon,
+    removeCoupon
+  } = useCart();
   const router = useRouter();
-  const [coupon, setCoupon] = useState('');
-  const [discount, setDiscount] = useState(0);
-  const [couponCode, setCouponCode] = useState('');
+  const [couponInput, setCouponInput] = useState('');
+  const [couponHelperText, setCouponHelperText] = useState('');
   const [gift, setGift] = useState(false);
   const [applying, setApplying] = useState(false);
   const [stockStatus, setStockStatus] = useState({});
@@ -35,6 +55,21 @@ export default function CartPage() {
         }
       })
       .catch(err => console.error('Failed to load shipping config:', err));
+
+    authFetch('/api/coupons/settings')
+      .then(r => r.json())
+      .then(d => {
+        const text = d?.data?.helperText ?? d?.helperText;
+        if (typeof text === 'string') {
+          setCouponHelperText(text.trim());
+        } else {
+          setCouponHelperText('');
+        }
+      })
+      .catch(err => {
+        console.error('Failed to load coupon settings:', err);
+        setCouponHelperText('');
+      });
   }, []);
 
   const freeEnabled = shippingConfig?.freeShippingEnabled ?? true;
@@ -73,21 +108,23 @@ export default function CartPage() {
     return () => { unmounted = true; };
   }, [items]);
 
-  const applyCoupon = async () => {
-    if (!coupon.trim()) return;
+  const handleApply = async () => {
+    if (!couponInput.trim()) return;
     setApplying(true);
     try {
-      const r = await authFetch('/api/coupons/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: coupon, subtotal }) });
-      const d = await r.json();
-      if (r.ok) { setDiscount(d.discount); setCouponCode(d.code); toast.success(`${d.code} applied — ${d.type === 'percent' ? d.value + '%' : '₹' + d.value} off`); }
-      else { setDiscount(0); setCouponCode(''); toast.error(d.error || 'Invalid coupon'); }
-    } finally { setApplying(false); }
+      const res = await storeApplyCoupon(couponInput);
+      if (res.success) {
+        setCouponInput('');
+      }
+    } finally {
+      setApplying(false);
+    }
   };
 
   if (items.length === 0) {
     return (
       <main className="bg-white min-h-screen">
-        <div className="max-w-lg mx-auto text-center py-16 sm:py-32 px-4 sm:px-6">
+        <div className="max-w-lg mx-auto text-center py-32 px-6">
           <div className="w-24 h-24 mx-auto rounded-full bg-[#FAF6EF] flex items-center justify-center mb-6 text-[#9C6B30]"><ShoppingBag size={36} /></div>
           <h1 className="font-display text-4xl text-[#1A1A1A] font-light">Your bag awaits</h1>
           <div className="gold-line w-16 mx-auto my-5" />
@@ -126,7 +163,7 @@ export default function CartPage() {
 
   return (
     <main className="bg-white min-h-screen">
-      <div className="max-w-[1400px] mx-auto px-4 md:px-8 py-6 sm:py-12">
+      <div className="max-w-[1400px] mx-auto px-4 md:px-8 py-12">
         <div className="text-center mb-8 sm:mb-10">
           <div className="text-[10px] sm:text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-2">Your Selection</div>
           <h1 className="font-display text-2xl xs:text-3xl sm:text-4xl md:text-5xl font-light text-[#1A1A1A] break-words">Shopping Bag</h1>
@@ -204,8 +241,53 @@ export default function CartPage() {
             <div className="sticky top-32 border border-[#E8E8E8] rounded-xl p-4 sm:p-6 bg-[#FAF6EF]/30">
               <div className="font-display text-xl sm:text-2xl text-[#1A1A1A] mb-1">Order Summary</div>
               <div className="gold-line w-12 mb-4 sm:mb-6" />
-              <div className="flex flex-wrap xs:flex-nowrap gap-2 mb-2"><div className="flex-1 min-w-[120px] flex items-center border border-[#E8E8E8] rounded-md bg-white"><Tag size={14} className="ml-2.5 text-[#9C6B30] shrink-0" /><input value={coupon} onChange={e => setCoupon(e.target.value)} placeholder="Enter coupon" className="flex-1 px-2.5 py-2 sm:px-3 sm:py-2.5 text-xs sm:text-sm bg-transparent focus:outline-none min-w-0" /></div><button disabled={applying} onClick={applyCoupon} className="px-3.5 sm:px-5 py-2 sm:py-2.5 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-widest uppercase rounded-md hover:bg-[#9C6B30] disabled:opacity-60 shrink-0">{applying ? '…' : 'Apply'}</button></div>
-              <div className="text-[10px] text-neutral-500 mb-4">Try <span className="text-[#9C6B30]">MIKUMANTRA10</span> or <span className="text-[#9C6B30]">WELCOME2000</span></div>
+              {activeCoupon ? (
+                <div className="flex items-center justify-between p-3 bg-[#FAF6EF] border border-[#D4AF37]/40 rounded-lg mb-4">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Tag size={15} className="text-[#9C6B30] shrink-0" />
+                    <div className="text-xs sm:text-sm font-medium text-[#1A1A1A] truncate">
+                      <span className="font-bold text-[#9C6B30]">{activeCoupon.code}</span>
+                      <span className="text-neutral-500 text-[11px] ml-1.5 font-normal">
+                        ({activeCoupon.type === 'percent' ? activeCoupon.value + '% off' : '₹' + activeCoupon.value + ' off'})
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={removeCoupon}
+                    className="text-neutral-400 hover:text-red-500 p-1 transition rounded hover:bg-neutral-100"
+                    title="Remove coupon"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-wrap xs:flex-nowrap gap-2 mb-2">
+                    <div className="flex-1 min-w-[120px] flex items-center border border-[#E8E8E8] rounded-md bg-white">
+                      <Tag size={14} className="ml-2.5 text-[#9C6B30] shrink-0" />
+                      <input
+                        value={couponInput}
+                        onChange={e => setCouponInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleApply(); }}
+                        placeholder="Enter coupon"
+                        className="flex-1 px-2.5 py-2 sm:px-3 sm:py-2.5 text-xs sm:text-sm bg-transparent focus:outline-none min-w-0 uppercase"
+                      />
+                    </div>
+                    <button
+                      disabled={applying || !couponInput.trim()}
+                      onClick={handleApply}
+                      className="px-3.5 sm:px-5 py-2 sm:py-2.5 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-widest uppercase rounded-md hover:bg-[#9C6B30] disabled:opacity-60 shrink-0"
+                    >
+                      {applying ? '…' : 'Apply'}
+                    </button>
+                  </div>
+                  {couponHelperText ? (
+                    <div className="text-[10px] text-neutral-500 mb-4">
+                      {renderFormattedHelperText(couponHelperText)}
+                    </div>
+                  ) : null}
+                </>
+              )}
               <label className="flex items-start gap-3 border border-dashed border-[#E8E8E8] rounded-md p-3 mb-5 cursor-pointer hover:border-[#9C6B30]"><input type="checkbox" checked={gift} onChange={e => setGift(e.target.checked)} className="mt-0.5 accent-[#9C6B30] shrink-0" /><div><div className="text-xs sm:text-sm font-medium flex items-center gap-2"><Gift size={14} className="text-[#9C6B30] shrink-0" /> Signature Gift Wrap</div><div className="text-[11px] sm:text-xs text-neutral-500">Silk pouch, handwritten note. +₹250</div></div></label>
               <div className="space-y-2.5 sm:space-y-3 text-xs sm:text-sm">
                 <div className="flex justify-between"><span className="text-neutral-500">Subtotal</span><span>{formatINR(subtotal)}</span></div>

@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { Heart, ShoppingBag, Eye, Star, GitCompare } from 'lucide-react';
 import { useCart, useWishlist } from '@/lib/cart-store';
 import { useCompare } from '@/lib/browsing';
-import { formatINR } from '@/lib/products';
+import { formatINR, formatRating } from '@/lib/products';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
 
@@ -26,78 +26,21 @@ export default function ProductCard({ p, index=0 }){
           p.badge && <span className="absolute top-2 left-2 sm:top-3 sm:left-3 bg-[#1A1A1A] text-white text-[9px] sm:text-[10px] tracking-normal xs:tracking-wider sm:tracking-[0.2em] uppercase px-1.5 py-0.5 sm:px-2.5 sm:py-1 rounded-sm max-w-[48%] truncate">{p.badge}</span>
         )}
         {disc>0 && <span className="absolute top-2 right-2 sm:top-3 sm:right-3 bg-[#9C6B30] text-white text-[9px] sm:text-[10px] tracking-normal xs:tracking-wider uppercase px-1.5 py-0.5 sm:px-2.5 sm:py-1 rounded-sm">-{disc}%</span>}
-        {/* Desktop Side Action Buttons (Hover) & Mobile Action Buttons */}
-        <div className="absolute right-2 sm:right-3 top-2 sm:top-1/2 sm:-translate-y-1/2 flex flex-col gap-1.5 sm:gap-2 z-10 transition-all duration-300">
-          {/* Wishlist Button: Always visible on mobile, slide-in on desktop */}
-          <button
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              toggle(p.id);
-              toast.success(has(p.id) ? 'Removed from wishlist' : 'Added to wishlist');
-            }}
-            aria-label="Wishlist"
-            className={`w-7 h-7 xs:w-8 xs:h-8 sm:w-9 sm:h-9 rounded-full bg-white/95 backdrop-blur-xs shadow-md flex items-center justify-center hover:bg-[#9C6B30] hover:text-white transition-all cursor-pointer active:scale-95 ${
-              has(p.id) ? 'text-[#9C6B30]' : 'text-neutral-700'
-            } sm:opacity-0 sm:translate-x-2 sm:group-hover:opacity-100 sm:group-hover:translate-x-0`}
-          >
-            <Heart size={14} fill={has(p.id) ? '#9C6B30' : 'none'} />
-          </button>
-
-          {/* Compare Button: Desktop hover */}
-          <button
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              const r = toggleCmp(p.id);
-              if (r.full) toast.error('Compare up to 4 items');
-              else toast.success(r.added ? 'Added to compare' : 'Removed from compare');
-            }}
-            aria-label="Compare"
-            className={`hidden sm:flex w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white shadow flex items-center justify-center hover:bg-[#9C6B30] hover:text-white opacity-0 translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all cursor-pointer ${
-              hasCmp(p.id) ? 'text-[#9C6B30]' : 'text-neutral-700'
-            }`}
-          >
-            <GitCompare size={14} />
-          </button>
-
-          {/* Quick View Button: Desktop hover */}
-          <Link
-            href={`/product/${p.slug}`}
-            aria-label="View product details"
-            className="hidden sm:flex w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white shadow items-center justify-center hover:bg-[#9C6B30] hover:text-white opacity-0 translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all"
-          >
-            <Eye size={14} />
-          </Link>
+        <div className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2 flex flex-col gap-1.5 sm:gap-2 opacity-0 translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300">
+          <button onClick={(e)=>{e.preventDefault();toggle(p.id);}} className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white shadow flex items-center justify-center hover:bg-[#9C6B30] hover:text-white ${has(p.id)?'text-[#9C6B30]':''}`}><Heart size={14} fill={has(p.id)?'#9C6B30':'none'}/></button>
+          <button onClick={(e)=>{e.preventDefault(); const r = toggleCmp(p.id); if(r.full) toast.error('Compare up to 4 items'); else toast.success(r.added?'Added to compare':'Removed from compare');}} className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white shadow flex items-center justify-center hover:bg-[#9C6B30] hover:text-white ${hasCmp(p.id)?'text-[#9C6B30]':''}`}><GitCompare size={14}/></button>
+          <Link href={`/product/${p.slug}`} className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white shadow flex items-center justify-center hover:bg-[#9C6B30] hover:text-white"><Eye size={14}/></Link>
         </div>
-
-        {/* Mobile Quick Add-to-Bag Button */}
-        {!isOutOfStock && (
-          <button
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              add(p);
-              toast.success('Added to bag');
-            }}
-            aria-label="Add to Bag"
-            className="sm:hidden absolute bottom-2 right-2 w-8 h-8 rounded-full bg-[#1A1A1A]/90 hover:bg-[#9C6B30] text-white shadow-md flex items-center justify-center active:scale-90 transition-all z-10 cursor-pointer"
-          >
-            <ShoppingBag size={13} />
-          </button>
-        )}
-
-        {/* Desktop Slide-up Add-to-Bag Bar */}
         {isOutOfStock ? (
-          <button disabled onClick={(e)=>{e.preventDefault();toast.error('This product is currently out of stock.');}} className="hidden sm:flex absolute bottom-0 left-0 right-0 bg-neutral-800 text-neutral-400 py-2.5 sm:py-3 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase translate-y-full group-hover:translate-y-0 transition-transform duration-300 items-center justify-center gap-1.5 sm:gap-2 cursor-not-allowed"><ShoppingBag size={13}/> OUT OF STOCK</button>
+          <button disabled onClick={(e)=>{e.preventDefault();toast.error('This product is currently out of stock.');}} className="absolute bottom-0 left-0 right-0 bg-neutral-800 text-neutral-400 py-2.5 sm:py-3 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase translate-y-full group-hover:translate-y-0 transition-transform duration-300 flex items-center justify-center gap-1.5 sm:gap-2 cursor-not-allowed"><ShoppingBag size={13}/> OUT OF STOCK</button>
         ) : (
-          <button onClick={(e)=>{e.preventDefault();add(p);toast.success('Added to cart');}} className="hidden sm:flex absolute bottom-0 left-0 right-0 bg-[#1A1A1A] text-white py-2.5 sm:py-3 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase translate-y-full group-hover:translate-y-0 transition-transform duration-300 items-center justify-center gap-1.5 sm:gap-2 cursor-pointer"><ShoppingBag size={13}/> Add to Bag</button>
+          <button onClick={(e)=>{e.preventDefault();add(p);toast.success('Added to cart');}} className="absolute bottom-0 left-0 right-0 bg-[#1A1A1A] text-white py-2.5 sm:py-3 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase translate-y-full group-hover:translate-y-0 transition-transform duration-300 flex items-center justify-center gap-1.5 sm:gap-2"><ShoppingBag size={13}/> Add to Bag</button>
         )}
       </div>
       <div className="pt-3 sm:pt-4 text-center px-0.5 sm:px-0">
         <Link href={`/product/${p.slug}`}><h3 className="font-serif-luxe text-base sm:text-lg text-[#1A1A1A] leading-tight hover:text-[#9C6B30] transition break-words line-clamp-2">{p.name}</h3></Link>
         <div className="text-[10px] sm:text-[11px] text-neutral-500 tracking-wider uppercase mt-1 truncate">{p.metal}</div>
-        <div className="flex items-center justify-center gap-1 mt-1 text-[10px] sm:text-[11px] text-neutral-500"><Star size={11} className={p.reviews > 0 ? "fill-[#D4AF37] stroke-[#D4AF37]" : "text-neutral-300"}/> <span>{p.rating > 0 ? p.rating : '0.0'}</span><span className="opacity-60">({p.reviews || 0})</span></div>
+        <div className="flex items-center justify-center gap-1 mt-1 text-[10px] sm:text-[11px] text-neutral-500"><Star size={11} className={p.reviews > 0 ? "fill-[#D4AF37] stroke-[#D4AF37]" : "text-neutral-300"}/> <span>{formatRating(p.rating)}</span><span className="opacity-60">({p.reviews || 0})</span></div>
         <div className="mt-1.5 flex flex-wrap items-baseline justify-center gap-1 sm:gap-2">
           <span className="font-medium text-xs sm:text-sm text-[#1A1A1A]">{formatINR(p.price)}</span>
           {p.mrp>p.price && <span className="text-[11px] sm:text-xs text-neutral-400 line-through">{formatINR(p.mrp)}</span>}

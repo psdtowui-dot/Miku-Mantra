@@ -22,7 +22,8 @@ function AdminLoginInner() {
   const { user, loading, login, loginWithGoogle, forgotPassword, resetPassword } = useAuth();
   const router = useRouter();
   const sp = useSearchParams();
-  const redirect = sp.get('redirect') || '/admin';
+  const rawRedirect = sp.get('redirect');
+  const redirect = (!rawRedirect || rawRedirect.startsWith('/admin/login')) ? '/admin' : rawRedirect;
   const urlError = sp.get('error');
 
   const [form, setForm] = useState({ email: '', password: '' });
@@ -78,7 +79,7 @@ function AdminLoginInner() {
       const u = await loginWithGoogle(response.credential, { requireAdmin: true });
       if (u && u.role === 'admin') {
         toast.success(`Welcome back, Administrator ${u.name || ''}!`);
-        router.push(redirect);
+        router.replace(redirect);
       } else {
         throw new Error('This account is not authorized for administrator access.');
       }
@@ -189,7 +190,7 @@ function AdminLoginInner() {
                 const u = await loginWithGoogle({ accessToken: resp.access_token }, { requireAdmin: true });
                 if (u && u.role === 'admin') {
                   toast.success(`Welcome back, Administrator ${u.name || ''}!`);
-                  router.push(redirect);
+                  router.replace(redirect);
                 } else {
                   throw new Error('This account is not authorized for administrator access.');
                 }
@@ -250,7 +251,7 @@ function AdminLoginInner() {
       const u = await login(em, form.password, { requireAdmin: true });
       if (u && u.role === 'admin') {
         toast.success(`Welcome back, ${u.name || 'Admin'}!`);
-        router.push(redirect);
+        router.replace(redirect);
       } else {
         throw new Error('Access Denied: This account does not have administrator privileges.');
       }
@@ -401,9 +402,19 @@ function AdminLoginInner() {
           {err && (
             <div className="mb-6 p-3.5 rounded-xl bg-red-950/40 border border-red-800/60 text-red-300 text-xs flex items-start gap-2.5">
               <AlertCircle size={16} className="shrink-0 text-red-400 mt-0.5" />
-              <div className="leading-relaxed">
+              <div className="leading-relaxed flex-1">
                 <span className="font-semibold text-red-200">Verification Blocked: </span>
                 {err}
+                {(err.toLowerCase().includes('denied') || err.toLowerCase().includes('not registered as an administrator')) && (
+                  <div className="mt-2 pt-2 border-t border-red-800/40">
+                    <Link
+                      href="/login"
+                      className="inline-flex items-center gap-1 text-[#D4AF37] hover:underline font-medium"
+                    >
+                      Are you a customer? Go to Customer Login →
+                    </Link>
+                  </div>
+                )}
               </div>
             </div>
           )}

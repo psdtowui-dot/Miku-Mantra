@@ -75,7 +75,7 @@ export default function AIChat(){
       <button
         onClick={() => setOpen(o => !o)}
         aria-label="Open AI jewellery assistant"
-        className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] lg:bottom-6 right-3.5 sm:right-6 z-40 lg:z-[60] group"
+        className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[60] group"
       >
         <div className="relative">
           <div className="absolute inset-0 rounded-full bg-gradient-to-br from-[#9C6B30] to-[#D4AF37] blur-lg opacity-60 group-hover:opacity-90 transition-opacity"/>
@@ -93,7 +93,7 @@ export default function AIChat(){
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.96 }}
             transition={{ duration: 0.2 }}
-            className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] lg:bottom-24 right-2.5 sm:right-6 z-50 lg:z-[60] w-[calc(100vw-1.25rem)] sm:w-[400px] h-[480px] sm:h-[560px] max-h-[calc(100dvh-6rem)] bg-white rounded-2xl border border-[#E8E8E8] shadow-[0_30px_80px_-20px_rgba(26,26,26,0.25)] flex flex-col overflow-hidden"
+            className="fixed bottom-18 sm:bottom-24 right-3 sm:right-6 z-[60] w-[calc(100vw-1.5rem)] sm:w-[400px] h-[520px] sm:h-[560px] max-h-[calc(100vh-6rem)] bg-white rounded-2xl border border-[#E8E8E8] shadow-[0_30px_80px_-20px_rgba(26,26,26,0.25)] flex flex-col overflow-hidden"
           >
             {/* Header */}
             <div className="bg-gradient-to-br from-[#1A1A1A] to-[#2a2018] text-white px-5 py-4 flex items-center gap-3">

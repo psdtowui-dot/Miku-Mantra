@@ -3,7 +3,6 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Script from 'next/script';
 import { useAuth } from '@/lib/use-auth';
-import { isNative, nativeGoogleLogin } from '@/lib/native-utils';
 import { toast } from 'sonner';
 import { Loader2, Mail, Lock, User as UserIcon, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -126,7 +125,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onSu
     };
   }, [isOpen, mode, clientId]);
 
-  const handleManualGoogleClick = async () => {
+  const handleManualGoogleClick = () => {
     if (!clientId) {
       toast.info('Google Sign-In is configured on the app! Please set NEXT_PUBLIC_GOOGLE_CLIENT_ID in the .env file.');
       return;
@@ -135,35 +134,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onSu
     setGoogleBusy(true);
     setErr('');
 
-    // Native mobile app authentication flow (Google Credential Manager)
-    if (isNative()) {
-      try {
-        const nativeAuth = await nativeGoogleLogin(clientId);
-        if (nativeAuth?.idToken || nativeAuth?.accessToken) {
-          const u = await loginWithGoogle(nativeAuth.idToken ? { credential: nativeAuth.idToken } : { accessToken: nativeAuth.accessToken });
-          toast.success(`Welcome, ${u.name || 'valued customer'}!`);
-          if (onSuccess) onSuccess(u);
-          if (onClose) onClose();
-          return;
-        } else {
-          toast.info('Google sign-in was cancelled.');
-          return;
-        }
-      } catch (nativeErr) {
-        console.warn('Native Google login failed:', nativeErr);
-        const msg = nativeErr?.message || String(nativeErr);
-        if (msg.toLowerCase().includes('cancel') || msg.includes('16')) {
-          toast.info('Google sign-in was cancelled.');
-        } else {
-          toast.error('Google Sign-In is unavailable on this device. Please sign in with your Gmail and password below, or use "Forgot Password" to set a password.');
-        }
-        return;
-      } finally {
-        setGoogleBusy(false);
-      }
-    }
-
-    // Primary web click method: Google OAuth2 popup token client
+    // Primary click method: Google OAuth2 popup token client
     if (window.google?.accounts?.oauth2) {
       try {
         const tokenClient = window.google.accounts.oauth2.initTokenClient({
@@ -302,31 +273,31 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onSu
             animate={{ scale: 1, y: 0, opacity: 1 }}
             exit={{ scale: 0.96, y: 15, opacity: 0 }}
             transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-            className="bg-white max-w-md w-full rounded-2xl sm:rounded-3xl p-4 xs:p-6 sm:p-8 border border-[#E8E8E8] luxe-shadow relative my-auto max-h-[calc(100dvh-2rem)] overflow-y-auto"
+            className="bg-white max-w-md w-full rounded-2xl sm:rounded-3xl p-6 sm:p-8 border border-[#E8E8E8] luxe-shadow relative my-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Close button */}
             <button
               onClick={onClose}
-              className="absolute top-3.5 right-3.5 sm:top-4 sm:right-4 p-1.5 text-neutral-400 hover:text-neutral-700 transition rounded-full hover:bg-neutral-100 cursor-pointer"
+              className="absolute top-4 right-4 p-1.5 text-neutral-400 hover:text-neutral-700 transition rounded-full hover:bg-neutral-100"
               aria-label="Close"
             >
               <X size={18} />
             </button>
 
             {/* Top Pill Switcher */}
-            <div className="flex gap-1.5 xs:gap-2 mb-5 sm:mb-6 p-1 bg-[#FAF6EF] rounded-full w-fit mx-auto max-w-full">
+            <div className="flex gap-2 mb-6 p-1 bg-[#FAF6EF] rounded-full w-fit mx-auto max-w-full overflow-x-auto">
               <button
                 type="button"
                 onClick={() => { setMode('login'); setFieldErrors({}); setErr(''); }}
-                className={`px-3.5 xs:px-5 sm:px-7 py-1.5 xs:py-2 rounded-full text-[10px] xs:text-[11px] tracking-wider sm:tracking-[0.2em] uppercase font-medium transition shrink-0 cursor-pointer ${mode === 'login' ? 'bg-[#1A1A1A] text-white shadow-xs' : 'text-neutral-500 hover:text-neutral-800'}`}
+                className={`px-5 sm:px-7 py-2 rounded-full text-[11px] tracking-[0.2em] uppercase font-medium transition shrink-0 cursor-pointer ${mode === 'login' ? 'bg-[#1A1A1A] text-white shadow-xs' : 'text-neutral-500 hover:text-neutral-800'}`}
               >
                 SIGN IN
               </button>
               <button
                 type="button"
                 onClick={() => { setMode('register'); setFieldErrors({}); setErr(''); }}
-                className={`px-3.5 xs:px-5 sm:px-7 py-1.5 xs:py-2 rounded-full text-[10px] xs:text-[11px] tracking-wider sm:tracking-[0.2em] uppercase font-medium transition shrink-0 cursor-pointer ${mode === 'register' ? 'bg-[#1A1A1A] text-white shadow-xs' : 'text-neutral-500 hover:text-neutral-800'}`}
+                className={`px-5 sm:px-7 py-2 rounded-full text-[11px] tracking-[0.2em] uppercase font-medium transition shrink-0 cursor-pointer ${mode === 'register' ? 'bg-[#1A1A1A] text-white shadow-xs' : 'text-neutral-500 hover:text-neutral-800'}`}
               >
                 CREATE ACCOUNT
               </button>
@@ -336,13 +307,13 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onSu
               {mode === 'login' ? 'Welcome back' : 'Join MikuMantra'}
             </h2>
             <div className="gold-line w-12 mx-auto my-3" />
-            <p className="text-center text-xs sm:text-sm text-neutral-500 mb-5 sm:mb-6">
+            <p className="text-center text-xs sm:text-sm text-neutral-500 mb-6">
               {mode === 'login' ? 'Sign in to continue your journey.' : 'Create your account in seconds.'}
             </p>
 
             {/* Google Sign In Button */}
             <div className="mb-5">
-              <div className="w-full flex flex-col items-center justify-center min-h-[44px] max-w-full overflow-hidden">
+              <div className="w-full flex flex-col items-center justify-center min-h-[44px]">
                 <div
                   ref={googleBtnContainerRef}
                   className={`w-full flex justify-center ${googleRendered && !googleBusy ? 'block' : 'hidden'}`}

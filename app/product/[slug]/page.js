@@ -73,7 +73,7 @@ export default async function Page({ params }){
     name: p.name, description: p.description, sku: p.sku || p.id,
     image: (p.images || []).map(img => toAbsoluteUrl(img, siteUrl)),
     brand: { '@type':'Brand', name: settings.siteName || 'MikuMantra' },
-    aggregateRating: p.rating ? { '@type':'AggregateRating', ratingValue: p.rating, reviewCount: p.reviews || 1 } : undefined,
+    aggregateRating: p.rating ? { '@type':'AggregateRating', ratingValue: Number(p.rating).toFixed(1), reviewCount: p.reviews || 1 } : undefined,
     offers: {
       '@type':'Offer',
       priceCurrency:'INR',
@@ -87,7 +87,7 @@ export default async function Page({ params }){
   return (
     <>
       {jsonLd && <script type="application/ld+json" dangerouslySetInnerHTML={{__html: JSON.stringify(jsonLd)}}/>}
-      <ProductClient initialProduct={p} slug={slug}/>
+      <ProductClient initialProduct={p} slug={slug} siteSettings={settings} />
     </>
   );
 }

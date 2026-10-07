@@ -25,7 +25,7 @@ export default function RecentlyViewed({ exclude }){
         <h2 className="font-display text-3xl md:text-4xl font-light">Recently Viewed</h2>
         <div className="gold-line w-16 mx-auto my-4"/>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-6 md:gap-8">{items.map((r,i)=><ProductCard key={r.id} p={r} index={i}/>)}</div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-8">{items.map((r,i)=><ProductCard key={r.id} p={r} index={i}/>)}</div>
     </section>
   );
 }

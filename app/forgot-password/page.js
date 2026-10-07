@@ -127,7 +127,7 @@ function ForgotPasswordInner() {
       </div>
 
       <div className="mt-4 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-white py-6 sm:py-8 px-4 xs:px-6 sm:px-10 border border-[#E8E8E8] rounded-2xl shadow-xl">
+        <div className="bg-white py-8 px-6 sm:px-10 border border-[#E8E8E8] rounded-2xl shadow-xl">
           {step === 'request' ? (
             <div>
               <p className="text-xs text-neutral-500 mb-6 text-center leading-relaxed">

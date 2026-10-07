@@ -166,10 +166,7 @@ export default function Footer({ initialData }) {
               <ul className="space-y-3 text-sm text-white/70">
                 {col.links.filter(l => l.isActive).map((link, linkIdx) => (
                   <li key={linkIdx}>
-                    <Link 
-                      href={(!link.url || link.url === '#') && link.label?.toLowerCase().includes('track') ? '/track-order' : link.url} 
-                      className="hover:text-[#D4AF37]"
-                    >
+                    <Link href={link.url} className="hover:text-[#D4AF37]">
                       {link.label}
                     </Link>
                   </li>
@@ -180,32 +177,32 @@ export default function Footer({ initialData }) {
         </div>
 
         {/* Contact Information */}
-        <div className="mt-12 pt-8 border-t border-white/10 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6 text-xs sm:text-sm text-white/60">
+        <div className="mt-12 pt-8 border-t border-white/10 grid md:grid-cols-3 gap-6 text-sm text-white/60">
           {company.address && (
-            <div className="flex items-start sm:items-center gap-2">
-              <Lucide.MapPin size={14} className="text-[#D4AF37] shrink-0 mt-0.5 sm:mt-0" />
-              <span className="break-words">{company.address}</span>
+            <div className="flex items-center gap-2">
+              <Lucide.MapPin size={14} className="text-[#D4AF37] shrink-0" />
+              <span>{company.address}</span>
             </div>
           )}
           {company.phone && (
             <div className="flex items-center gap-2">
               <Lucide.Phone size={14} className="text-[#D4AF37] shrink-0" />
-              <a href={`tel:${company.phone}`} className="hover:text-white transition-colors">{company.phone}</a>
+              <span>{company.phone}</span>
             </div>
           )}
           {company.email && (
-            <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center gap-2">
               <Lucide.Mail size={14} className="text-[#D4AF37] shrink-0" />
-              <a href={`mailto:${company.email}`} className="hover:text-white transition-colors break-all">{company.email}</a>
+              <span>{company.email}</span>
             </div>
           )}
         </div>
 
         {/* Policies & Copyright */}
-        <div className="mt-8 pt-6 border-t border-white/10 flex flex-col md:flex-row justify-between items-center gap-3 text-xs text-white/50 text-center md:text-left">
+        <div className="mt-8 pt-6 border-t border-white/10 flex flex-col md:flex-row justify-between items-center gap-3 text-xs text-white/50">
           {copyright ? <div>© {new Date().getFullYear()} {copyright}</div> : <div />}
           {activePolicies.length > 0 && (
-            <div className="flex flex-wrap justify-center md:justify-end gap-x-5 gap-y-2">
+            <div className="flex gap-5">
               {activePolicies.map((policy, pIdx) => (
                 <Link key={pIdx} href={policy.url} className="hover:text-white transition-colors">
                   {policy.label}
