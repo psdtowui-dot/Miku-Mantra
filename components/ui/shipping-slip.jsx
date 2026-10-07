@@ -1,6 +1,6 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Printer, Download, Phone, MapPin, Calendar, Package, AlertCircle } from 'lucide-react';
+import { X, Printer, Download, Phone, MapPin, Calendar, Package, AlertCircle, Truck } from 'lucide-react';
 import QRCode from 'qrcode';
 import JsBarcode from 'jsbarcode';
 import { formatINR } from '@/lib/products';
@@ -22,7 +22,10 @@ export default function ShippingSlip({ order, onClose }) {
         pincode: order.address?.pincode,
         total: order.amounts?.total,
         payment: order.payment,
-        status: order.status
+        status: order.status,
+        carrier: order.courier?.carrier || order.carrier || '',
+        trackingNumber: order.courier?.trackingNumber || order.trackingNumber || '',
+        trackingUrl: order.courier?.trackingUrl || order.trackingUrl || ''
       });
 
       QRCode.toDataURL(
@@ -47,10 +50,11 @@ export default function ShippingSlip({ order, onClose }) {
       console.error('Failed to prepare QR code data', e);
     }
 
-    // Generate Barcode using Order Number
+    // Generate Barcode using Tracking Number (or Order Number if no AWB yet)
     try {
-      if (barcodeRef.current && order.orderNumber) {
-        JsBarcode(barcodeRef.current, order.orderNumber, {
+      const barcodeValue = (order.courier?.trackingNumber || order.trackingNumber || order.orderNumber || '').trim();
+      if (barcodeRef.current && barcodeValue) {
+        JsBarcode(barcodeRef.current, barcodeValue, {
           format: 'CODE128',
           width: 2,
           height: 45,
@@ -237,6 +241,24 @@ export default function ShippingSlip({ order, onClose }) {
                   {isCod ? formatINR(amounts.total) : '₹ 0.00 (PAID)'}
                 </span>
               </div>
+            </div>
+          </div>
+
+          {/* Section 3b: Logistics & Courier Tracking Partner */}
+          <div className="grid grid-cols-2 gap-3 border-b-[2px] border-black pb-3 text-xs bg-neutral-50 p-2.5 rounded-sm">
+            <div>
+              <span className="text-[9px] text-neutral-500 uppercase font-bold block flex items-center gap-1">
+                <Truck size={10} className="stroke-[2.5]" /> Courier Partner
+              </span>
+              <span className="font-bold text-neutral-900 text-xs mt-0.5 block truncate">
+                {order.courier?.carrier || order.carrier || 'Pending Assignment'}
+              </span>
+            </div>
+            <div className="border-l border-neutral-300 pl-3">
+              <span className="text-[9px] text-neutral-500 uppercase font-bold block">AWB / Tracking Number</span>
+              <span className="font-mono font-black text-neutral-900 text-xs tracking-wider mt-0.5 block truncate">
+                {order.courier?.trackingNumber || order.trackingNumber || 'Pending Dispatch'}
+              </span>
             </div>
           </div>
 

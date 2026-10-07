@@ -76,8 +76,13 @@ export async function generateMetadata() {
       images: [absoluteImageUrl],
     },
     icons: {
-      icon: settings.favicon || settings.logo || '/favicon.ico',
-      apple: settings.logo || '/favicon.ico',
+      icon: [
+        { url: settings.favicon || '/favicon.ico' }
+      ],
+      shortcut: [settings.favicon || '/favicon.ico'],
+      apple: [
+        { url: settings.favicon || settings.logo || '/favicon.ico' }
+      ]
     },
     robots: { index: true, follow: true, googleBot: { index: true, follow: true } },
   };

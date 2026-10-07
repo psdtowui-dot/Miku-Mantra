@@ -13,12 +13,15 @@ export default function DeliveredHistory() {
   const [endDate, setEndDate] = useState('');
   const [activeOrder, setActiveOrder] = useState(null);
 
-  const updateStatus = async (id, status) => {
+  const updateStatus = async (id, status, courier = null) => {
+    const payload = {};
+    if (status) payload.status = status;
+    if (courier) payload.courier = courier;
     const r = await fetch(`/api/admin/orders/${id}`, {
       method: 'PUT',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status })
+      body: JSON.stringify(payload)
     });
     if (r.ok) {
       const data = await r.json();

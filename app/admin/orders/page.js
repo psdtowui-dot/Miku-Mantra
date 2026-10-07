@@ -5,22 +5,24 @@ import { Loader2, Eye, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { getCancellationLabel, getCancellationActor } from '@/lib/utils';
 import OrderDetailModal from '@/components/ui/order-detail-modal';
+import ShipmentModal from '@/components/ui/shipment-modal';
 
-export default function AdminOrders(){
-  const [list,setList] = useState([]);
-  const [loading,setLoading] = useState(true);
+export default function AdminOrders() {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [activeOrder, setActiveOrder] = useState(null);
+  const [shipmentModalOrder, setShipmentModalOrder] = useState(null);
   const [searchVal, setSearchVal] = useState('');
   const [search, setSearch] = useState('');
 
-  const load = async(query = search)=>{ 
-    setLoading(true); 
+  const load = async (query = search) => {
+    setLoading(true);
     try {
-      const r = await fetch(`/api/admin/orders?search=${encodeURIComponent(query)}`,{credentials:'include',cache:'no-store'}); 
-      const d = await r.json(); 
-      const orders = d.orders||[];
-      setList(orders); 
-      
+      const r = await fetch(`/api/admin/orders?search=${encodeURIComponent(query)}`, { credentials: 'include', cache: 'no-store' });
+      const d = await r.json();
+      const orders = d.orders || [];
+      setList(orders);
+
       // Refresh active order if it is open to reflect any changes
       if (activeOrder) {
         const current = orders.find(o => o.id === activeOrder.id);
@@ -29,7 +31,7 @@ export default function AdminOrders(){
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false); 
+      setLoading(false);
     }
   };
 
@@ -46,43 +48,50 @@ export default function AdminOrders(){
     load(search);
   }, [search]);
 
-  const updateStatus = async(id,status)=>{ 
-    const r = await fetch(`/api/admin/orders/${id}`,{ 
-      method:'PUT', 
-      credentials:'include', 
-      headers:{'Content-Type':'application/json'}, 
-      body:JSON.stringify({status})
-    }); 
-    if(r.ok){ 
+  const updateStatus = async (id, status, courier = null) => {
+    const payload = {};
+    if (status) payload.status = status;
+    if (courier) payload.courier = courier;
+
+    const r = await fetch(`/api/admin/orders/${id}`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (r.ok) {
       const data = await r.json();
-      toast.success('Updated'); 
-      
+      toast.success(courier && (!status || status === activeOrder?.status) ? 'Courier tracking updated' : 'Order status updated');
+
       // If we are currently viewing this order in the modal, update its details
       if (activeOrder && activeOrder.id === id && data.order) {
         const email = activeOrder.customerEmail;
         setActiveOrder({ ...data.order, customerEmail: email });
       }
-      
-      load(search); 
-    } 
+
+      load(search);
+    } else {
+      const errData = await r.json().catch(() => ({}));
+      toast.error(errData.error || 'Failed to update order');
+    }
   };
 
   return (
     <div>
       <div className="font-display text-2xl xs:text-3xl sm:text-4xl text-[#1A1A1A]">Orders</div>
-      <div className="gold-line w-12 mt-2 mb-6 sm:mb-8"/>
-      
+      <div className="gold-line w-12 mt-2 mb-6 sm:mb-8" />
+
       {/* Search Bar */}
       <div className="mb-6 relative max-w-md">
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
-        <input 
-          value={searchVal} 
-          onChange={e => setSearchVal(e.target.value)} 
-          placeholder="Search orders..." 
+        <input
+          value={searchVal}
+          onChange={e => setSearchVal(e.target.value)}
+          placeholder="Search orders..."
           className="w-full pl-9 pr-10 py-2.5 border border-neutral-200 rounded-lg text-sm bg-white focus:outline-none focus:border-[#9C6B30] transition-all"
         />
         {searchVal && (
-          <button 
+          <button
             onClick={() => setSearchVal('')}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 transition"
             title="Clear search"
@@ -93,7 +102,7 @@ export default function AdminOrders(){
       </div>
 
       <div className="bg-white rounded-xl border border-neutral-200 overflow-hidden shadow-xs">
-        {loading ? <div className="p-12 text-center"><Loader2 className="animate-spin inline text-[#9C6B30]"/></div> : (
+        {loading ? <div className="p-12 text-center"><Loader2 className="animate-spin inline text-[#9C6B30]" /></div> : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs sm:text-sm">
               <thead className="bg-neutral-50 text-[10px] tracking-widest uppercase text-neutral-500 border-b border-neutral-200">
@@ -108,8 +117,8 @@ export default function AdminOrders(){
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
-                {list.length===0 && <tr><td colSpan={7} className="p-8 text-center text-neutral-400">No orders found</td></tr>}
-                {list.map(o=>(
+                {list.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-neutral-400">No orders found</td></tr>}
+                {list.map(o => (
                   <tr key={o.id} className="hover:bg-neutral-50/50 transition">
                     <td className="p-3">
                       <div className="font-medium text-[#9C6B30]">{o.orderNumber}</div>
@@ -136,23 +145,36 @@ export default function AdminOrders(){
                           </span>
                         </div>
                       ) : (
-                        <select 
-                          value={o.status} 
-                          onChange={e=>updateStatus(o.id,e.target.value)} 
-                          className="border border-neutral-200 rounded px-2 py-1 text-xs uppercase cursor-pointer bg-white focus:outline-none focus:border-[#9C6B30]"
-                        >
-                          <option value="confirmed">Confirmed</option>
-                          <option value="packed">Packed</option>
-                          <option value="shipped">Shipped</option>
-                          <option value="delivered">Delivered</option>
-                          <option value="cancelled">Cancelled</option>
-                        </select>
+                        <div>
+                          <select
+                            value={o.status}
+                            onChange={e => {
+                              const newStatus = e.target.value;
+                              if (newStatus === 'shipped') {
+                                setShipmentModalOrder(o);
+                              } else {
+                                updateStatus(o.id, newStatus);
+                              }
+                            }}
+                            className="border border-neutral-200 rounded px-2 py-1 text-xs uppercase cursor-pointer bg-white focus:outline-none focus:border-[#9C6B30]"
+                          >
+                            <option value="confirmed">Confirmed</option>
+                            <option value="packed">Packed</option>
+                            <option value="shipped">Shipped</option>
+                            <option value="delivered">Delivered</option>
+                            <option value="cancelled">Cancelled</option>
+                          </select>
+                          {(o.courier?.carrier || o.carrier) && (
+                            <div className="text-[10px] text-neutral-500 mt-1 font-mono truncate max-w-[130px]" title={`${o.courier?.carrier || o.carrier}: ${o.courier?.trackingNumber || o.trackingNumber || 'Pending AWB'}`}>
+                            </div>
+                          )}
+                        </div>
                       )}
                     </td>
                     <td className="p-3 text-center">
-                      <button 
+                      <button
                         onClick={() => setActiveOrder(o)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#FAF6EF] border border-[#D4AF37]/30 text-[#9C6B30] text-xs font-semibold rounded hover:bg-[#9C6B30] hover:text-white transition-all shadow-xs"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#FAF6EF] border border-[#D4AF37]/30 text-[#9C6B30] text-xs font-semibold rounded hover:bg-[#9C6B30] hover:text-white transition-all shadow-xs cursor-pointer"
                       >
                         <Eye size={12} /> View Details
                       </button>
@@ -166,10 +188,22 @@ export default function AdminOrders(){
       </div>
 
       {activeOrder && (
-        <OrderDetailModal 
-          order={activeOrder} 
-          onClose={() => setActiveOrder(null)} 
+        <OrderDetailModal
+          order={activeOrder}
+          onClose={() => setActiveOrder(null)}
           onUpdateStatus={updateStatus}
+        />
+      )}
+
+      {shipmentModalOrder && (
+        <ShipmentModal
+          order={shipmentModalOrder}
+          isOpen={Boolean(shipmentModalOrder)}
+          onClose={() => setShipmentModalOrder(null)}
+          onConfirm={async ({ status, courier }) => {
+            await updateStatus(shipmentModalOrder.id, status || 'shipped', courier);
+            setShipmentModalOrder(null);
+          }}
         />
       )}
     </div>

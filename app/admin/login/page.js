@@ -402,9 +402,19 @@ function AdminLoginInner() {
           {err && (
             <div className="mb-6 p-3.5 rounded-xl bg-red-950/40 border border-red-800/60 text-red-300 text-xs flex items-start gap-2.5">
               <AlertCircle size={16} className="shrink-0 text-red-400 mt-0.5" />
-              <div className="leading-relaxed">
+              <div className="leading-relaxed flex-1">
                 <span className="font-semibold text-red-200">Verification Blocked: </span>
                 {err}
+                {(err.toLowerCase().includes('denied') || err.toLowerCase().includes('not registered as an administrator')) && (
+                  <div className="mt-2 pt-2 border-t border-red-800/40">
+                    <Link
+                      href="/login"
+                      className="inline-flex items-center gap-1 text-[#D4AF37] hover:underline font-medium"
+                    >
+                      Are you a customer? Go to Customer Login →
+                    </Link>
+                  </div>
+                )}
               </div>
             </div>
           )}

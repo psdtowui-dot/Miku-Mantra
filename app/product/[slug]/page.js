@@ -87,7 +87,7 @@ export default async function Page({ params }){
   return (
     <>
       {jsonLd && <script type="application/ld+json" dangerouslySetInnerHTML={{__html: JSON.stringify(jsonLd)}}/>}
-      <ProductClient initialProduct={p} slug={slug}/>
+      <ProductClient initialProduct={p} slug={slug} siteSettings={settings} />
     </>
   );
 }

@@ -10,14 +10,16 @@ import { useCart, useWishlist } from '@/lib/cart-store';
 import { useCompare, useRecentlyViewed } from '@/lib/browsing';
 import { Heart, Share2, Truck, Minus, Plus, ChevronRight, ChevronDown, ChevronUp, Star, MapPin, Loader2, GitCompare, ShieldCheck } from 'lucide-react';
 import BenefitIcon from '@/components/ui/benefit-icon';
+import ProductImageZoom from '@/components/site/product-image-zoom';
 import { toast } from 'sonner';
 import { WAREHOUSE_PINCODE } from '@/lib/constants';
 
-export default function ProductClient({ initialProduct, slug }) {
+export default function ProductClient({ initialProduct, slug, siteSettings }) {
   const router = useRouter();
   const [p, setP] = useState(initialProduct);
   const [related, setRelated] = useState(getRelated(slug));
   const [loading, setLoading] = useState(!initialProduct);
+  const [zoomConfig, setZoomConfig] = useState(siteSettings?.zoomSettings || null);
   const { add } = useCart();
   const { has, toggle } = useWishlist();
   const { has: hasCmp, toggle: toggleCmp } = useCompare();
@@ -28,13 +30,36 @@ export default function ProductClient({ initialProduct, slug }) {
   const [pin, setPin] = useState('');
   const [pinResult, setPinResult] = useState('');
   const [checkingPin, setCheckingPin] = useState(false);
-  const [zoom, setZoom] = useState({ on: false, x: 50, y: 50 });
   const [reviewData, setReviewData] = useState({ reviews: [], averageRating: 0, totalReviews: 0, breakdown: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 }, customerReviewsEnabled: true });
   const [loadingReviews, setLoadingReviews] = useState(true);
   const [showAllReviews, setShowAllReviews] = useState(false);
   const reviewsContainerRef = useRef(null);
 
-  useEffect(() => { setShowAllReviews(false); (async () => { try { const r = await fetch(`/api/products/${slug}`, { cache: 'no-store' }); if (r.ok) { const d = await r.json(); if (d.product) setP(d.product); if (d.related) setRelated(d.related); } } finally { setLoading(false); } })(); }, [slug]);
+  useEffect(() => {
+    setShowAllReviews(false);
+    (async () => {
+      try {
+        const r = await fetch(`/api/products/${slug}`, { cache: 'no-store' });
+        if (r.ok) {
+          const d = await r.json();
+          if (d.product) setP(d.product);
+          if (d.related) setRelated(d.related);
+          if (d.zoomSettings) setZoomConfig(d.zoomSettings);
+        }
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [slug]);
+
+  useEffect(() => {
+    if (!zoomConfig) {
+      fetch('/api/site-settings', { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.zoomSettings) setZoomConfig(d.zoomSettings); })
+        .catch(() => {});
+    }
+  }, [zoomConfig]);
   useEffect(() => { if (p?.id) pushRecent(p.id); }, [p?.id]);
 
   useEffect(() => {
@@ -111,28 +136,17 @@ export default function ProductClient({ initialProduct, slug }) {
       <section className="max-w-[1400px] mx-auto px-4 md:px-8 pb-16">
         <div className="grid md:grid-cols-2 gap-10 lg:gap-16">
           <div>
-            <div onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); setZoom({ on: true, x: ((e.clientX - r.left) / r.width) * 100, y: ((e.clientY - r.top) / r.height) * 100 }); }} onMouseLeave={() => setZoom(z => ({ ...z, on: false }))} className="relative aspect-square rounded-2xl overflow-hidden bg-[#FAF6EF] luxe-shadow group">
-              <img src={p.images[img]} alt={p.name} className="w-full h-full object-cover transition-transform duration-500" style={zoom.on ? { transformOrigin: `${zoom.x}% ${zoom.y}%`, transform: 'scale(1.8)' } : {}} />
-              {isOutOfStock ? (
-                <span className="absolute top-3 left-3 sm:top-4 sm:left-4 bg-[#1A1A1A] text-white text-[9px] sm:text-[10px] tracking-wider sm:tracking-[0.25em] uppercase px-2 py-1 sm:px-3 sm:py-1.5 font-semibold z-10">OUT OF STOCK</span>
-              ) : (
-                p.badge && <span className="absolute top-3 left-3 sm:top-4 sm:left-4 bg-[#1A1A1A] text-white text-[9px] sm:text-[10px] tracking-wider sm:tracking-[0.25em] uppercase px-2 py-1 sm:px-3 sm:py-1.5">{p.badge}</span>
-              )}
-              {disc > 0 && <span className="absolute top-3 right-3 sm:top-4 sm:right-4 bg-[#9C6B30] text-white text-[9px] sm:text-[10px] tracking-wider uppercase px-2 py-1 sm:px-3 sm:py-1.5">-{disc}%</span>}
-            </div>
-            {p.images && p.images.length > 1 && (
-              <div className="mt-4 grid grid-cols-5 gap-2 sm:gap-3">
-                {p.images.map((im, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setImg(i)}
-                    className={`aspect-square rounded-lg overflow-hidden border-2 transition ${img === i ? 'border-[#9C6B30]' : 'border-transparent hover:border-[#E8E8E8]'}`}
-                  >
-                    <img loading="lazy" src={im} alt="" className="w-full h-full object-cover" />
-                  </button>
-                ))}
-              </div>
-            )}
+            <ProductImageZoom
+              images={p.images || []}
+              productName={p.name}
+              badge={p.badge}
+              discount={disc}
+              isOutOfStock={isOutOfStock}
+              zoomSettings={zoomConfig || siteSettings?.zoomSettings || {}}
+              productZoomOverride={p.zoomMode || 'default'}
+              activeImageIndex={img}
+              onImageChange={(i) => setImg(i)}
+            />
           </div>
           <div>
             <div className="text-[10px] sm:text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-2">{p.metal}</div>
@@ -212,6 +226,15 @@ export default function ProductClient({ initialProduct, slug }) {
               >
                 Buy Now
               </button>
+            </div>
+
+            <div className="mt-4 flex items-center justify-center gap-4 text-xs text-neutral-500">
+              <span className="flex items-center gap-1.5 text-neutral-600">
+                <ShieldCheck size={14} className="text-emerald-600" />
+                100% Secure Checkout
+              </span>
+              <span>•</span>
+              <span className="text-neutral-600">Easy Returns</span>
             </div>
             {(() => {
               const activeBenefits = getNormalizedBenefits(p).filter(b => b.enabled !== false && b.title?.trim());

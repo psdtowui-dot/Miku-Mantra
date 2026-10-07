@@ -645,25 +645,34 @@ export default function CheckoutPage() {
                 </div>
 
                 <div className="mt-6 flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-[#E8E8E8]">
-                  <button
-                    type="button"
-                    disabled={savingAddr}
-                    onClick={() => handleSaveAddress(false)}
-                    className="px-5 sm:px-6 py-2.5 sm:py-3 border border-[#9C6B30] text-[#9C6B30] text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.2em] uppercase rounded-md hover:bg-[#FAF6EF] flex items-center gap-2 cursor-pointer transition disabled:opacity-50 font-medium"
+                  <Link
+                    href="/cart"
+                    className="px-4 sm:px-6 py-3 text-[10px] sm:text-[11px] tracking-wider sm:tracking-widest uppercase text-neutral-500 hover:text-[#1A1A1A] transition inline-flex items-center cursor-pointer"
                   >
-                    {savingAddr ? <Loader2 size={13} className="animate-spin" /> : <BookmarkCheck size={14} />}
-                    {selectedAddrId ? 'Update Address' : 'Save Address'}
-                  </button>
+                    ← Back
+                  </Link>
 
-                  <button
-                    type="button"
-                    disabled={savingAddr}
-                    onClick={handleContinueAddress}
-                    className="px-6 sm:px-8 py-3 sm:py-3.5 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] flex items-center gap-2 cursor-pointer transition disabled:opacity-50 ml-auto"
-                  >
-                    {savingAddr && <Loader2 size={14} className="animate-spin" />}
-                    Continue <ChevronRight size={14} />
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3 ml-auto">
+                    <button
+                      type="button"
+                      disabled={savingAddr}
+                      onClick={() => handleSaveAddress(false)}
+                      className="px-4 sm:px-6 py-2.5 sm:py-3 border border-[#9C6B30] text-[#9C6B30] text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.2em] uppercase rounded-md hover:bg-[#FAF6EF] flex items-center gap-2 cursor-pointer transition disabled:opacity-50 font-medium"
+                    >
+                      {savingAddr ? <Loader2 size={13} className="animate-spin" /> : <BookmarkCheck size={14} />}
+                      {selectedAddrId ? 'Update Address' : 'Save Address'}
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={savingAddr}
+                      onClick={handleContinueAddress}
+                      className="px-6 sm:px-8 py-3 sm:py-3.5 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] flex items-center gap-2 cursor-pointer transition disabled:opacity-50"
+                    >
+                      {savingAddr && <Loader2 size={14} className="animate-spin" />}
+                      Continue <ChevronRight size={14} />
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -690,7 +699,7 @@ export default function CheckoutPage() {
                     Razorpay is currently in MOCK mode. Configure your API keys in the Super Admin Portal to accept live payments.
                   </div>
                 )}
-                <div className="mt-6 flex justify-between gap-2"><button onClick={() => setStep('address')} className="px-4 sm:px-6 py-3 text-[10px] sm:text-[11px] tracking-wider sm:tracking-widest uppercase text-neutral-500">← Back</button><button onClick={() => setStep('review')} className="px-5 sm:px-8 py-3 sm:py-3.5 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] flex items-center gap-2">Review Order <ChevronRight size={14} /></button></div>
+                <div className="mt-6 flex justify-between gap-2"><button onClick={() => setStep('address')} className="px-4 sm:px-6 py-3 text-[10px] sm:text-[11px] tracking-wider sm:tracking-widest uppercase text-neutral-500 hover:text-[#1A1A1A] transition cursor-pointer">← Back</button><button onClick={() => setStep('review')} className="px-5 sm:px-8 py-3 sm:py-3.5 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] flex items-center gap-2">Review Order <ChevronRight size={14} /></button></div>
               </div>
             )}
 
@@ -702,7 +711,7 @@ export default function CheckoutPage() {
                   <div className="border border-[#E8E8E8] rounded-lg p-4"><div className="text-[10px] tracking-widest uppercase text-neutral-400 mb-2">Payment</div><div className="font-medium capitalize text-sm sm:text-base">{payment === 'cod' ? 'Cash on Delivery' : 'Razorpay'}</div><div className="text-xs text-neutral-500 mt-1">{payment === 'cod' ? `Pay ${formatINR(total)} on delivery` : `${formatINR(total)} via secure checkout`}</div><button onClick={() => setStep('payment')} className="mt-3 text-xs text-[#9C6B30] hover:underline">Change</button></div>
                 </div>
                 <div className="mt-6"><div className="text-[10px] tracking-widest uppercase text-neutral-400 mb-3">Items ({items.length})</div><div className="space-y-3">{items.map(it => (<div key={it.id} className="flex gap-3 sm:gap-4 border border-[#E8E8E8] rounded-lg p-3"><img src={it.image} className="w-14 h-14 sm:w-16 sm:h-16 rounded object-cover shrink-0" /><div className="flex-1 min-w-0"><div className="font-serif-luxe text-base sm:text-lg truncate">{it.name}</div><div className="text-xs text-neutral-500">Qty: {it.qty}</div></div><div className="font-medium text-xs sm:text-sm shrink-0">{formatINR(it.price * it.qty)}</div></div>))}</div></div>
-                <div className="mt-6 flex justify-between gap-2"><button onClick={() => setStep('payment')} className="px-4 sm:px-6 py-3 text-[10px] sm:text-[11px] tracking-wider sm:tracking-widest uppercase text-neutral-500">← Back</button><button disabled={placing} onClick={placeOrder} className="px-5 sm:px-10 py-3.5 sm:py-4 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] disabled:opacity-60 flex items-center gap-2">{placing && <Loader2 size={14} className="animate-spin" />}{payment === 'razorpay' ? 'Pay & Place Order' : 'Place Order'}</button></div>
+                <div className="mt-6 flex justify-between gap-2"><button onClick={() => setStep('payment')} className="px-4 sm:px-6 py-3 text-[10px] sm:text-[11px] tracking-wider sm:tracking-widest uppercase text-neutral-500 hover:text-[#1A1A1A] transition cursor-pointer">← Back</button><button disabled={placing} onClick={placeOrder} className="px-5 sm:px-10 py-3.5 sm:py-4 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] disabled:opacity-60 flex items-center gap-2">{placing && <Loader2 size={14} className="animate-spin" />}{payment === 'razorpay' ? 'Pay & Place Order' : 'Place Order'}</button></div>
               </div>
             )}
           </div>
