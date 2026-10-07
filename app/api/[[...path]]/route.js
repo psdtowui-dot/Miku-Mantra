@@ -11,7 +11,8 @@ import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS a
 import { buildInvoicePDF } from '@/lib/pdf-invoice'
 import { buildShippingSlipPDF } from '@/lib/pdf-shippingslip'
 import { WAREHOUSE_PINCODE } from '@/lib/constants'
-import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification, sendPushNotification } from '@/lib/notifications'
+import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendOrderShippedNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification, sendPushNotification } from '@/lib/notifications'
+import { generateTrackingUrl } from '@/lib/courier'
 import { sendPasswordResetEmail } from '@/lib/email-service'
 import { seedRbacIfEmpty, resolveUserPermissions, hasPermission, logAdminActivity, validatePrivilegeEscalation, PERMISSIONS, DEFAULT_ROLES } from '@/lib/rbac'
 import { invalidateSiteDataCache } from '@/lib/db-site-settings'
@@ -2295,7 +2296,7 @@ async function handleRoute(request, { params }) {
     }
 
     // ============ PUBLIC ORDER TRACKING ============
-    if (route === '/orders/track' && method === 'GET') {
+    if ((route === '/orders/track' || route === '/track') && method === 'GET') {
       const orderNumber = (q.get('orderNumber') || q.get('order') || '').trim();
       const contact = (q.get('contact') || q.get('phone') || q.get('email') || '').trim();
       const awb = (q.get('awb') || q.get('trackingNumber') || '').trim();
@@ -4892,6 +4893,16 @@ async function handleRoute(request, { params }) {
           return err('Cancelled orders cannot be updated. Cancelled is a terminal state.', 400);
         }
 
+        const targetStatus = b.status || existingOrder.status;
+        const isStatusChanging = b.status && b.status !== existingOrder.status;
+        const hasCourierInput = Boolean(
+          b.courier !== undefined ||
+          b.carrier !== undefined ||
+          b.trackingNumber !== undefined ||
+          b.trackingUrl !== undefined ||
+          b.notes !== undefined
+        );
+
         const notes = {
           packed: 'Order packed & ready to ship.',
           shipped: 'Shipped via courier.',
@@ -4904,47 +4915,147 @@ async function handleRoute(request, { params }) {
         if (b.status === 'delivered') {
           setDoc.deliveredAt = new Date();
         }
-        if (b.courier) {
-          const courierDoc = {
-            ...b.courier,
-            shippedAt: b.courier.shippedAt || new Date()
+
+        let courierDoc = null;
+        if (hasCourierInput || targetStatus === 'shipped') {
+          const rawCarrier = b.courier?.carrier !== undefined ? b.courier.carrier : (b.carrier !== undefined ? b.carrier : (existingOrder.courier?.carrier || existingOrder.carrier || ''));
+          const rawTrackingNum = b.courier?.trackingNumber !== undefined ? b.courier.trackingNumber : (b.trackingNumber !== undefined ? b.trackingNumber : (existingOrder.courier?.trackingNumber || existingOrder.trackingNumber || ''));
+          let rawTrackingUrl = b.courier?.trackingUrl !== undefined ? b.courier.trackingUrl : (b.trackingUrl !== undefined ? b.trackingUrl : (existingOrder.courier?.trackingUrl || existingOrder.trackingUrl || ''));
+          const rawNotes = b.courier?.notes !== undefined ? b.courier.notes : (b.notes !== undefined ? b.notes : (existingOrder.courier?.notes || ''));
+
+          const carrier = (rawCarrier || '').trim();
+          const trackingNumber = (rawTrackingNum || '').trim();
+          let trackingUrl = (rawTrackingUrl || '').trim();
+          if (!trackingUrl && carrier && trackingNumber) {
+            trackingUrl = generateTrackingUrl(carrier, trackingNumber);
+          }
+          const shippedAt = b.courier?.shippedAt ? new Date(b.courier.shippedAt) : (existingOrder.shippedAt || existingOrder.courier?.shippedAt || new Date());
+
+          courierDoc = {
+            carrier,
+            trackingNumber,
+            trackingUrl,
+            shippedAt,
+            notes: (rawNotes || '').trim()
           };
+
           setDoc.courier = courierDoc;
-          if (b.courier.carrier) setDoc.carrier = b.courier.carrier;
-          if (b.courier.trackingNumber !== undefined) setDoc.trackingNumber = b.courier.trackingNumber;
-          if (b.courier.trackingUrl !== undefined) setDoc.trackingUrl = b.courier.trackingUrl;
-          setDoc.shippedAt = courierDoc.shippedAt;
+          setDoc.carrier = carrier;
+          setDoc.trackingNumber = trackingNumber;
+          setDoc.trackingUrl = trackingUrl;
+          if (!existingOrder.shippedAt) {
+            setDoc.shippedAt = shippedAt;
+          }
+        }
+
+        if (b.status === 'cancelled') {
+          if (!hasPermission(admin, 'orders.cancel') && !hasPermission(admin, 'orders.update')) {
+            return err('Permission denied: orders.cancel required', 403);
+          }
+          const now = new Date();
+          setDoc.cancelledAt = now;
+          setDoc.cancelledBy = 'admin';
+          setDoc.cancelledByUserId = admin.id;
+          setDoc.cancelledByRole = 'admin';
+          setDoc.cancellationReason = b.reason || 'Cancelled by MikuMantra';
+          if (b.note) setDoc.cancellationNote = b.note;
+
+          const isPaid = existingOrder.paymentStatus === 'paid' || (existingOrder.payment !== 'cod' && existingOrder.paymentStatus !== 'pending');
+          if (isPaid) {
+            setDoc.refundStatus = 'refund_initiated';
+            setDoc.refundAmount = existingOrder.amounts?.total || 0;
+            setDoc.refundId = existingOrder.razorpayPaymentId ? `ref_${existingOrder.razorpayPaymentId}` : `ref_MOCK_${uuidv4().slice(0, 8)}`;
+            setDoc.refundInitiatedAt = now;
+          } else {
+            setDoc.refundStatus = 'not_applicable';
+          }
         }
 
         let historyNote = b.note || (b.status ? notes[b.status] : '') || '';
-        if (b.courier && b.courier.carrier && b.courier.trackingNumber) {
-          historyNote = `Shipped via ${b.courier.carrier} (AWB: ${b.courier.trackingNumber})`;
-        } else if (b.courier && b.courier.carrier) {
-          historyNote = `Courier tracking updated (${b.courier.carrier})`;
+        if (targetStatus === 'shipped') {
+          const carrier = courierDoc?.carrier || existingOrder.carrier || '';
+          const trackingNum = courierDoc?.trackingNumber || existingOrder.trackingNumber || '';
+          if (carrier && trackingNum) {
+            historyNote = b.note || `Shipped via ${carrier} (AWB: ${trackingNum})`;
+          } else if (carrier) {
+            historyNote = b.note || `Shipped via ${carrier}`;
+          }
+        } else if (hasCourierInput) {
+          const carrier = courierDoc?.carrier || existingOrder.carrier || '';
+          const trackingNum = courierDoc?.trackingNumber || existingOrder.trackingNumber || '';
+          historyNote = b.note || `Courier tracking updated: ${carrier || 'Courier'}${trackingNum ? ` (AWB: ${trackingNum})` : ''}`;
         }
 
         const effectiveStatus = b.status || existingOrder.status;
-        const pushDoc = {
-          statusHistory: {
-            status: effectiveStatus,
-            at: new Date(),
-            note: historyNote
-          }
-        };
+        const updateOps = { $set: setDoc };
+        if (historyNote || isStatusChanging) {
+          updateOps.$push = {
+            statusHistory: {
+              status: effectiveStatus,
+              at: new Date(),
+              note: historyNote
+            }
+          };
+        }
 
         const updateResult = await db.collection('orders').updateOne(
           { id, status: { $ne: 'cancelled' } },
-          {
-            $set: setDoc,
-            $push: pushDoc
-          }
+          updateOps
         );
 
-        if (updateResult.modifiedCount === 0) {
+        if (updateResult.matchedCount === 0) {
           return err('Cancelled orders cannot be updated.', 400);
         }
 
+        if (b.status === 'cancelled' && Array.isArray(existingOrder.items)) {
+          for (const item of existingOrder.items) {
+            if (item.id && item.qty > 0) {
+              await db.collection('products').updateOne(
+                { id: item.id },
+                { $inc: { stock: item.qty } }
+              );
+            }
+          }
+          cacheBust('products:');
+        }
+
         const up = await db.collection('orders').findOne({ id });
+
+        // Trigger notifications if shipped or if courier details updated on a shipped/delivered order
+        if (targetStatus === 'shipped' || (existingOrder.status === 'shipped' && hasCourierInput)) {
+          const customerUser = up.userId ? await db.collection('users').findOne({ id: up.userId }) : null;
+          try {
+            await sendOrderShippedNotification({ order: up, user: customerUser, db });
+          } catch (notifErr) {
+            console.error('[Notification error] Order shipped notification:', notifErr);
+          }
+        }
+
+        if (b.status === 'cancelled') {
+          try {
+            await logAdminActivity(db, {
+              admin,
+              action: 'ORDER_CANCELLED',
+              module: 'Orders',
+              targetId: existingOrder.id,
+              targetName: `Order #${existingOrder.orderNumber}`,
+              metadata: {
+                cancelledBy: 'admin',
+                reason: setDoc.cancellationReason,
+                note: setDoc.cancellationNote || null
+              },
+              request
+            });
+          } catch (logErr) {
+            console.error('Failed to log admin cancellation activity:', logErr);
+          }
+
+          try {
+            await sendOrderCancelledNotification({ order: up, user: null, db });
+          } catch (notifErr) {
+            console.error('Failed to send order cancellation notification:', notifErr);
+          }
+        }
 
         // Dispatch push notification to customer's mobile devices
         if (up && up.userId && b.status) {
