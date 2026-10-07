@@ -3,6 +3,7 @@ import { useEffect, useState, Suspense, useRef } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/use-auth';
+import { useCart } from '@/lib/cart-store';
 import { formatINR, formatRating } from '@/lib/products';
 import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft, Star, Edit3, Trash2, Upload, Camera, Image as ImageIcon, Building2, Smartphone, ShieldCheck } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -92,6 +93,8 @@ function OrderInner() {
   const [returnRequest, setReturnRequest] = useState(null);
   const [loading, setLoading] = useState(true);
   const { user, loading: authLoading } = useAuth();
+  const { removeOrderedItems } = useCart();
+  const cleanedCartRef = useRef(false);
   const router = useRouter();
 
   // Reviews State
@@ -722,6 +725,12 @@ function OrderInner() {
           setReturnRequest(d.returnRequest || null);
           setOrderReviews(d.reviews || []);
           setCustomerReviewsEnabled(d.customerReviewsEnabled ?? true);
+          if (success && d.order?.items && !cleanedCartRef.current) {
+            cleanedCartRef.current = true;
+            if (typeof removeOrderedItems === 'function') {
+              removeOrderedItems(d.order.items);
+            }
+          }
         } else {
           if (r.status === 401) {
             router.push(`/login?redirect=/orders/${id}`);

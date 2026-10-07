@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useCart } from '@/lib/cart-store';
@@ -9,9 +9,10 @@ import { toast } from 'sonner';
 import { Loader2, ShieldCheck, Truck, Lock, MapPin, Wallet, ChevronRight, CreditCard, BookmarkCheck, Plus, Check } from 'lucide-react';
 
 export default function CheckoutPage() {
-  const { items, subtotal, clear, coupon: storeCoupon, discount: storeDiscount, removeCoupon, hydrated } = useCart();
+  const { items, subtotal, clear, removeOrderedItems, coupon: storeCoupon, discount: storeDiscount, removeCoupon, hydrated } = useCart();
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
+  const orderPlacedRef = useRef(false);
   const [step, setStep] = useState('address');
   const [savedAddresses, setSavedAddresses] = useState([]);
   const [selectedAddrId, setSelectedAddrId] = useState('');
@@ -274,7 +275,7 @@ export default function CheckoutPage() {
       router.push('/login?redirect=/checkout');
       return;
     }
-    if (items.length === 0) {
+    if (items.length === 0 && !orderPlacedRef.current) {
       router.push('/cart');
     }
   }, [hydrated, authLoading, user, items, router]);
@@ -454,10 +455,18 @@ export default function CheckoutPage() {
       const d = await r.json();
       if (!r.ok) { console.error('Order API error', r.status, d); toast.error(d.error || 'Order failed'); return; }
       
+      orderPlacedRef.current = true;
       const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';
       const giftKey = user?.id ? `mikumantra_gift_${user.id}` : 'mikumantra_gift_guest';
-      clear(); 
-      removeCoupon();
+      
+      // Automatically remove successfully ordered items from bag/cart
+      const orderedItemsList = Array.isArray(d?.order?.items) ? d.order.items : (Array.isArray(body.items) ? body.items : items);
+      if (typeof removeOrderedItems === 'function') {
+        removeOrderedItems(orderedItemsList);
+      } else {
+        clear();
+      }
+
       sessionStorage.removeItem(couponKey); 
       sessionStorage.removeItem(giftKey);
       sessionStorage.removeItem('mikumantra_coupon');

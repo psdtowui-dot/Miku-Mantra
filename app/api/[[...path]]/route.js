@@ -2437,8 +2437,48 @@ async function handleRoute(request, { params }) {
 
       await db.collection('orders').insertOne(order);
 
-      // Invalidate / clear the user's cart in database
-      await db.collection('cart').deleteOne({ userId: u.id });
+      // Automatically remove successfully ordered items from the user's cart in database
+      try {
+        const existingCart = await db.collection('cart').findOne({ userId: u.id });
+        if (existingCart && Array.isArray(existingCart.items) && existingCart.items.length > 0) {
+          const orderedQtyMap = new Map();
+          validatedItems.forEach(item => {
+            if (item.id) orderedQtyMap.set(String(item.id), (orderedQtyMap.get(String(item.id)) || 0) + (Number(item.qty) || 1));
+            if (item.slug) orderedQtyMap.set(String(item.slug), (orderedQtyMap.get(String(item.slug)) || 0) + (Number(item.qty) || 1));
+          });
+
+          const remainingCartItems = existingCart.items.reduce((acc, it) => {
+            const idKey = it.id ? String(it.id) : '';
+            const slugKey = it.slug ? String(it.slug) : '';
+            const orderedQty = (idKey && orderedQtyMap.get(idKey)) || (slugKey && orderedQtyMap.get(slugKey)) || 0;
+            const currentQty = Number(it.qty) || 1;
+            const newQty = currentQty - orderedQty;
+            if (newQty > 0) {
+              acc.push({ ...it, qty: newQty });
+            }
+            return acc;
+          }, []);
+
+          if (remainingCartItems.length === 0) {
+            await db.collection('cart').deleteOne({ userId: u.id });
+          } else {
+            await db.collection('cart').updateOne(
+              { userId: u.id },
+              {
+                $set: {
+                  items: remainingCartItems,
+                  updatedAt: new Date()
+                }
+              }
+            );
+          }
+        } else {
+          await db.collection('cart').deleteOne({ userId: u.id });
+        }
+      } catch (cartCleanErr) {
+        console.warn('Failed to clean cart in DB:', cartCleanErr.message);
+        await db.collection('cart').deleteOne({ userId: u.id }).catch(() => {});
+      }
 
       // Increment coupon usage count if applied
       if (validCouponDoc) {
