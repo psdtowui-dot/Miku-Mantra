@@ -712,6 +712,12 @@ const SESSION_COOKIE = 'mikumantra_session', SESSION_DAYS = 30
 function hashPassword(password, salt) { const s = salt || crypto.randomBytes(16).toString('hex'); const h = crypto.pbkdf2Sync(password, s, 10000, 64, 'sha512').toString('hex'); return { salt: s, hash: h } }
 function verifyPassword(password, salt, hash) { return crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex') === hash }
 
+const DEFAULT_SYSTEM_ADMIN_EMAILS = [
+  'akash@unictechnology.com',
+  'kk1414497@gmail.com',
+  'admin@mikumantra.com'
+];
+
 // Helpers for admin email resolution from .env and database
 function getEnvAdminEmails() {
   const emails = new Set();
@@ -725,6 +731,9 @@ function getEnvAdminEmails() {
       }
     });
   };
+
+  // Add default built-in system admins
+  DEFAULT_SYSTEM_ADMIN_EMAILS.forEach(em => emails.add(em));
 
   // 1. Read directly from disk files (.env and .env.local) to catch any edits immediately
   try {
@@ -754,11 +763,6 @@ function getEnvAdminEmails() {
   // 2. Read from process.env
   addFromStr(process.env.ADMIN_EMAIL);
   addFromStr(process.env.ADMIN_EMAILS);
-
-  // Fallback if empty
-  if (emails.size === 0) {
-    emails.add('admin@mikumantra.com');
-  }
 
   return Array.from(emails);
 }
@@ -801,7 +805,7 @@ async function syncEnvAdminEmailsWithDatabase(db) {
     const envAdmins = getEnvAdminEmails();
     if (!envAdmins || envAdmins.length === 0) return;
 
-    // 1. Ensure all active .env admin emails have role: 'admin' and syncedFromEnv: true in DB
+    // 1. Ensure all active system/env admin emails have role: 'admin' and active status in DB
     for (const em of envAdmins) {
       if (!em) continue;
       const existing = await db.collection('users').findOne({ email: em });
@@ -822,45 +826,70 @@ async function syncEnvAdminEmailsWithDatabase(db) {
           updatedAt: new Date(),
           syncedFromEnv: true
         });
-        console.log(`[Auto-Sync] Automatically created admin in DB from .env: ${em}`);
-      } else if (existing.role !== 'admin' || !existing.syncedFromEnv || !existing.roleKey) {
+        console.log(`[Auto-Sync] Automatically created admin in DB from system/env: ${em}`);
+      } else if (existing.role !== 'admin' || !existing.roleKey || existing.status === 'disabled') {
         await db.collection('users').updateOne(
           { id: existing.id },
-          { $set: { role: 'admin', roleKey: existing.roleKey || 'SUPER_ADMIN', roleId: existing.roleId || 'role_super_admin', status: existing.status || 'active', updatedAt: new Date(), syncedFromEnv: true } }
+          {
+            $set: {
+              role: 'admin',
+              roleKey: existing.roleKey || 'SUPER_ADMIN',
+              roleId: existing.roleId || 'role_super_admin',
+              status: 'active',
+              updatedAt: new Date(),
+              syncedFromEnv: true
+            }
+          }
         );
-        console.log(`[Auto-Sync] Automatically ensured admin in DB from .env: ${em}`);
+        console.log(`[Auto-Sync] Automatically ensured admin in DB from system/env: ${em}`);
       }
     }
-
-    // 2. If any user was previously synced from .env, but is NO LONGER in .env, automatically revoke their admin role in MongoDB
-    const obsoleteEnvAdmins = await db.collection('users').find({
-      syncedFromEnv: true,
-      email: { $nin: envAdmins }
-    }).toArray();
-
-    for (const obsoleteUser of obsoleteEnvAdmins) {
-      console.log(`[Auto-Sync] Revoking admin role in DB for deleted .env email: ${obsoleteUser.email}`);
-      await db.collection('users').updateOne(
-        { id: obsoleteUser.id },
-        { $set: { role: 'user', syncedFromEnv: false, updatedAt: new Date() } }
-      );
-      // Immediately invalidate any active sessions so admin access is terminated
-      await db.collection('sessions').deleteMany({ userId: obsoleteUser.id });
-    }
   } catch (err) {
-    console.error('[Auto-Sync] Error syncing .env admin emails to database:', err);
+    console.error('[Auto-Sync] Error syncing admin emails to database:', err);
   }
 }
 
 async function isAuthorizedAdminEmail(db, email) {
   if (!email) return false;
-  if (db) await syncEnvAdminEmailsWithDatabase(db);
   const em = email.trim().toLowerCase();
   const envAdmins = getEnvAdminEmails();
-  if (envAdmins.includes(em)) return true;
-  if (!db) return false;
-  const existingAdmin = await db.collection('users').findOne({ email: em, role: 'admin' });
-  return !!existingAdmin;
+  const isEnv = envAdmins.includes(em);
+
+  if (db) {
+    try {
+      await syncEnvAdminEmailsWithDatabase(db);
+      const user = await db.collection('users').findOne({ email: em });
+      if (user) {
+        if (user.status === 'disabled') return false;
+        const isDbAdmin = user.role === 'admin' ||
+          ['SUPER_ADMIN', 'ORDER_MANAGER', 'CATALOG_MANAGER', 'PRODUCT_MANAGER', 'SUPPORT_AGENT'].includes(user.roleKey) ||
+          (typeof user.roleId === 'string' && user.roleId.startsWith('role_'));
+
+        if (isDbAdmin || isEnv) {
+          // Self-heal: ensure role is 'admin' and active in DB
+          if (user.role !== 'admin' || !user.roleKey || !user.roleId) {
+            await db.collection('users').updateOne(
+              { id: user.id },
+              {
+                $set: {
+                  role: 'admin',
+                  roleKey: user.roleKey || 'SUPER_ADMIN',
+                  roleId: user.roleId || 'role_super_admin',
+                  status: user.status || 'active',
+                  updatedAt: new Date()
+                }
+              }
+            );
+          }
+          return true;
+        }
+      }
+    } catch (e) {
+      console.error('[isAuthorizedAdminEmail] Error querying database:', e);
+    }
+  }
+
+  return isEnv;
 }
 
 const _userSessionCache = new Map();
@@ -911,19 +940,27 @@ async function getCurrentUser(db, request) {
   const u = await db.collection('users').findOne({ id: s.userId });
   if (!u) return null;
 
-  // Self-healing & dynamic revocation from .env:
+  // Self-healing for admin users:
   const envAdmins = getEnvAdminEmails();
-  if (u.email && envAdmins.includes(u.email.toLowerCase())) {
-    if (u.role !== 'admin' || !u.syncedFromEnv || !u.roleKey) {
-      await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'admin', roleKey: u.roleKey || 'SUPER_ADMIN', roleId: u.roleId || 'role_super_admin', syncedFromEnv: true, status: u.status || 'active' } });
+  const isEnvAdminUser = u.email && envAdmins.includes(u.email.toLowerCase());
+  const isDbAdminUser = u.role === 'admin' ||
+    ['SUPER_ADMIN', 'ORDER_MANAGER', 'CATALOG_MANAGER', 'PRODUCT_MANAGER', 'SUPPORT_AGENT'].includes(u.roleKey) ||
+    (typeof u.roleId === 'string' && u.roleId.startsWith('role_'));
+
+  if (isEnvAdminUser || isDbAdminUser) {
+    if (u.role !== 'admin' || !u.roleKey || !u.roleId || u.status === 'disabled') {
+      const rKey = u.roleKey || 'SUPER_ADMIN';
+      const rId = u.roleId || 'role_super_admin';
+      const newStatus = u.status || 'active';
+      await db.collection('users').updateOne(
+        { id: u.id },
+        { $set: { role: 'admin', roleKey: rKey, roleId: rId, status: newStatus } }
+      );
       u.role = 'admin';
-      u.roleKey = u.roleKey || 'SUPER_ADMIN';
-      u.status = u.status || 'active';
+      u.roleKey = rKey;
+      u.roleId = rId;
+      u.status = newStatus;
     }
-  } else if (u.syncedFromEnv && !envAdmins.includes(u.email.toLowerCase())) {
-    // Revoke admin if removed from .env
-    await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'user', syncedFromEnv: false } });
-    u.role = 'user';
   }
 
   const { passwordHash, passwordSalt, _id, ...safe } = u;
@@ -1425,9 +1462,14 @@ async function handleRoute(request, { params }) {
             email: em,
             phone: '',
             role: 'admin',
+            roleKey: 'SUPER_ADMIN',
+            roleId: 'role_super_admin',
+            status: 'active',
             passwordSalt: salt,
             passwordHash: hash,
-            createdAt: new Date()
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            syncedFromEnv: true
           })
         }
       }
@@ -1445,9 +1487,13 @@ async function handleRoute(request, { params }) {
       }
 
       // Self-healing: if logged in as admin email from .env or DB, enforce role is 'admin'
-      if (isAdmin && u.role !== 'admin') {
-        await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'admin' } });
+      if (isAdmin && (u.role !== 'admin' || !u.roleKey || !u.roleId)) {
+        const rKey = u.roleKey || 'SUPER_ADMIN';
+        const rId = u.roleId || 'role_super_admin';
+        await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'admin', roleKey: rKey, roleId: rId, updatedAt: new Date() } });
         u.role = 'admin';
+        u.roleKey = rKey;
+        u.roleId = rId;
       }
 
       await db.collection('users').updateOne({ id: u.id }, { $set: { lastLoginAt: new Date() } });
@@ -1633,7 +1679,11 @@ async function handleRoute(request, { params }) {
       const envAdmins = getEnvAdminEmails();
       const inEnv = envAdmins.includes(em);
       const dbUser = await db.collection('users').findOne({ email: em });
-      const inDbAdmin = !!(dbUser && dbUser.role === 'admin');
+      const inDbAdmin = !!(dbUser && (
+        dbUser.role === 'admin' ||
+        ['SUPER_ADMIN', 'ORDER_MANAGER', 'CATALOG_MANAGER', 'PRODUCT_MANAGER', 'SUPPORT_AGENT'].includes(dbUser.roleKey) ||
+        (typeof dbUser.roleId === 'string' && dbUser.roleId.startsWith('role_'))
+      ) && dbUser.status !== 'disabled');
       return ok({
         email: em,
         isAuthorized: inEnv || inDbAdmin,
