@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { Search, Heart, ShoppingBag, User, Menu, X, ChevronDown, ChevronRight, ChevronUp, Loader2 } from 'lucide-react';
 import { useAuth } from '@/lib/use-auth';
 import { useCart, useWishlist } from '@/lib/cart-store';
@@ -11,7 +11,6 @@ import AuthModal from '@/components/site/auth-modal';
 
 export default function Navbar({ initialData }) {
   const pathname = usePathname();
-  const router = useRouter();
   const [headerData, setHeaderData] = useState(initialData || null);
   const [scrolled, setScrolled] = useState(false);
   const [mobile, setMobile] = useState(false);
@@ -340,19 +339,7 @@ export default function Navbar({ initialData }) {
             <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -20, opacity: 0 }} className="bg-white max-w-2xl mx-2 sm:mx-auto mt-6 sm:mt-24 rounded-xl p-4 sm:p-6 luxe-shadow-lg" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center border-b border-[#E8E8E8] pb-3">
                 <Search size={18} className="text-[#9C6B30] mr-3" />
-                <input
-                  autoFocus
-                  value={q}
-                  onChange={e => setQ(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && q.trim()) {
-                      router.push(`/shop?search=${encodeURIComponent(q.trim())}`);
-                      setSearchOpen(false);
-                    }
-                  }}
-                  placeholder="Search for gold, diamond, bridal…"
-                  className="w-full bg-transparent outline-none font-serif-luxe text-lg sm:text-xl"
-                />
+                <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search for gold, diamond, bridal…" className="w-full bg-transparent outline-none font-serif-luxe text-lg sm:text-xl" />
                 <button onClick={() => setSearchOpen(false)}><X size={18} /></button>
               </div>
               <div className="mt-4">
@@ -369,52 +356,32 @@ export default function Navbar({ initialData }) {
                         Searching database...
                       </li>
                     ) : results.length === 0 ? (
-                      <li className="py-10 text-center">
-                        <div className="font-serif-luxe text-xl text-neutral-800 font-medium">Product not found</div>
-                        <p className="text-xs text-neutral-500 mt-1.5">
-                          {q.trim() ? (
-                            <>No products match &quot;{q.trim()}&quot;. Try checking for typos or searching with different keywords.</>
-                          ) : (
-                            <>Try searching for keywords like &quot;bridal&quot;, &quot;solitaire&quot;, or &quot;diamond&quot;.</>
-                          )}
-                        </p>
-                      </li>
+                      <li className="py-4 text-sm text-neutral-500">No results — try &quot;bridal&quot; or &quot;solitaire&quot;.</li>
                     ) : (
-                      <>
-                        {results.map(r => (
-                          <li key={r.id}>
-                            <Link
-                              href={`/product/${r.slug}`}
-                              onClick={() => setSearchOpen(false)}
-                              className="flex items-center gap-3 sm:gap-4 py-3 hover:bg-[#FAF6EF] rounded-md px-2"
-                            >
-                              <img
-                                src={r.images && r.images[0] ? r.images[0] : '/logo.png'}
-                                className="w-12 h-12 sm:w-14 sm:h-14 object-cover rounded shrink-0"
-                                alt={r.name}
-                              />
-                              <div className="flex-1 min-w-0">
-                                <div className="font-serif-luxe text-base sm:text-lg leading-tight truncate">{r.name}</div>
-                                <div className="text-xs text-neutral-500 capitalize">
-                                  {r.category} · {r.metal || 'Fine Jewellery'}
-                                </div>
-                              </div>
-                              <div className="text-xs sm:text-sm font-medium text-[#9C6B30] shrink-0">
-                                ₹{r.price.toLocaleString('en-IN')}
-                              </div>
-                            </Link>
-                          </li>
-                        ))}
-                        <li className="pt-3 pb-1 text-center">
+                      results.map(r => (
+                        <li key={r.id}>
                           <Link
-                            href={`/shop?search=${encodeURIComponent(q.trim())}`}
+                            href={`/product/${r.slug}`}
                             onClick={() => setSearchOpen(false)}
-                            className="text-xs text-[#9C6B30] hover:underline font-medium uppercase tracking-wider inline-flex items-center gap-1"
+                            className="flex items-center gap-3 sm:gap-4 py-3 hover:bg-[#FAF6EF] rounded-md px-2"
                           >
-                            View all results for &quot;{q.trim()}&quot; →
+                            <img
+                              src={r.images && r.images[0] ? r.images[0] : '/logo.png'}
+                              className="w-12 h-12 sm:w-14 sm:h-14 object-cover rounded shrink-0"
+                              alt={r.name}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="font-serif-luxe text-base sm:text-lg leading-tight truncate">{r.name}</div>
+                              <div className="text-xs text-neutral-500 capitalize">
+                                {r.category} · {r.metal || 'Fine Jewellery'}
+                              </div>
+                            </div>
+                            <div className="text-xs sm:text-sm font-medium text-[#9C6B30] shrink-0">
+                              ₹{r.price.toLocaleString('en-IN')}
+                            </div>
                           </Link>
                         </li>
-                      </>
+                      ))
                     )}
                   </ul>
                 )}
