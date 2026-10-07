@@ -7,7 +7,7 @@ import fs from 'fs'
 import pathModule from 'path'
 import { cookies } from 'next/headers'
 import crypto from 'crypto'
-import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS as SEED_COLLECTIONS, DEFAULT_PRODUCT_BENEFITS, DEFAULT_PRODUCT_FILTERS } from '@/lib/products'
+import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS as SEED_COLLECTIONS, DEFAULT_PRODUCT_BENEFITS, DEFAULT_PRODUCT_FILTERS, slugify } from '@/lib/products'
 import { buildInvoicePDF } from '@/lib/pdf-invoice'
 import { buildShippingSlipPDF } from '@/lib/pdf-shippingslip'
 import { WAREHOUSE_PINCODE } from '@/lib/constants'
@@ -1147,12 +1147,13 @@ async function handleRoute(request, { params }) {
     }
     if (route.startsWith('/products/') && method === 'GET') {
       const slug = route.split('/')[2]
-      let p = await db.collection('products').findOne({ $or: [{ slug }, { id: slug }] })
+      const cleanSlug = slugify(slug)
+      let p = await db.collection('products').findOne({ $or: [{ slug }, { slug: cleanSlug }, { id: slug }] })
       if (!p) {
         const allProds = await db.collection('products').find({}).toArray();
         p = allProds.find(item => {
           const s = (item.slug || item.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-          return s === slug || item.id === slug;
+          return s === slug || s === cleanSlug || item.id === slug;
         });
       }
       if (!p) return err('Not found', 404)
@@ -4806,10 +4807,18 @@ async function handleRoute(request, { params }) {
         if (isNaN(mrp) || mrp < price) return err('MRP cannot be less than selling price', 400);
         if (isNaN(stock) || stock < 0) return err('Stock quantity cannot be negative', 400);
 
-        const slug = b.slug ? b.slug.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-') : name.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+        const slug = slugify(b.slug || name);
+        if (!slug) return err('A valid URL-safe product slug is required', 400);
+
+        const existingSlug = await db.collection('products').findOne({ slug });
+        if (existingSlug) {
+          return err(`A product with the slug "${slug}" already exists. Slugs must be unique.`, 400);
+        }
+
         const images = Array.isArray(b.images) ? b.images : (b.images || '').split('\n').map(s => s.trim()).filter(Boolean);
 
         const p = {
+          ...b,
           id: uuidv4(),
           slug,
           name,
@@ -4818,14 +4827,7 @@ async function handleRoute(request, { params }) {
           mrp,
           stock,
           images,
-          createdAt: new Date(),
-          ...b,
-          name,
-          category,
-          price,
-          mrp,
-          stock,
-          images
+          createdAt: new Date()
         };
         await db.collection('products').insertOne(p);
         cacheBust('products:');
@@ -5044,8 +5046,8 @@ async function handleRoute(request, { params }) {
             updatedCount++;
           } else {
             let slug = item.slug
-              ? item.slug.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-')
-              : (item.id || name).toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+              ? slugify(item.slug)
+              : slugify(item.id || name);
             let existingSlug = await db.collection('products').findOne({ slug });
             if (existingSlug) {
               slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
@@ -5215,7 +5217,7 @@ async function handleRoute(request, { params }) {
             return {
               ...rest,
               id: uuidv4(),
-              slug: `${p.slug || p.name.toLowerCase().replace(/[^a-z0-9_-]/g, '-')}-copy-${shortId}`,
+              slug: `${slugify(p.slug || p.name)}-copy-${shortId}`,
               name: `${p.name} (Copy)`,
               createdAt: new Date(),
               updatedAt: new Date()
@@ -5264,9 +5266,37 @@ async function handleRoute(request, { params }) {
         if (!hasPermission(admin, 'products.edit')) return err('Permission denied: products.edit required', 403);
         const id = sub.split('/')[1];
         const b = await request.json();
-        const updateData = { ...b, updatedAt: new Date() };
 
-        if (b.name !== undefined && !b.name.trim()) return err('Product name cannot be empty', 400);
+        const existing = await db.collection('products').findOne({ id });
+        if (!existing) return err('Product not found', 404);
+
+        const updateData = { ...b, updatedAt: new Date() };
+        delete updateData._id;
+        delete updateData.id;
+
+        // Name handling: changing name must NOT touch or regenerate slug
+        if (b.name !== undefined) {
+          const cleanName = b.name.trim();
+          if (!cleanName) return err('Product name cannot be empty', 400);
+          updateData.name = cleanName;
+        }
+
+        // Slug handling: independent from name
+        if (b.slug !== undefined) {
+          const cleanSlug = slugify(b.slug);
+          if (!cleanSlug) return err('Product slug cannot be empty and must be URL-safe', 400);
+          if (cleanSlug !== existing.slug) {
+            const slugConflict = await db.collection('products').findOne({ slug: cleanSlug, id: { $ne: id } });
+            if (slugConflict) {
+              return err(`A product with the slug "${cleanSlug}" already exists. Slugs must be unique.`, 400);
+            }
+          }
+          updateData.slug = cleanSlug;
+        } else {
+          // If slug was not provided in the payload, preserve existing slug unconditionally
+          delete updateData.slug;
+        }
+
         if (b.category !== undefined && !b.category.trim()) return err('Product category cannot be empty', 400);
         if (b.price !== undefined) {
           const price = Number(b.price);
