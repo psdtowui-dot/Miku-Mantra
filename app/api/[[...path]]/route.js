@@ -2120,6 +2120,54 @@ async function handleRoute(request, { params }) {
       await db.collection('orders').insertOne(order);
       cacheBust('products:');
 
+      // Remove successfully ordered items from customer's database cart
+      if (u?.id) {
+        try {
+          const userCart = await db.collection('cart').findOne({ userId: u.id });
+          if (userCart && Array.isArray(userCart.items) && userCart.items.length > 0) {
+            const pendingOrders = validatedItems.map(vi => ({
+              id: String(vi.id || ''),
+              slug: vi.slug ? String(vi.slug) : '',
+              qty: parseInt(vi.qty) || 1
+            }));
+
+            const updatedCartItems = [];
+            for (const item of userCart.items) {
+              const itemId = String(item.id || '');
+              const itemSlug = item.slug ? String(item.slug) : '';
+
+              const match = pendingOrders.find(po =>
+                po.qty > 0 && (
+                  (po.id && po.id === itemId) ||
+                  (po.slug && itemSlug && po.slug === itemSlug) ||
+                  (po.slug && po.slug === itemId) ||
+                  (itemSlug && po.id === itemSlug)
+                )
+              );
+
+              if (!match) {
+                updatedCartItems.push(item);
+              } else if (item.qty > match.qty) {
+                updatedCartItems.push({
+                  ...item,
+                  qty: item.qty - match.qty
+                });
+                match.qty = 0;
+              } else {
+                match.qty -= item.qty;
+              }
+            }
+
+            await db.collection('cart').updateOne(
+              { userId: u.id },
+              { $set: { items: updatedCartItems, updatedAt: new Date() } }
+            );
+          }
+        } catch (cartSyncErr) {
+          console.error('Failed to update user cart in database after order placement:', cartSyncErr);
+        }
+      }
+
       // Trigger WhatsApp & SMS notification for order placement
       await sendOrderPlacedNotification({ order, user: u, db });
 

@@ -9,9 +9,10 @@ import { toast } from 'sonner';
 import { Loader2, ShieldCheck, Truck, Lock, MapPin, Wallet, ChevronRight, CreditCard, BookmarkCheck, Plus, Check } from 'lucide-react';
 
 export default function CheckoutPage() {
-  const { items, subtotal, clear, hydrated } = useCart();
+  const { items, subtotal, clear, removeOrderedItems, hydrated } = useCart();
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
+  const [orderSuccess, setOrderSuccess] = useState(false);
   const [step, setStep] = useState('address');
   const [savedAddresses, setSavedAddresses] = useState([]);
   const [selectedAddrId, setSelectedAddrId] = useState('');
@@ -268,7 +269,7 @@ export default function CheckoutPage() {
   };
 
   useEffect(() => {
-    if (authLoading || !hydrated) return;
+    if (authLoading || !hydrated || placing || orderSuccess) return;
     if (!user) {
       toast.error('Please login or create an account before placing your order.');
       router.push('/login?redirect=/checkout');
@@ -277,7 +278,7 @@ export default function CheckoutPage() {
     if (items.length === 0) {
       router.push('/cart');
     }
-  }, [hydrated, authLoading, user, items, router]);
+  }, [hydrated, authLoading, user, items, router, placing, orderSuccess]);
 
   useEffect(() => { if (user) { setEmail(user.email); loadAddr(); } }, [user]);
   useEffect(() => {
@@ -371,9 +372,17 @@ export default function CheckoutPage() {
       const d = await r.json();
       if (!r.ok) { console.error('Order API error', r.status, d); toast.error(d.error || 'Order failed'); return; }
       
+      setOrderSuccess(true);
+
+      const successfullyOrderedItems = d.order?.items || body.items;
+      if (typeof removeOrderedItems === 'function') {
+        await removeOrderedItems(successfullyOrderedItems);
+      } else {
+        await clear();
+      }
+
       const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';
       const giftKey = user?.id ? `mikumantra_gift_${user.id}` : 'mikumantra_gift_guest';
-      clear(); 
       sessionStorage.removeItem(couponKey); 
       sessionStorage.removeItem(giftKey);
       sessionStorage.removeItem('mikumantra_coupon');
