@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Script from 'next/script';
 import { useAuth } from '@/lib/use-auth';
+import { isNative, nativeGoogleLogin } from '@/lib/native-utils';
 import { toast } from 'sonner';
 import { Loader2, Mail, Lock, User as UserIcon, ShieldCheck, KeyRound, Eye, EyeOff, X, ArrowLeft, CheckCircle2 } from 'lucide-react';
 
@@ -149,7 +150,7 @@ function LoginInner(){
     };
   }, [mode, clientId]);
 
-  const handleManualGoogleClick = () => {
+  const handleManualGoogleClick = async () => {
     if (!clientId) {
       toast.info(
         'Google Sign-In is configured on the app! To connect your Google project, please set your NEXT_PUBLIC_GOOGLE_CLIENT_ID in the .env file.',
@@ -161,7 +162,34 @@ function LoginInner(){
     setGoogleBusy(true);
     setErr('');
 
-    // Primary click method: Google OAuth2 popup token client
+    // Native mobile app authentication flow (Google Credential Manager)
+    if (isNative()) {
+      try {
+        const nativeAuth = await nativeGoogleLogin(clientId);
+        if (nativeAuth?.idToken || nativeAuth?.accessToken) {
+          const u = await loginWithGoogle(nativeAuth.idToken ? { credential: nativeAuth.idToken } : { accessToken: nativeAuth.accessToken });
+          toast.success(`Welcome, ${u.name || 'valued customer'}!`);
+          router.push(redirect);
+          return;
+        } else {
+          toast.info('Google sign-in was cancelled.');
+          return;
+        }
+      } catch (nativeErr) {
+        console.warn('Native Google login failed:', nativeErr);
+        const msg = nativeErr?.message || String(nativeErr);
+        if (msg.toLowerCase().includes('cancel') || msg.includes('16')) {
+          toast.info('Google sign-in was cancelled.');
+        } else {
+          toast.error('Google Sign-In is unavailable on this device. Please sign in with your Gmail and password below, or use "Forgot Password" to set a password.');
+        }
+        return;
+      } finally {
+        setGoogleBusy(false);
+      }
+    }
+
+    // Primary web click method: Google OAuth2 popup token client
     if (window.google?.accounts?.oauth2) {
       try {
         const tokenClient = window.google.accounts.oauth2.initTokenClient({

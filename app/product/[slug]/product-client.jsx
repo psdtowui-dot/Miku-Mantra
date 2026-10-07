@@ -5,13 +5,14 @@ import Link from 'next/link';
 import ProductCard from '@/components/site/product-card';
 import RecentlyViewed from '@/components/site/recently-viewed';
 import CompareBar from '@/components/site/compare-bar';
-import { getRelated, formatINR, formatRating, getNormalizedSpecs, getNormalizedBenefits } from '@/lib/products';
+import { getRelated, formatINR, getNormalizedSpecs, getNormalizedBenefits } from '@/lib/products';
 import { useCart, useWishlist } from '@/lib/cart-store';
 import { useCompare, useRecentlyViewed } from '@/lib/browsing';
 import { Heart, Share2, Truck, Minus, Plus, ChevronRight, ChevronDown, ChevronUp, Star, MapPin, Loader2, GitCompare, ShieldCheck } from 'lucide-react';
 import BenefitIcon from '@/components/ui/benefit-icon';
 import { toast } from 'sonner';
 import { WAREHOUSE_PINCODE } from '@/lib/constants';
+import { shareProduct } from '@/lib/native-utils';
 
 export default function ProductClient({ initialProduct, slug }) {
   const router = useRouter();
@@ -141,7 +142,7 @@ export default function ProductClient({ initialProduct, slug }) {
               <div className="flex items-center gap-1 text-xs sm:text-sm">
                 <Star size={14} className={(reviewData.totalReviews > 0 || p.rating > 0) ? "fill-[#D4AF37] stroke-[#D4AF37]" : "text-neutral-300 stroke-neutral-400"} />
                 <span className="font-medium">
-                  {reviewData.totalReviews > 0 ? formatRating(reviewData.averageRating) : formatRating(p.rating)}
+                  {reviewData.totalReviews > 0 ? reviewData.averageRating.toFixed(1) : (p.rating > 0 ? p.rating : '0.0')}
                 </span>
                 <span className="text-neutral-500">
                   ({reviewData.totalReviews > 0 ? reviewData.totalReviews : (p.reviews || 0)} {(reviewData.totalReviews || p.reviews) === 1 ? 'review' : 'reviews'})
@@ -181,7 +182,20 @@ export default function ProductClient({ initialProduct, slug }) {
               </div>
               <button onClick={() => toggle(p.id)} className={`w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-[#E8E8E8] flex items-center justify-center hover:border-[#9C6B30] ${has(p.id) ? 'text-[#9C6B30]' : ''}`}><Heart size={16} fill={has(p.id) ? '#9C6B30' : 'none'} /></button>
               <button onClick={() => { const r = toggleCmp(p.id); if (r.full) toast.error('Compare up to 4 items'); else toast.success(r.added ? 'Added to compare' : 'Removed from compare'); }} className={`w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-[#E8E8E8] flex items-center justify-center hover:border-[#9C6B30] ${hasCmp(p.id) ? 'text-[#9C6B30]' : ''}`}><GitCompare size={16} /></button>
-              <button onClick={() => { navigator.clipboard?.writeText(window.location.href); toast.success('Link copied'); }} className="w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-[#E8E8E8] flex items-center justify-center hover:border-[#9C6B30]"><Share2 size={16} /></button>
+              <button
+                onClick={() => {
+                  shareProduct({
+                    title: p.name,
+                    text: `Check out this beautiful handcrafted piece from MikuMantra:\n\n${p.name}\n${formatINR(p.price)}`,
+                    url: typeof window !== 'undefined' ? window.location.href : ''
+                  });
+                }}
+                title="Share product"
+                aria-label="Share product"
+                className="w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-[#E8E8E8] flex items-center justify-center hover:border-[#9C6B30] text-[#1A1A1A] hover:text-[#9C6B30] transition-colors"
+              >
+                <Share2 size={16} />
+              </button>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2 sm:gap-3">
               <button
@@ -267,7 +281,7 @@ export default function ProductClient({ initialProduct, slug }) {
                       <div className="sm:col-span-5 text-center sm:text-left space-y-2 sm:border-r border-[#E8E8E8] sm:pr-8">
                         <div className="flex items-baseline justify-center sm:justify-start gap-2">
                           <span className="text-4xl sm:text-5xl font-display font-light text-[#1A1A1A]">
-                            {formatRating(reviewData.averageRating)}
+                            {reviewData.averageRating > 0 ? reviewData.averageRating.toFixed(1) : '0.0'}
                           </span>
                           <span className="text-sm text-neutral-400 font-light">/ 5.0</span>
                         </div>

@@ -6,10 +6,10 @@ import { useCart } from '@/lib/cart-store';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { formatINR } from '@/lib/products';
 import { toast } from 'sonner';
-import { Loader2, ShieldCheck, Truck, Lock, MapPin, Wallet, ChevronRight, CreditCard, BookmarkCheck, Plus, Check } from 'lucide-react';
+import { Loader2, ShieldCheck, Truck, Lock, MapPin, Wallet, ChevronRight, CreditCard } from 'lucide-react';
 
 export default function CheckoutPage() {
-  const { items, subtotal, clear, coupon: storeCoupon, discount: storeDiscount, removeCoupon, hydrated } = useCart();
+  const { items, subtotal, clear, hydrated } = useCart();
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const [step, setStep] = useState('address');
@@ -22,9 +22,6 @@ export default function CheckoutPage() {
   const [coupon, setCoupon] = useState(null);
   const [gift, setGift] = useState(false);
   const [addrErrors, setAddrErrors] = useState({ fullName: '', phone: '', line1: '', city: '', state: '', pincode: '' });
-  const [savingAddr, setSavingAddr] = useState(false);
-  const [isDefaultAddr, setIsDefaultAddr] = useState(false);
-  const [saveForFuture, setSaveForFuture] = useState(true);
 
   const [shippingConfig, setShippingConfig] = useState({
     freeShippingEnabled: true,
@@ -85,9 +82,9 @@ export default function CheckoutPage() {
   const threshold = Number(shippingConfig?.freeShippingThreshold ?? 2000);
   const standardCharge = Number(shippingConfig?.standardShippingCharge ?? 500);
 
-  const discount = coupon?.discount ?? storeDiscount ?? 0;
+  const discount = coupon?.discount || 0;
   const shipping = subtotal === 0 ? 0 : (freeEnabled && subtotal >= threshold ? 0 : standardCharge);
-  const tax = Math.round(Math.max(0, subtotal - discount) * 0.03);
+  const tax = Math.round((subtotal - discount) * 0.03);
   const giftWrap = gift ? 250 : 0;
   const total = Math.max(0, subtotal - discount + shipping + tax + giftWrap);
 
@@ -111,159 +108,17 @@ export default function CheckoutPage() {
     return !errText;
   };
 
-  async function loadAddr() {
-    try {
-      const r = await authFetch('/api/addresses');
-      const d = await r.json();
-      if (r.ok && Array.isArray(d.addresses)) {
-        setSavedAddresses(d.addresses);
-        if (d.addresses.length > 0) {
-          const current = selectedAddrId
-            ? d.addresses.find(a => a.id === selectedAddrId)
-            : (d.addresses.find(a => a.isDefault) || d.addresses[0]);
-          if (current && !selectedAddrId) {
-            setSelectedAddrId(current.id);
-            setAddr({
-              fullName: current.fullName || '',
-              phone: current.phone || '',
-              line1: current.line1 || '',
-              line2: current.line2 || '',
-              city: current.city || '',
-              state: current.state || '',
-              pincode: current.pincode || ''
-            });
-            setIsDefaultAddr(Boolean(current.isDefault));
-          }
-        }
-      }
-    } catch (e) {
-      console.error('Failed to load addresses:', e);
-    }
-  }
-
-  function useSavedAddr(a) {
-    setSelectedAddrId(a.id);
-    setAddr({
-      fullName: a.fullName || '',
-      phone: a.phone || '',
-      line1: a.line1 || '',
-      line2: a.line2 || '',
-      city: a.city || '',
-      state: a.state || '',
-      pincode: a.pincode || ''
-    });
-    setIsDefaultAddr(Boolean(a.isDefault));
-    setAddrErrors({ fullName: '', phone: '', line1: '', city: '', state: '', pincode: '' });
-  }
-
-  function handleAddNewAddress() {
-    setSelectedAddrId('');
-    setAddr({
-      fullName: user?.name || '',
-      phone: user?.phone || '',
-      line1: '',
-      line2: '',
-      city: '',
-      state: '',
-      pincode: ''
-    });
-    setIsDefaultAddr(false);
-    setAddrErrors({ fullName: '', phone: '', line1: '', city: '', state: '', pincode: '' });
-  }
-
-  const handleSaveAddress = async (advanceToPayment = false) => {
+  const handleContinueAddress = () => {
     const fields = ['fullName', 'phone', 'line1', 'city', 'state', 'pincode'];
     let valid = true;
     fields.forEach(f => {
       const isFValid = validateAddressField(f, addr[f]);
       if (!isFValid) valid = false;
     });
-    if (!valid) {
-      toast.error('Please fix the errors in your shipping address.');
-      return false;
-    }
-
-    const digits = (addr.phone || '').toString().replace(/[^0-9]/g, '');
-    const mobile10 = digits.startsWith('91') && digits.length === 12 ? digits.slice(2) : digits;
-    if (!mobile10 || mobile10.length !== 10) {
-      validateAddressField('phone', '');
-      toast.error('Please enter a valid 10-digit mobile number.');
-      return false;
-    }
-    const cleanPhone = `+91${mobile10}`;
-
-    const payload = {
-      fullName: (addr.fullName || '').trim(),
-      phone: cleanPhone,
-      line1: (addr.line1 || '').trim(),
-      line2: (addr.line2 || '').trim(),
-      city: (addr.city || '').trim(),
-      state: (addr.state || '').trim(),
-      pincode: (addr.pincode || '').trim(),
-      isDefault: Boolean(isDefaultAddr)
-    };
-
-    setSavingAddr(true);
-    try {
-      if (selectedAddrId) {
-        const res = await authFetch(`/api/addresses/${selectedAddrId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (res.ok) {
-          toast.success('Address updated successfully');
-          await loadAddr();
-          if (advanceToPayment) setStep('payment');
-          return true;
-        } else {
-          toast.error(data.error || 'Failed to update address');
-          return false;
-        }
-      } else {
-        const res = await authFetch('/api/addresses', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (res.ok) {
-          toast.success('Address saved successfully');
-          if (data.address?.id) setSelectedAddrId(data.address.id);
-          await loadAddr();
-          if (advanceToPayment) setStep('payment');
-          return true;
-        } else {
-          toast.error(data.error || 'Failed to save address');
-          return false;
-        }
-      }
-    } catch (err) {
-      console.error('Save address error:', err);
-      toast.error('An error occurred while saving the address.');
-      return false;
-    } finally {
-      setSavingAddr(false);
-    }
-  };
-
-  const handleContinueAddress = async () => {
-    const fields = ['fullName', 'phone', 'line1', 'city', 'state', 'pincode'];
-    let valid = true;
-    fields.forEach(f => {
-      const isFValid = validateAddressField(f, addr[f]);
-      if (!isFValid) valid = false;
-    });
-    if (!valid) {
-      toast.error('Please fix the errors in your shipping address before continuing.');
-      return;
-    }
-
-    if (user && saveForFuture && !selectedAddrId) {
-      await handleSaveAddress(true);
-    } else {
+    if (valid) {
       setStep('payment');
+    } else {
+      toast.error('Please fix the errors in your shipping address before continuing.');
     }
   };
 
@@ -285,61 +140,23 @@ export default function CheckoutPage() {
       const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';
       const giftKey = user?.id ? `mikumantra_gift_${user.id}` : 'mikumantra_gift_guest';
       const c = JSON.parse(sessionStorage.getItem(couponKey) || sessionStorage.getItem('mikumantra_coupon') || 'null');
-      const activeC = storeCoupon || c;
-      if (activeC) setCoupon(activeC);
+      if (c) setCoupon(c);
       if (sessionStorage.getItem(giftKey) === '1' || sessionStorage.getItem('mikumantra_gift') === '1') setGift(true);
     } catch { }
-  }, [user, storeCoupon]);
+  }, [user]);
 
-  // Revalidate coupon & cart pricing with backend on mount and upon cart change
-  useEffect(() => {
-    if (!hydrated || items.length === 0) return;
-    const activeCode = coupon?.code || storeCoupon?.code;
-    let isMounted = true;
-
-    authFetch('/api/cart/pricing', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        items: items.map(i => ({ id: i.id, qty: i.qty, price: i.price })),
-        coupon: activeCode || null,
-        giftWrap: gift
-      })
-    })
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (!data || !isMounted) return;
-        if (data.couponValid === false && (coupon || storeCoupon)) {
-          setCoupon(null);
-          removeCoupon();
-          const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';
-          sessionStorage.removeItem(couponKey);
-          sessionStorage.removeItem('mikumantra_coupon');
-          localStorage.removeItem(couponKey);
-          localStorage.removeItem('mikumantra_coupon');
-          toast.error(data.couponError || 'Coupon is no longer eligible and has been removed.', {
-            id: 'coupon-checkout-invalidated'
-          });
-        } else if (data.coupon && data.couponValid) {
-          setCoupon(data.coupon);
-        }
-      })
-      .catch(err => console.warn('Pricing validation error:', err));
-
-    return () => { isMounted = false; };
-  }, [hydrated, items, subtotal, gift, user]);
+  async function loadAddr() {
+    const r = await authFetch('/api/addresses'); const d = await r.json();
+    if (r.ok && d.addresses) { setSavedAddresses(d.addresses); const def = d.addresses.find(a => a.isDefault) || d.addresses[0]; if (def) { setSelectedAddrId(def.id); setAddr({ fullName: def.fullName, phone: def.phone, line1: def.line1, line2: def.line2 || '', city: def.city, state: def.state, pincode: def.pincode }); } }
+  }
+  function useSavedAddr(a) { setSelectedAddrId(a.id); setAddr({ fullName: a.fullName, phone: a.phone, line1: a.line1, line2: a.line2 || '', city: a.city, state: a.state, pincode: a.pincode }); }
 
   async function payWithRazorpay() {
     try {
       const orderRes = await authFetch('/api/payment/razorpay/order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount: total,
-          items: items.map(i => ({ id: i.id, qty: i.qty })),
-          coupon: coupon?.code || storeCoupon?.code || null,
-          giftWrap: gift
-        })
+        body: JSON.stringify({ amount: total })
       });
       const rzOrder = await orderRes.json();
       if (!orderRes.ok) {
@@ -388,7 +205,6 @@ export default function CheckoutPage() {
     try {
       if (!Array.isArray(items) || items.length === 0) { toast.error('Cart is empty'); setPlacing(false); return; }
 
-      // Validate stock availability
       const valRes = await authFetch('/api/cart/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -405,51 +221,13 @@ export default function CheckoutPage() {
         }
       }
 
-      // Re-verify coupon eligibility immediately before payment
-      const activeCode = coupon?.code || storeCoupon?.code;
-      if (activeCode) {
-        const priceCheck = await authFetch('/api/cart/pricing', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            items: items.map(i => ({ id: i.id, qty: i.qty })),
-            coupon: activeCode,
-            giftWrap: gift
-          })
-        });
-        if (priceCheck.ok) {
-          const pCheckData = await priceCheck.json();
-          if (pCheckData.couponValid === false) {
-            setCoupon(null);
-            removeCoupon();
-            const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';
-            sessionStorage.removeItem(couponKey);
-            sessionStorage.removeItem('mikumantra_coupon');
-            localStorage.removeItem(couponKey);
-            localStorage.removeItem('mikumantra_coupon');
-            toast.error(pCheckData.couponError || 'Coupon is no longer eligible. Pricing has been updated.');
-            setPlacing(false);
-            return;
-          }
-        }
-      }
-
       let razorpayPaymentId = null;
       if (payment === 'razorpay') {
         const res = await payWithRazorpay();
         if (!res.paid) { toast.error('Payment cancelled'); setPlacing(false); return; }
         razorpayPaymentId = res.paymentId;
       }
-      const body = {
-        items: items.map(i => ({ id: i.id, slug: i.slug, name: i.name, image: i.image, price: i.price, qty: i.qty })),
-        address: addr,
-        payment,
-        email: user ? undefined : email,
-        coupon: coupon?.code || storeCoupon?.code || null,
-        discount,
-        giftWrap: gift,
-        razorpayPaymentId
-      };
+      const body = { items: items.map(i => ({ id: i.id, slug: i.slug, name: i.name, image: i.image, price: i.price, qty: i.qty })), address: addr, payment, email: user ? undefined : email, coupon: coupon?.code, discount, giftWrap: gift, razorpayPaymentId };
       const r = await authFetch('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json();
       if (!r.ok) { console.error('Order API error', r.status, d); toast.error(d.error || 'Order failed'); return; }
@@ -457,13 +235,10 @@ export default function CheckoutPage() {
       const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';
       const giftKey = user?.id ? `mikumantra_gift_${user.id}` : 'mikumantra_gift_guest';
       clear(); 
-      removeCoupon();
       sessionStorage.removeItem(couponKey); 
       sessionStorage.removeItem(giftKey);
       sessionStorage.removeItem('mikumantra_coupon');
       sessionStorage.removeItem('mikumantra_gift');
-      localStorage.removeItem(couponKey);
-      localStorage.removeItem('mikumantra_coupon');
       
       toast.success('Order placed successfully');
       router.push(`/orders/${d.order.id}?success=1`);
@@ -481,8 +256,21 @@ export default function CheckoutPage() {
   return (
     <main className="bg-white min-h-screen">
       <div className="max-w-[1400px] mx-auto px-4 md:px-8 py-6 sm:py-10">
-        <div className="text-center mb-6 sm:mb-8"><div className="text-[10px] sm:text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-2">Secure Checkout</div><h1 className="font-display text-2xl xs:text-3xl sm:text-4xl md:text-5xl font-light text-[#1A1A1A] break-words">Complete Your Order</h1><div className="gold-line w-16 mx-auto my-4" /></div>
-        <div className="flex justify-center gap-3 sm:gap-8 mb-8 sm:mb-10 text-[10px] sm:text-[11px] tracking-wider sm:tracking-widest uppercase">{[['address', 'Address', MapPin], ['payment', 'Payment', Wallet], ['review', 'Review', ShieldCheck]].map(([k, l, I], i) => (<div key={k} className={`flex items-center gap-1.5 sm:gap-2 ${step === k ? 'text-[#9C6B30]' : 'text-neutral-400'}`}><div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full border-2 flex items-center justify-center text-xs ${step === k ? 'border-[#9C6B30] bg-[#FAF6EF]' : 'border-neutral-300'}`}>{i + 1}</div><span className="hidden sm:inline">{l}</span></div>))}</div>
+        <div className="text-center mb-6 sm:mb-8">
+          <div className="text-[10px] sm:text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-2">Secure Checkout</div>
+          <h1 className="font-display text-2xl xs:text-3xl sm:text-4xl md:text-5xl font-light text-[#1A1A1A] break-words">Complete Your Order</h1>
+          <div className="gold-line w-16 mx-auto my-4" />
+        </div>
+        <div className="flex justify-center items-center gap-2 xs:gap-4 sm:gap-8 mb-6 sm:mb-10 text-[9px] xs:text-[10px] sm:text-[11px] tracking-wider sm:tracking-widest uppercase">
+          {[['address', 'Address', MapPin], ['payment', 'Payment', Wallet], ['review', 'Review', ShieldCheck]].map(([k, l, I], i) => (
+            <div key={k} className={`flex items-center gap-1.5 sm:gap-2 ${step === k ? 'text-[#9C6B30] font-semibold' : 'text-neutral-400'}`}>
+              <div className={`w-6 h-6 xs:w-7 xs:h-7 sm:w-8 sm:h-8 rounded-full border-2 flex items-center justify-center text-[10px] sm:text-xs shrink-0 ${step === k ? 'border-[#9C6B30] bg-[#FAF6EF]' : 'border-neutral-300'}`}>
+                {i + 1}
+              </div>
+              <span className="inline">{l}</span>
+            </div>
+          ))}
+        </div>
 
         <div className="grid lg:grid-cols-3 gap-6 lg:gap-10">
           <div className="lg:col-span-2">
@@ -490,39 +278,7 @@ export default function CheckoutPage() {
               <div className="border border-[#E8E8E8] rounded-xl p-4 sm:p-6 md:p-8">
                 <div className="font-display text-xl sm:text-2xl mb-1">Shipping Address</div><div className="gold-line w-10 mb-6" />
                 {!user && (<div className="mb-6"><label className="text-[10px] tracking-widest uppercase text-neutral-500">Email (for order updates)</label><input required type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@email.com" className="w-full mt-1 px-4 py-3 border border-[#E8E8E8] rounded-md text-sm focus:outline-none focus:border-[#9C6B30]" /><div className="text-xs text-neutral-500 mt-2"><Link href="/login?redirect=/checkout" className="text-[#9C6B30] hover:underline">Sign in</Link> for faster checkout &amp; order tracking.</div></div>)}
-                {savedAddresses.length > 0 && (
-                  <div className="mb-6">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="text-[10px] tracking-widest uppercase text-neutral-500">Saved Addresses</div>
-                      <button
-                        type="button"
-                        onClick={handleAddNewAddress}
-                        className="text-xs text-[#9C6B30] hover:underline flex items-center gap-1 font-medium cursor-pointer"
-                      >
-                        <Plus size={13} /> Add New Address
-                      </button>
-                    </div>
-                    <div className="grid md:grid-cols-2 gap-3">
-                      {savedAddresses.map(a => (
-                        <button
-                          key={a.id}
-                          type="button"
-                          onClick={() => useSavedAddr(a)}
-                          className={`text-left border rounded-lg p-4 transition relative ${selectedAddrId === a.id ? 'border-[#9C6B30] bg-[#FAF6EF]' : 'border-[#E8E8E8] hover:border-[#9C6B30]'}`}
-                        >
-                          {selectedAddrId === a.id && (
-                            <span className="absolute top-3 right-3 text-[10px] tracking-wider uppercase font-semibold text-[#9C6B30] bg-white px-2 py-0.5 rounded border border-[#9C6B30]/30 flex items-center gap-1">
-                              <Check size={10} /> Selected
-                            </span>
-                          )}
-                          <div className="font-medium">{a.fullName} {a.isDefault && <span className="text-[10px] text-neutral-400 font-normal">(Default)</span>}</div>
-                          <div className="text-sm text-neutral-600 mt-1">{a.line1}, {a.city}, {a.state} — {a.pincode}</div>
-                          <div className="text-xs text-neutral-500 mt-1">{a.phone}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {savedAddresses.length > 0 && (<div className="mb-6"><div className="text-[10px] tracking-widest uppercase text-neutral-500 mb-3">Saved Addresses</div><div className="grid md:grid-cols-2 gap-3">{savedAddresses.map(a => (<button key={a.id} onClick={() => useSavedAddr(a)} className={`text-left border rounded-lg p-4 transition ${selectedAddrId === a.id ? 'border-[#9C6B30] bg-[#FAF6EF]' : 'border-[#E8E8E8] hover:border-[#9C6B30]'}`}><div className="font-medium">{a.fullName}</div><div className="text-sm text-neutral-600 mt-1">{a.line1}, {a.city}, {a.state} — {a.pincode}</div><div className="text-xs text-neutral-500 mt-1">{a.phone}</div></button>))}</div></div>)}
                 <div className="grid md:grid-cols-2 gap-3">
                   <div>
                     <input
@@ -631,37 +387,8 @@ export default function CheckoutPage() {
                     {addrErrors.pincode && <p className="text-xs text-red-500 mt-1">{addrErrors.pincode}</p>}
                   </div>
                 </div>
-
-                <div className="mt-4 pt-3 border-t border-[#E8E8E8]/60 flex flex-wrap items-center justify-between gap-3 text-xs text-neutral-600">
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={isDefaultAddr}
-                      onChange={e => setIsDefaultAddr(e.target.checked)}
-                      className="accent-[#9C6B30] w-4 h-4 rounded cursor-pointer"
-                    />
-                    <span>Set as default shipping address</span>
-                  </label>
-                </div>
-
-                <div className="mt-6 flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-[#E8E8E8]">
-                  <button
-                    type="button"
-                    disabled={savingAddr}
-                    onClick={() => handleSaveAddress(false)}
-                    className="px-5 sm:px-6 py-2.5 sm:py-3 border border-[#9C6B30] text-[#9C6B30] text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.2em] uppercase rounded-md hover:bg-[#FAF6EF] flex items-center gap-2 cursor-pointer transition disabled:opacity-50 font-medium"
-                  >
-                    {savingAddr ? <Loader2 size={13} className="animate-spin" /> : <BookmarkCheck size={14} />}
-                    {selectedAddrId ? 'Update Address' : 'Save Address'}
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={savingAddr}
-                    onClick={handleContinueAddress}
-                    className="px-6 sm:px-8 py-3 sm:py-3.5 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] flex items-center gap-2 cursor-pointer transition disabled:opacity-50 ml-auto"
-                  >
-                    {savingAddr && <Loader2 size={14} className="animate-spin" />}
+                <div className="mt-6 flex justify-end">
+                  <button onClick={handleContinueAddress} className="px-5 sm:px-8 py-3 sm:py-3.5 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] flex items-center gap-2 cursor-pointer">
                     Continue <ChevronRight size={14} />
                   </button>
                 </div>

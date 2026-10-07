@@ -7,16 +7,15 @@ import fs from 'fs'
 import pathModule from 'path'
 import { cookies } from 'next/headers'
 import crypto from 'crypto'
-import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS as SEED_COLLECTIONS, DEFAULT_PRODUCT_BENEFITS, DEFAULT_PRODUCT_FILTERS } from '@/lib/products'
+import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS as SEED_COLLECTIONS, DEFAULT_PRODUCT_BENEFITS } from '@/lib/products'
 import { buildInvoicePDF } from '@/lib/pdf-invoice'
 import { buildShippingSlipPDF } from '@/lib/pdf-shippingslip'
 import { WAREHOUSE_PINCODE } from '@/lib/constants'
-import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification } from '@/lib/notifications'
+import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendOrderShippedNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification, sendPushNotification } from '@/lib/notifications'
+import { generateTrackingUrl } from '@/lib/courier'
 import { sendPasswordResetEmail } from '@/lib/email-service'
 import { seedRbacIfEmpty, resolveUserPermissions, hasPermission, logAdminActivity, validatePrivilegeEscalation, PERMISSIONS, DEFAULT_ROLES } from '@/lib/rbac'
 import { invalidateSiteDataCache } from '@/lib/db-site-settings'
-import { DEFAULT_SOCIAL_MEDIA_SETTINGS, DEFAULT_SOCIAL_MEDIA_ITEMS, DEFAULT_CATEGORY_SHOWCASE_SETTINGS } from '@/lib/site-defaults'
-import { calculateCartPricing, validateCouponRules } from '@/lib/cart-pricing'
 
 
 // Simple in-memory server cache with TTL
@@ -136,21 +135,9 @@ function calculateShippingCharge(subtotal, shippingConfig = {}) {
 async function recalculateProductRating(db, productId) {
   if (!db || !productId) return;
   try {
-    const prod = await db.collection('products').findOne({ $or: [{ id: productId }, { slug: productId }] });
-    const targetIds = [productId];
-    if (prod) {
-      if (prod.id && !targetIds.includes(prod.id)) targetIds.push(prod.id);
-      if (prod.slug && !targetIds.includes(prod.slug)) targetIds.push(prod.slug);
-    }
-
     const publishedReviews = await db.collection('reviews').find({
-      $or: [
-        { productId: { $in: targetIds } },
-        { productSlug: { $in: targetIds } }
-      ],
-      $and: [
-        { $or: [{ status: 'published' }, { status: { $exists: false }, approved: true }] }
-      ]
+      productId,
+      $or: [{ status: 'published' }, { status: { $exists: false }, approved: true }]
     }).toArray();
 
     const totalReviews = publishedReviews.length;
@@ -170,60 +157,8 @@ async function recalculateProductRating(db, productId) {
       { $or: [{ id: productId }, { slug: productId }] },
       { $set: { rating: averageRating, reviews: totalReviews, breakdown } }
     );
-
-    // Dynamic cache busting
-    cacheBust('products:');
-    _cache.delete('admin_products');
-    _cache.delete('admin_dashboard');
-    _cache.delete('homepage_data');
-    invalidateSiteDataCache('homepage_data');
-    invalidateSiteDataCache('site_settings');
   } catch (err) {
     console.error('Failed to recalculate product rating:', err);
-  }
-}
-
-async function syncAllProductRatings(db) {
-  if (!db) return;
-  try {
-    const products = await db.collection('products').find({}).toArray();
-    for (const p of products) {
-      const targetIds = [p.id, p.slug].filter(Boolean);
-      const reviews = await db.collection('reviews').find({
-        $or: [
-          { productId: { $in: targetIds } },
-          { productSlug: { $in: targetIds } }
-        ],
-        $and: [
-          { $or: [{ status: 'published' }, { status: { $exists: false }, approved: true }] }
-        ]
-      }).toArray();
-
-      const totalReviews = reviews.length;
-      let averageRating = 0;
-      const breakdown = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
-      if (totalReviews > 0) {
-        const sum = reviews.reduce((acc, r) => {
-          const ratingVal = Math.min(5, Math.max(1, Number(r.rating) || 5));
-          breakdown[ratingVal] = (breakdown[ratingVal] || 0) + 1;
-          return acc + ratingVal;
-        }, 0);
-        averageRating = Math.round((sum / totalReviews) * 10) / 10;
-      }
-
-      await db.collection('products').updateOne(
-        { _id: p._id },
-        { $set: { rating: averageRating, reviews: totalReviews, breakdown } }
-      );
-    }
-    cacheBust('products:');
-    _cache.delete('admin_products');
-    _cache.delete('admin_dashboard');
-    _cache.delete('homepage_data');
-    invalidateSiteDataCache('homepage_data');
-    invalidateSiteDataCache('site_settings');
-  } catch (err) {
-    console.error('Failed to sync all product ratings:', err);
   }
 }
 
@@ -274,7 +209,11 @@ async function ensureIndexes(database) {
       database.collection('categories').createIndex({ id: 1 }),
       database.collection('collections').createIndex({ id: 1 }),
       database.collection('activity_logs').createIndex({ timestamp: -1 }),
-      database.collection('wishlist').createIndex({ userId: 1, productId: 1 }, { unique: true })
+      database.collection('wishlist').createIndex({ userId: 1, productId: 1 }, { unique: true }),
+      database.collection('orders').createIndex({ trackingNumber: 1 }),
+      database.collection('orders').createIndex({ 'courier.trackingNumber': 1 }),
+      database.collection('device_tokens').createIndex({ token: 1 }, { unique: true }),
+      database.collection('device_tokens').createIndex({ userId: 1 })
     ]);
   } catch (e) {
     console.warn('Index creation notice:', e.message);
@@ -289,7 +228,6 @@ async function ensureIndexes(database) {
         const database = db;
         await syncEnvAdminEmailsWithDatabase(database);
         await seedRbacIfEmpty(database);
-        await syncAllProductRatings(database);
         return database;
       } catch (err) {
         connectPromise = null; // Reset connection promise so subsequent requests can retry
@@ -542,169 +480,102 @@ async function seedIfEmpty(db) {
   }
 
   await seedFiltersIfEmpty(db);
-  await seedSocialMediaIfEmpty(db);
-  await seedCategoryShowcaseIfEmpty(db);
 }
+
+const DEFAULT_PRODUCT_FILTERS = [
+  {
+    id: 'filter-category',
+    name: 'Category',
+    key: 'category',
+    type: 'options',
+    enabled: true,
+    order: 0,
+    options: [
+      { id: 'opt-cat-gold', name: 'Gold', value: 'gold', enabled: true, order: 0 },
+      { id: 'opt-cat-diamond', name: 'Diamond', value: 'diamond', enabled: true, order: 1 },
+      { id: 'opt-cat-wedding', name: 'Wedding', value: 'wedding', enabled: true, order: 2 },
+      { id: 'opt-cat-daily-wear', name: 'Daily Wear', value: 'daily-wear', enabled: true, order: 3 },
+      { id: 'opt-cat-men', name: 'Men', value: 'men', enabled: true, order: 4 },
+      { id: 'opt-cat-women', name: 'Women', value: 'women', enabled: true, order: 5 }
+    ],
+    createdAt: new Date()
+  },
+  {
+    id: 'filter-gender',
+    name: 'Gender',
+    key: 'gender',
+    type: 'options',
+    enabled: true,
+    order: 1,
+    options: [
+      { id: 'opt-gen-women', name: 'Women', value: 'women', enabled: true, order: 0 },
+      { id: 'opt-gen-men', name: 'Men', value: 'men', enabled: true, order: 1 }
+    ],
+    createdAt: new Date()
+  },
+  {
+    id: 'filter-collection',
+    name: 'Collection',
+    key: 'collection',
+    type: 'options',
+    enabled: true,
+    order: 2,
+    options: [
+      { id: 'opt-col-trending', name: 'Trending', value: 'trending', enabled: true, order: 0 },
+      { id: 'opt-col-bestsellers', name: 'Best Sellers', value: 'best-sellers', enabled: true, order: 1 },
+      { id: 'opt-col-newarrival', name: 'New Arrival', value: 'new-arrival', enabled: true, order: 2 },
+      { id: 'opt-col-editorschoice', name: "Editors Choice", value: 'editors-choice', enabled: true, order: 3 }
+    ],
+    createdAt: new Date()
+  },
+  {
+    id: 'filter-metal',
+    name: 'Metal',
+    key: 'metal',
+    type: 'options',
+    enabled: true,
+    order: 3,
+    options: [
+      { id: 'opt-met-yg', name: 'Yellow Gold', value: 'Yellow Gold', enabled: true, order: 0 },
+      { id: 'opt-met-rg', name: 'Rose Gold', value: 'Rose Gold', enabled: true, order: 1 },
+      { id: 'opt-met-wg', name: 'White Gold', value: 'White Gold', enabled: true, order: 2 },
+      { id: 'opt-met-pt', name: 'Platinum', value: 'Platinum', enabled: true, order: 3 }
+    ],
+    createdAt: new Date()
+  },
+  {
+    id: 'filter-stone',
+    name: 'Stone',
+    key: 'stone',
+    type: 'options',
+    enabled: true,
+    order: 4,
+    options: [
+      { id: 'opt-stn-dia', name: 'Diamond', value: 'Diamond', enabled: true, order: 0 },
+      { id: 'opt-stn-polki', name: 'Polki', value: 'Uncut Polki', enabled: true, order: 1 },
+      { id: 'opt-stn-emr', name: 'Emerald', value: 'Emerald', enabled: true, order: 2 },
+      { id: 'opt-stn-onyx', name: 'Onyx', value: 'Onyx', enabled: true, order: 3 },
+      { id: 'opt-stn-none', name: 'None', value: 'None', enabled: true, order: 4 }
+    ],
+    createdAt: new Date()
+  },
+  {
+    id: 'filter-price',
+    name: 'Price',
+    key: 'price',
+    type: 'price',
+    enabled: true,
+    order: 5,
+    priceConfig: { min: 0, max: 1000000, step: 5000 },
+    options: [],
+    createdAt: new Date()
+  }
+];
 
 async function seedFiltersIfEmpty(db) {
   const count = await db.collection('product_filters').countDocuments();
   if (count === 0) {
     await db.collection('product_filters').insertMany(DEFAULT_PRODUCT_FILTERS);
-  }
-}
-
-async function seedSocialMediaIfEmpty(db) {
-  if (!db) return;
-  try {
-    const count = await db.collection('social_media').countDocuments();
-    if (count === 0) {
-      await db.collection('social_media').insertMany(
-        DEFAULT_SOCIAL_MEDIA_ITEMS.map(i => ({
-          ...i,
-          createdAt: new Date(i.createdAt || Date.now()),
-          updatedAt: new Date(i.updatedAt || Date.now())
-        }))
-      );
-    }
-    const settingsCount = await db.collection('social_media_settings').countDocuments({ id: 'default' });
-    if (settingsCount === 0) {
-      await db.collection('social_media_settings').insertOne({
-        id: 'default',
-        ...DEFAULT_SOCIAL_MEDIA_SETTINGS,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      });
-    }
-  } catch (err) {
-    console.warn('Failed to seedSocialMediaIfEmpty:', err.message);
-  }
-}
-
-async function seedCategoryShowcaseIfEmpty(db) {
-  if (!db) return;
-  try {
-    const settingsCount = await db.collection('category_showcase_settings').countDocuments({ id: 'default' });
-    if (settingsCount === 0) {
-      await db.collection('category_showcase_settings').insertOne({
-        id: 'default',
-        ...DEFAULT_CATEGORY_SHOWCASE_SETTINGS,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      });
-    }
-
-    const catCount = await db.collection('categories').countDocuments();
-    if (catCount === 0) {
-      await db.collection('categories').insertMany(
-        SEED_CATEGORIES.map((c, idx) => ({
-          ...c,
-          id: uuidv4(),
-          link: `/shop?category=${c.slug}`,
-          buttonText: 'SHOP NOW',
-          order: idx + 1,
-          displayOrder: idx + 1,
-          active: true,
-          enabled: true,
-          openInNewTab: false,
-          createdAt: new Date(),
-          updatedAt: new Date()
-        }))
-      );
-    } else {
-      // Ensure existing categories have order / displayOrder / link if missing
-      const cats = await db.collection('categories').find({}).toArray();
-      let hasMissing = false;
-      for (let i = 0; i < cats.length; i++) {
-        const cat = cats[i];
-        const updateFields = {};
-        if (cat.order === undefined && cat.displayOrder === undefined) {
-          updateFields.order = i + 1;
-          updateFields.displayOrder = i + 1;
-        }
-        if (!cat.link) {
-          updateFields.link = `/shop?category=${cat.slug}`;
-        }
-        if (!cat.buttonText) {
-          updateFields.buttonText = 'SHOP NOW';
-        }
-        if (Object.keys(updateFields).length > 0) {
-          await db.collection('categories').updateOne({ id: cat.id }, { $set: updateFields });
-          hasMissing = true;
-        }
-      }
-      if (hasMissing) {
-        _cache.delete('cats');
-        _cache.delete('admin_categories');
-        invalidateSiteDataCache('homepage_data');
-      }
-    }
-  } catch (err) {
-    console.warn('Failed to seedCategoryShowcaseIfEmpty:', err.message);
-  }
-}
-
-async function syncCategoryAndCollectionFilterOptions(db) {
-  if (!db) return;
-  try {
-    // 1. Sync Categories from categories collection into product_filters
-    const dbCats = await db.collection('categories').find({}).sort({ order: 1, createdAt: 1 }).toArray();
-    const existingCatGroup = await db.collection('product_filters').findOne({ key: 'category' });
-    if (existingCatGroup) {
-      const existingOpts = existingCatGroup.options || [];
-      const existingOptsByVal = new Map(existingOpts.map(o => [String(o.value || o.name).toLowerCase(), o]));
-      const existingOptsById = new Map(existingOpts.filter(o => o.id).map(o => [String(o.id), o]));
-
-      const catOptions = dbCats.map((c, idx) => {
-        const val = c.slug || c.name.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '-');
-        const existingOpt = existingOptsById.get(String(c.id)) || existingOptsByVal.get(val.toLowerCase()) || existingOptsByVal.get(c.name.toLowerCase());
-        const isCatActive = c.active !== false && c.enabled !== false;
-        const isOptEnabled = existingOpt ? (existingOpt.enabled !== false && isCatActive) : isCatActive;
-
-        return {
-          id: c.id || existingOpt?.id || `opt-cat-${val}`,
-          name: c.name,
-          value: val,
-          enabled: isOptEnabled,
-          order: existingOpt?.order !== undefined ? existingOpt.order : (c.order !== undefined ? Number(c.order) : idx)
-        };
-      });
-
-      await db.collection('product_filters').updateOne(
-        { key: 'category' },
-        { $set: { options: catOptions, updatedAt: new Date() } }
-      );
-    }
-
-    // 2. Sync Collections from collections collection into product_filters
-    const dbCols = await db.collection('collections').find({}).sort({ order: 1, createdAt: 1 }).toArray();
-    const existingColGroup = await db.collection('product_filters').findOne({ key: 'collection' });
-    if (existingColGroup) {
-      const existingOpts = existingColGroup.options || [];
-      const existingOptsByVal = new Map(existingOpts.map(o => [String(o.value || o.name).toLowerCase(), o]));
-      const existingOptsById = new Map(existingOpts.filter(o => o.id).map(o => [String(o.id), o]));
-
-      const colOptions = dbCols.map((c, idx) => {
-        const val = c.slug || c.name.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '-');
-        const existingOpt = existingOptsById.get(String(c.id)) || existingOptsByVal.get(val.toLowerCase()) || existingOptsByVal.get(c.name.toLowerCase());
-        const isColActive = c.active !== false && c.enabled !== false;
-        const isOptEnabled = existingOpt ? (existingOpt.enabled !== false && isColActive) : isColActive;
-
-        return {
-          id: c.id || existingOpt?.id || `opt-col-${val}`,
-          name: c.name,
-          value: val,
-          enabled: isOptEnabled,
-          order: existingOpt?.order !== undefined ? existingOpt.order : (c.order !== undefined ? Number(c.order) : idx)
-        };
-      });
-
-      await db.collection('product_filters').updateOne(
-        { key: 'collection' },
-        { $set: { options: colOptions, updatedAt: new Date() } }
-      );
-    }
-  } catch (err) {
-    console.error('Failed to syncCategoryAndCollectionFilterOptions:', err);
   }
 }
 
@@ -1037,6 +908,79 @@ async function handleRoute(request, { params }) {
 
     if (route === '/' && method === 'GET') return ok({ ok: true, app: 'MikuMantra API' })
 
+    // ============ MOBILE APP CONFIGURATION ============
+    if (route === '/app/config' && method === 'GET') {
+      const siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+      const footerDoc = await db.collection('footer').findOne({ id: 'default' });
+      return ok({
+        name: 'MikuMantra',
+        appId: 'com.mikumantra.app',
+        version: '1.0.0',
+        minVersion: '1.0.0',
+        forceUpdate: false,
+        maintenanceMode: false,
+        maintenanceMessage: '',
+        updateUrl: 'https://play.google.com/store/apps/details?id=com.mikumantra.app',
+        supportPhone: footerDoc?.company?.phone || '+918076108369',
+        supportEmail: footerDoc?.company?.email || 'concierge@mikumantra.jewels',
+        whatsappSupport: '+918076108369',
+        shipping: siteSettings?.shipping || DEFAULT_SITE_SETTINGS.shipping,
+        paymentMethods: {
+          cod: siteSettings?.paymentSettings?.cod?.enabled !== false,
+          razorpay: siteSettings?.paymentSettings?.razorpay?.enabled !== false
+        },
+        brandColors: {
+          primary: '#FAF6EF',
+          accent: '#9C6B30',
+          dark: '#1A1A1A'
+        }
+      });
+    }
+
+    // ============ ANDROID DIGITAL ASSET LINKS ============
+    if ((route === '/.well-known/assetlinks.json' || route === '/assetlinks.json') && method === 'GET') {
+      return handleCORS(NextResponse.json([
+        {
+          relation: ["delegate_permission/common.handle_all_urls"],
+          target: {
+            namespace: "android_app",
+            package_name: "com.mikumantra.app",
+            sha256_cert_fingerprints: [
+              "14:6D:E9:7F:0F:7F:02:8F:A4:4E:95:C0:D3:2F:3A:42:01:E6:36:2C:C6:6F:A5:68:55:04:1B:54:27:0C:FB:56"
+            ]
+          }
+        }
+      ]));
+    }
+
+    // ============ DEVICE TOKEN REGISTRATION (FCM PUSH NOTIFICATIONS) ============
+    if (route === '/notifications/device-token' && method === 'POST') {
+      const b = await request.json().catch(() => ({}));
+      const token = (b.token || b.fcmToken || '').trim();
+      const platform = (b.platform || 'android').toLowerCase();
+      const deviceId = (b.deviceId || '').trim();
+      if (!token) return err('Device push token is required', 400);
+
+      const currentUser = await getCurrentUser(db, request);
+      const now = new Date();
+      await db.collection('device_tokens').updateOne(
+        { token },
+        {
+          $set: {
+            token,
+            platform,
+            deviceId: deviceId || uuidv4(),
+            userId: currentUser?.id || null,
+            userEmail: currentUser?.email || null,
+            updatedAt: now
+          },
+          $setOnInsert: { createdAt: now }
+        },
+        { upsert: true }
+      );
+      return ok({ ok: true, registered: true });
+    }
+
     if (route.startsWith('/uploads/') && method === 'GET') {
       const filename = route.split('/')[2];
       if (!filename) return err('File name required', 400);
@@ -1240,60 +1184,8 @@ async function handleRoute(request, { params }) {
       const related = await db.collection('products').find({ category: p.category, id: { $ne: p.id } }).limit(4).toArray()
       return ok({ product: clean(p), related: related.map(clean) })
     }
-    if ((route === '/categories' || route === '/category-showcase') && method === 'GET') {
-      const c = cacheGet('cats');
-      if (c) return ok(c);
-      await seedCategoryShowcaseIfEmpty(db);
-      const [list, settingsDoc] = await Promise.all([
-        db.collection('categories').find({ active: { $ne: false }, enabled: { $ne: false } }).sort({ order: 1, displayOrder: 1, createdAt: 1 }).toArray(),
-        db.collection('category_showcase_settings').findOne({ id: 'default' })
-      ]);
-      const settings = {
-        ...DEFAULT_CATEGORY_SHOWCASE_SETTINGS,
-        ...(settingsDoc ? clean(settingsDoc) : {})
-      };
-      const formatted = list.map(c => {
-        const cleanItem = clean(c);
-        return {
-          ...cleanItem,
-          id: cleanItem.id,
-          name: cleanItem.name,
-          slug: cleanItem.slug,
-          img: cleanItem.img || cleanItem.imageUrl || '',
-          imageUrl: cleanItem.img || cleanItem.imageUrl || '',
-          link: cleanItem.link || `/shop?category=${cleanItem.slug}`,
-          buttonText: cleanItem.buttonText || settings.buttonText || 'SHOP NOW',
-          displayOrder: Number(cleanItem.order ?? cleanItem.displayOrder ?? 0),
-          isActive: cleanItem.active !== false && cleanItem.enabled !== false,
-          openInNewTab: !!cleanItem.openInNewTab
-        };
-      });
-      const r = {
-        success: true,
-        data: {
-          categories: formatted,
-          settings
-        },
-        categories: formatted,
-        settings
-      };
-      cacheSet('cats', r, 3000);
-      return ok(r);
-    }
-    if (route === '/category-showcase/settings' && method === 'GET') {
-      await seedCategoryShowcaseIfEmpty(db);
-      const settingsDoc = await db.collection('category_showcase_settings').findOne({ id: 'default' });
-      const settings = {
-        ...DEFAULT_CATEGORY_SHOWCASE_SETTINGS,
-        ...(settingsDoc ? clean(settingsDoc) : {})
-      };
-      return ok({
-        success: true,
-        data: { settings },
-        settings
-      });
-    }
-    if (route === '/collections' && method === 'GET') { const c = cacheGet('cols'); if (c) return ok(c); const list = await db.collection('collections').find({}).toArray(); const r = { collections: list.map(clean) }; cacheSet('cols', r, 3000); return ok(r) }
+    if (route === '/categories' && method === 'GET') { const c = cacheGet('cats'); if (c) return ok(c); const list = await db.collection('categories').find({}).toArray(); const r = { categories: list.map(clean) }; cacheSet('cats', r, 300000); return ok(r) }
+    if (route === '/collections' && method === 'GET') { const c = cacheGet('cols'); if (c) return ok(c); const list = await db.collection('collections').find({}).toArray(); const r = { collections: list.map(clean) }; cacheSet('cols', r, 300000); return ok(r) }
     if (route === '/banners' && method === 'GET') {
       const c = cacheGet('bans');
       if (c) return ok(c);
@@ -1303,26 +1195,6 @@ async function handleRoute(request, { params }) {
       ]);
       const r = { banners: list.map(clean), transition: settings?.transition || 'fade' };
       cacheSet('bans', r, 300000);
-      return ok(r);
-    }
-    if (route === '/social-media' && method === 'GET') {
-      const c = cacheGet('social_media_public');
-      if (c) return ok(c);
-      await seedSocialMediaIfEmpty(db);
-      const [items, settingsDoc] = await Promise.all([
-        db.collection('social_media').find({ isActive: true }).sort({ displayOrder: 1 }).toArray(),
-        db.collection('social_media_settings').findOne({ id: 'default' })
-      ]);
-      const settings = {
-        ...DEFAULT_SOCIAL_MEDIA_SETTINGS,
-        ...(settingsDoc || {})
-      };
-      const r = {
-        success: true,
-        data: items.map(clean),
-        settings: clean(settings)
-      };
-      cacheSet('social_media_public', r, 60000);
       return ok(r);
     }
     if (route === '/footer' && method === 'GET') {
@@ -1359,7 +1231,6 @@ async function handleRoute(request, { params }) {
           ...DEFAULT_SITE_SETTINGS.shipping,
           ...((settings && settings.shipping) || {})
         },
-        couponHelperText: settings?.couponHelperText !== undefined ? settings.couponHelperText : (DEFAULT_SITE_SETTINGS.couponHelperText || ''),
         paymentSettings: {
           razorpay: {
             enabled: rawPay?.razorpay?.enabled !== false,
@@ -1400,10 +1271,9 @@ async function handleRoute(request, { params }) {
       const c = cacheGet('product_filters');
       if (c) return ok(c);
       await seedFiltersIfEmpty(db);
-      await syncCategoryAndCollectionFilterOptions(db);
       const list = await db.collection('product_filters').find({}).sort({ order: 1 }).toArray();
       const r = { groups: list.map(clean) };
-      cacheSet('product_filters', r, 5000);
+      cacheSet('product_filters', r, 300000);
       return ok(r);
     }
 
@@ -1926,220 +1796,66 @@ async function handleRoute(request, { params }) {
     if (route === '/wishlist' && method === 'GET') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const list = await db.collection('wishlist').find({ userId: u.id }).sort({ createdAt: -1 }).toArray();
-      const rawProductIds = list.map(w => w.productId).filter(Boolean);
+      const productIds = list.map(w => w.productId).filter(Boolean);
       let prods = [];
-      if (rawProductIds.length > 0) {
-        prods = await db.collection('products').find({
-          $or: [
-            { id: { $in: rawProductIds } },
-            { slug: { $in: rawProductIds } }
-          ]
-        }).toArray();
+      if (productIds.length > 0) {
+        prods = await db.collection('products').find({ id: { $in: productIds } }).toArray();
       }
-
-      const foundIds = new Set();
-      prods.forEach(p => {
-        if (p.id) foundIds.add(p.id);
-        if (p.slug) foundIds.add(p.slug);
-      });
-
-      const validList = list.filter(w => foundIds.has(w.productId));
-      const orphanIds = rawProductIds.filter(id => !foundIds.has(id));
-
-      if (orphanIds.length > 0) {
-        db.collection('wishlist').deleteMany({ userId: u.id, productId: { $in: orphanIds } }).catch(() => {});
-      }
-
-      return ok({ wishlist: validList.map(clean), products: prods.map(clean) });
+      return ok({ wishlist: list.map(clean), products: prods.map(clean) })
     }
     if (route === '/wishlist' && method === 'POST') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const b = await request.json();
       if (!b.productId) return err('Product ID is required.', 400);
-      const p = await db.collection('products').findOne({ $or: [{ id: b.productId }, { slug: b.productId }] });
+      const p = await db.collection('products').findOne({ id: b.productId });
       if (!p) return err('Product not found.', 404);
-      const existing = await db.collection('wishlist').findOne({ userId: u.id, productId: p.id });
+      const existing = await db.collection('wishlist').findOne({ userId: u.id, productId: b.productId });
       if (existing) return ok({ wishlist: clean(existing) });
-      const item = { id: uuidv4(), userId: u.id, productId: p.id, createdAt: new Date() };
+      const item = { id: uuidv4(), userId: u.id, productId: b.productId, createdAt: new Date() };
       await db.collection('wishlist').insertOne(item);
-      return ok({ wishlist: clean(item) });
+      return ok({ wishlist: clean(item) })
     }
     if (route.startsWith('/wishlist/') && method === 'DELETE') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const productId = route.split('/')[2];
-      await db.collection('wishlist').deleteMany({ userId: u.id, productId });
-      return ok({ ok: true });
+      await db.collection('wishlist').deleteOne({ userId: u.id, productId });
+      return ok({ ok: true })
     }
 
-    // ============ DATABASE CART PERSISTENCE & PRICING ============
+    // ============ DATABASE CART PERSISTENCE ============
     if (route === '/cart' && method === 'GET') {
       const u = await getCurrentUser(db, request);
-      if (!u) return ok({ items: [], subtotal: 0, discount: 0, coupon: null, couponCode: null, couponValid: true, total: 0 });
-
+      if (!u) return ok({ items: [] });
       const cartDoc = await db.collection('cart').findOne({ userId: u.id });
-      if (!cartDoc || !Array.isArray(cartDoc.items) || cartDoc.items.length === 0) {
-        return ok({ items: [], subtotal: 0, discount: 0, coupon: null, couponCode: null, couponValid: true, total: 0 });
-      }
-
-      let siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
-      const shippingConfig = {
-        ...DEFAULT_SITE_SETTINGS.shipping,
-        ...((siteSettings && siteSettings.shipping) || {})
-      };
-
-      const pricing = await calculateCartPricing({
-        db,
-        items: cartDoc.items,
-        couponCode: cartDoc.coupon || cartDoc.couponCode || null,
-        giftWrap: !!cartDoc.giftWrap,
-        shippingConfig,
-        user: u
-      });
-
-      // If coupon was present in DB cart but is now invalid, synchronize DB atomically
-      if (cartDoc.coupon && !pricing.couponValid) {
-        await db.collection('cart').updateOne(
-          { userId: u.id },
-          {
-            $set: {
-              coupon: null,
-              couponCode: null,
-              discount: 0,
-              subtotal: pricing.subtotal,
-              total: pricing.total,
-              updatedAt: new Date()
-            }
-          }
-        );
-      }
-
-      return ok(pricing);
+      return ok({ items: cartDoc?.items || [] });
     }
-
     if (route === '/cart' && method === 'PUT') {
       const u = await getCurrentUser(db, request);
       if (!u) return err('Not authenticated', 401);
-      const b = await request.json().catch(() => ({}));
+      const b = await request.json();
       const items = Array.isArray(b.items) ? b.items : [];
-      const incomingCoupon = b.coupon !== undefined ? b.coupon : (b.couponCode !== undefined ? b.couponCode : null);
-
-      let siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
-      const shippingConfig = {
-        ...DEFAULT_SITE_SETTINGS.shipping,
-        ...((siteSettings && siteSettings.shipping) || {})
-      };
-
-      const pricing = await calculateCartPricing({
-        db,
-        items,
-        couponCode: incomingCoupon,
-        giftWrap: !!b.giftWrap,
-        shippingConfig,
-        user: u
-      });
-
       await db.collection('cart').updateOne(
         { userId: u.id },
-        {
-          $set: {
-            userId: u.id,
-            items: pricing.items,
-            coupon: pricing.couponCode,
-            couponCode: pricing.couponCode,
-            discount: pricing.discount,
-            subtotal: pricing.subtotal,
-            total: pricing.total,
-            giftWrap: !!b.giftWrap,
-            updatedAt: new Date()
-          }
-        },
+        { $set: { userId: u.id, items, updatedAt: new Date() } },
         { upsert: true }
       );
-
-      return ok(pricing);
+      return ok({ items });
     }
-
     if (route === '/cart' && method === 'DELETE') {
       const u = await getCurrentUser(db, request);
       if (!u) return err('Not authenticated', 401);
       await db.collection('cart').deleteOne({ userId: u.id });
-      return ok({ items: [], subtotal: 0, discount: 0, coupon: null, couponCode: null, couponValid: true, total: 0 });
-    }
-
-    // ============ CART PRICING & REVALIDATION ============
-    if (route === '/cart/pricing' && method === 'POST') {
-      const body = await request.json().catch(() => ({}));
-      const u = await getCurrentUser(db, request);
-      let siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
-      const shippingConfig = {
-        ...DEFAULT_SITE_SETTINGS.shipping,
-        ...((siteSettings && siteSettings.shipping) || {})
-      };
-
-      const pricing = await calculateCartPricing({
-        db,
-        items: body.items || [],
-        couponCode: body.coupon || body.couponCode || null,
-        giftWrap: !!body.giftWrap,
-        shippingConfig,
-        user: u
-      });
-
-      return ok(pricing);
-    }
-
-    // ============ COUPONS SETTINGS (public) ============
-    if (route === '/coupons/settings' && method === 'GET') {
-      const isNoCache = request.headers.get('cache-control')?.includes('no-cache') || request.headers.get('cache-control')?.includes('no-store');
-      if (!isNoCache) {
-        const cached = cacheGet('coupon_settings');
-        if (cached) return ok(cached);
-      }
-      let settings = await db.collection('site_settings').findOne({ id: 'default' });
-      const helperText = settings?.couponHelperText !== undefined
-        ? settings.couponHelperText
-        : (DEFAULT_SITE_SETTINGS.couponHelperText || 'Try MIKUMANTRA10 or WELCOME2000');
-      const res = {
-        success: true,
-        data: {
-          helperText
-        },
-        helperText
-      };
-      cacheSet('coupon_settings', res, 5000);
-      return ok(res);
+      return ok({ items: [] });
     }
 
     // ============ COUPONS (public validate) ============
     if (route === '/coupons/validate' && method === 'POST') {
-      const body = await request.json().catch(() => ({}));
-      const code = (body.code || '').trim().toUpperCase();
-      const subtotal = Number(body.subtotal) || 0;
-      const items = Array.isArray(body.items) ? body.items : [];
-      const user = await getCurrentUser(db, request);
-
-      if (!code) return err('Coupon code is required', 400);
-
-      const c = await db.collection('coupons').findOne({
-        code,
-        $or: [{ active: true }, { isActive: true }]
-      });
-      if (!c) return err('Invalid coupon', 404);
-
-      const valResult = validateCouponRules(c, subtotal, { items, user, db });
-      if (!valResult.valid) {
-        return err(valResult.message || `Minimum order ₹${valResult.minOrder} required`, 400);
-      }
-
-      return ok({
-        code: valResult.code,
-        discount: valResult.discount,
-        type: valResult.type,
-        value: valResult.value,
-        minOrder: valResult.minOrder,
-        maxDiscount: valResult.maxDiscount,
-        valid: true
-      });
+      const { code, subtotal } = await request.json()
+      const c = await db.collection('coupons').findOne({ code: (code || '').toUpperCase(), active: true })
+      if (!c) return err('Invalid coupon', 404)
+      if ((c.minOrder || 0) > subtotal) return err(`Minimum order ₹${c.minOrder} required`)
+      const discount = c.type === 'percent' ? Math.round(subtotal * c.value / 100) : c.value
+      return ok({ code: c.code, discount, type: c.type, value: c.value })
     }
 
     // ============ CART VALIDATION ============
@@ -2268,23 +1984,19 @@ async function handleRoute(request, { params }) {
         });
       }
 
-      // Recalculate coupon discount server-side using centralized coupon engine
+      // Recalculate coupon discount server-side
       let calculatedDiscount = 0;
       let couponCode = null;
-      let validCouponDoc = null;
-
-      if (body.coupon && typeof body.coupon === 'string' && body.coupon.trim()) {
+      if (body.coupon && typeof body.coupon === 'string') {
         const code = body.coupon.trim().toUpperCase();
-        const couponDoc = await db.collection('coupons').findOne({
-          code,
-          $or: [{ active: true }, { isActive: true }]
-        });
+        const couponDoc = await db.collection('coupons').findOne({ code, active: true });
         if (couponDoc) {
-          const valResult = validateCouponRules(couponDoc, calculatedSubtotal, { items: validatedItems, user: u });
-          if (valResult.valid) {
-            couponCode = valResult.code;
-            calculatedDiscount = valResult.discount;
-            validCouponDoc = couponDoc;
+          if (calculatedSubtotal >= (couponDoc.minOrder || 0)) {
+            couponCode = couponDoc.code;
+            calculatedDiscount = couponDoc.type === 'percent'
+              ? Math.round(calculatedSubtotal * couponDoc.value / 100)
+              : couponDoc.value;
+            calculatedDiscount = Math.min(calculatedDiscount, calculatedSubtotal);
           }
         }
       }
@@ -2386,22 +2098,6 @@ async function handleRoute(request, { params }) {
       }
 
       await db.collection('orders').insertOne(order);
-
-      // Invalidate / clear the user's cart in database
-      await db.collection('cart').deleteOne({ userId: u.id });
-
-      // Increment coupon usage count if applied
-      if (validCouponDoc) {
-        try {
-          await db.collection('coupons').updateOne(
-            { _id: validCouponDoc._id },
-            { $inc: { usedCount: 1, usageCount: 1 } }
-          );
-        } catch (couponErr) {
-          console.warn('Failed to increment coupon usage:', couponErr.message);
-        }
-      }
-
       cacheBust('products:');
 
       // Trigger WhatsApp & SMS notification for order placement
@@ -2518,8 +2214,8 @@ async function handleRoute(request, { params }) {
       const order = await db.collection('orders').findOne({ id });
       if (!order) return err('Order not found', 404);
 
-      if (order.userId !== u.id) {
-        return err('Unauthorized access: You can only cancel your own orders.', 403);
+      if (order.userId !== u.id && u.role !== 'admin') {
+        return err('Unauthorized access to order.', 403);
       }
 
       if (order.status === 'cancelled') {
@@ -2557,9 +2253,7 @@ async function handleRoute(request, { params }) {
           $set: {
             status: 'cancelled',
             cancelledAt: now,
-            cancelledBy: 'customer',
-            cancelledByUserId: u.id,
-            cancelledByRole: 'customer',
+            cancelledBy: u.role === 'admin' ? 'admin' : 'customer',
             cancellationReason: reason,
             cancellationNote: note,
             ...refundDoc
@@ -2568,7 +2262,7 @@ async function handleRoute(request, { params }) {
             statusHistory: {
               status: 'cancelled',
               at: now,
-              note: `Cancelled by customer: ${cancellationReasonStr}`
+              note: `Cancelled by ${u.role === 'admin' ? 'admin' : 'customer'}: ${cancellationReasonStr}`
             }
           }
         }
@@ -2600,6 +2294,94 @@ async function handleRoute(request, { params }) {
         order: clean(updatedOrder)
       });
     }
+
+    // ============ PUBLIC ORDER TRACKING ============
+    if ((route === '/orders/track' || route === '/track') && method === 'GET') {
+      const orderNumber = (q.get('orderNumber') || q.get('order') || '').trim();
+      const contact = (q.get('contact') || q.get('phone') || q.get('email') || '').trim();
+      const awb = (q.get('awb') || q.get('trackingNumber') || '').trim();
+
+      if (!orderNumber && !awb) {
+        return err('Order Number or AWB Tracking Number is required.', 400);
+      }
+
+      let order = null;
+      if (awb) {
+        const escapedAwb = awb.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
+        order = await db.collection('orders').findOne({
+          $or: [
+            { trackingNumber: { $regex: `^${escapedAwb}$`, $options: 'i' } },
+            { 'courier.trackingNumber': { $regex: `^${escapedAwb}$`, $options: 'i' } }
+          ]
+        });
+      } else if (orderNumber) {
+        const cleanOrderNum = orderNumber.replace(/[^a-zA-Z0-9-]/g, '');
+        const orderCandidates = await db.collection('orders').find({
+          $or: [
+            { orderNumber: { $regex: cleanOrderNum, $options: 'i' } },
+            { id: orderNumber }
+          ]
+        }).toArray();
+
+        if (orderCandidates.length > 0) {
+          const currentUser = await getCurrentUser(db, request);
+          if (currentUser) {
+            order = orderCandidates.find(o => o.userId === currentUser.id) || null;
+          }
+
+          if (!order && contact) {
+            const rawDigits = contact.replace(/[^0-9]/g, '');
+            const phoneEnd = rawDigits.slice(-10);
+            const contactLower = contact.toLowerCase();
+
+            order = orderCandidates.find(o => {
+              const orderPhoneDigits = (o.address?.phone || '').replace(/[^0-9]/g, '');
+              const phoneMatches = phoneEnd && orderPhoneDigits.endsWith(phoneEnd);
+              const emailMatches = (o.guestEmail && o.guestEmail.toLowerCase() === contactLower);
+              return phoneMatches || emailMatches;
+            }) || null;
+          } else if (!order && !contact && (currentUser?.role === 'admin' || orderCandidates.length === 1)) {
+            order = orderCandidates[0];
+          }
+        }
+      }
+
+      if (!order) {
+        return err('No matching order found. Please check your order details and contact number.', 404);
+      }
+
+      // Return sanitized order details for public tracking
+      const sanitizedOrder = {
+        id: order.id,
+        orderNumber: order.orderNumber,
+        status: order.status,
+        statusHistory: order.statusHistory || [],
+        placedAt: order.placedAt,
+        estimatedDelivery: order.estimatedDelivery,
+        courier: order.courier || null,
+        carrier: order.carrier || order.courier?.carrier || null,
+        trackingNumber: order.trackingNumber || order.courier?.trackingNumber || null,
+        trackingUrl: order.trackingUrl || order.courier?.trackingUrl || null,
+        items: (order.items || []).map(i => ({
+          id: i.id,
+          name: i.name,
+          image: i.image,
+          qty: i.qty,
+          price: i.price,
+          subtotal: i.subtotal
+        })),
+        amounts: order.amounts,
+        address: {
+          fullName: order.address?.fullName,
+          city: order.address?.city,
+          state: order.address?.state,
+          pincode: order.address?.pincode
+        }
+      };
+
+      return ok({ order: sanitizedOrder });
+    }
+
     if (route.startsWith('/orders/') && method === 'GET') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const id = route.split('/')[2];
@@ -3079,35 +2861,15 @@ async function handleRoute(request, { params }) {
 
     // ============ RAZORPAY PAYMENT GATEWAY ============
     if (route === '/payment/razorpay/order' && method === 'POST') {
-      const body = await request.json();
-      let orderAmount = Number(body.amount);
+      const { amount } = await request.json();
+      if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
+        return err('Valid order amount is required.', 400);
+      }
 
       const siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
       const rzpConfig = siteSettings?.paymentSettings?.razorpay;
       if (rzpConfig && rzpConfig.enabled === false) {
         return err('Razorpay payment gateway is currently disabled by store administrator.', 400);
-      }
-
-      // If items are passed from checkout, enforce server-verified pricing
-      if (Array.isArray(body.items) && body.items.length > 0) {
-        const u = await getCurrentUser(db, request);
-        const shippingConfig = {
-          ...DEFAULT_SITE_SETTINGS.shipping,
-          ...((siteSettings && siteSettings.shipping) || {})
-        };
-        const pricing = await calculateCartPricing({
-          db,
-          items: body.items,
-          couponCode: body.coupon || null,
-          giftWrap: !!body.giftWrap,
-          shippingConfig,
-          user: u
-        });
-        orderAmount = pricing.total;
-      }
-
-      if (!orderAmount || isNaN(orderAmount) || orderAmount <= 0) {
-        return err('Valid order amount is required.', 400);
       }
 
       const keyId = (rzpConfig?.keyId && rzpConfig.keyId.trim())
@@ -3130,7 +2892,7 @@ async function handleRoute(request, { params }) {
               'Authorization': authHeader
             },
             body: JSON.stringify({
-              amount: Math.round(orderAmount * 100), // amount in paise
+              amount: Math.round(Number(amount) * 100), // amount in paise
               currency: 'INR',
               receipt: `rcpt_${uuidv4().slice(0, 10)}`
             })
@@ -3156,7 +2918,7 @@ async function handleRoute(request, { params }) {
       const id = 'order_MOCK' + Math.random().toString(36).slice(2, 12);
       return ok({
         id,
-        amount: Math.round(orderAmount * 100),
+        amount: Math.round(Number(amount) * 100),
         currency: 'INR',
         key: keyId || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || 'rzp_test_mockkey',
         mock: true
@@ -3843,12 +3605,8 @@ async function handleRoute(request, { params }) {
         _cache.delete('footer');
         _cache.delete('product_filters');
         _cache.delete('site_settings');
-        _cache.delete('coupon_settings');
         _cache.delete('header_config');
         _cache.delete('admin_dashboard');
-        _cache.delete('social_media_public');
-        cacheBust('social_media');
-        cacheBust('coupons');
         invalidateUserSessionCache();
         try { invalidateSiteDataCache(); } catch (e) {}
       }
@@ -4363,13 +4121,11 @@ async function handleRoute(request, { params }) {
 
       if (sub.startsWith('product-filters')) {
         _cache.delete('product_filters');
-        cacheBust('product_filters');
         const parts = sub.split('/');
 
         // GET /api/admin/product-filters
         if (parts.length === 1 && method === 'GET') {
           await seedFiltersIfEmpty(db);
-          await syncCategoryAndCollectionFilterOptions(db);
           const list = await db.collection('product_filters').find({}).sort({ order: 1 }).toArray();
           return ok({ groups: list.map(clean) });
         }
@@ -4391,14 +4147,7 @@ async function handleRoute(request, { params }) {
             type: body.type || 'options',
             enabled: body.enabled !== false,
             order: parseInt(body.order ?? (await db.collection('product_filters').countDocuments())),
-            priceConfig: body.priceConfig ? {
-              min: Number(body.priceConfig.min ?? 0),
-              max: Number(body.priceConfig.max ?? 1000000),
-              step: Number(body.priceConfig.step ?? 5000)
-            } : { min: 0, max: 1000000, step: 5000 },
-            min: body.priceConfig?.min !== undefined ? Number(body.priceConfig.min) : 0,
-            max: body.priceConfig?.max !== undefined ? Number(body.priceConfig.max) : 1000000,
-            step: body.priceConfig?.step !== undefined ? Number(body.priceConfig.step) : 5000,
+            priceConfig: body.priceConfig || { min: 0, max: 1000000, step: 5000 },
             options: Array.isArray(body.options) ? body.options : [],
             createdAt: new Date()
           };
@@ -4417,8 +4166,6 @@ async function handleRoute(request, { params }) {
           if (body.groupId && Array.isArray(body.options)) {
             await db.collection('product_filters').updateOne({ id: body.groupId }, { $set: { options: body.options } });
           }
-          _cache.delete('product_filters');
-          cacheBust('product_filters');
           return ok({ ok: true });
         }
 
@@ -4432,22 +4179,11 @@ async function handleRoute(request, { params }) {
           if (body.type !== undefined) updateDoc.type = body.type;
           if (body.enabled !== undefined) updateDoc.enabled = !!body.enabled;
           if (body.order !== undefined) updateDoc.order = parseInt(body.order);
-          if (body.priceConfig !== undefined) {
-            updateDoc.priceConfig = {
-              min: Number(body.priceConfig.min ?? 0),
-              max: Number(body.priceConfig.max ?? 1000000),
-              step: Number(body.priceConfig.step ?? 5000)
-            };
-            updateDoc.min = updateDoc.priceConfig.min;
-            updateDoc.max = updateDoc.priceConfig.max;
-            updateDoc.step = updateDoc.priceConfig.step;
-          }
+          if (body.priceConfig !== undefined) updateDoc.priceConfig = body.priceConfig;
           if (Array.isArray(body.options)) updateDoc.options = body.options;
           updateDoc.updatedAt = new Date();
 
           await db.collection('product_filters').updateOne({ id }, { $set: updateDoc });
-          _cache.delete('product_filters');
-          cacheBust('product_filters');
           const updated = await db.collection('product_filters').findOne({ id });
           return ok({ group: clean(updated) });
         }
@@ -4456,8 +4192,6 @@ async function handleRoute(request, { params }) {
         if (parts.length === 2 && method === 'DELETE') {
           const id = parts[1];
           await db.collection('product_filters').deleteOne({ id });
-          _cache.delete('product_filters');
-          cacheBust('product_filters');
           return ok({ ok: true });
         }
 
@@ -4482,48 +4216,6 @@ async function handleRoute(request, { params }) {
           };
 
           await db.collection('product_filters').updateOne({ id }, { $push: { options: newOpt } });
-
-          // If added to Category filter group, also ensure it exists in categories collection
-          if (group.key === 'category') {
-            const catSlug = val.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-            const catExists = await db.collection('categories').findOne({ $or: [{ slug: catSlug }, { name: body.name.trim() }] });
-            if (!catExists) {
-              await db.collection('categories').insertOne({
-                id: newOpt.id,
-                name: body.name.trim(),
-                slug: catSlug,
-                img: 'https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?crop=entropy&cs=srgb&fm=jpg&q=85',
-                active: newOpt.enabled,
-                enabled: newOpt.enabled,
-                order: newOpt.order,
-                createdAt: new Date()
-              });
-            }
-            _cache.delete('cats');
-            cacheBust('cats');
-          }
-
-          // If added to Collection filter group, also ensure it exists in collections collection
-          if (group.key === 'collection') {
-            const colSlug = val.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-            const colExists = await db.collection('collections').findOne({ $or: [{ slug: colSlug }, { name: body.name.trim() }] });
-            if (!colExists) {
-              await db.collection('collections').insertOne({
-                id: newOpt.id,
-                name: body.name.trim(),
-                slug: colSlug,
-                active: newOpt.enabled,
-                enabled: newOpt.enabled,
-                order: newOpt.order,
-                createdAt: new Date()
-              });
-            }
-            _cache.delete('cols');
-            cacheBust('cols');
-          }
-
-          _cache.delete('product_filters');
-          cacheBust('product_filters');
           return ok({ option: newOpt });
         }
 
@@ -4536,57 +4228,20 @@ async function handleRoute(request, { params }) {
           const group = await db.collection('product_filters').findOne({ id });
           if (!group) return err('Filter group not found', 404);
 
-          let updatedOpt = null;
           const updatedOptions = (group.options || []).map(opt => {
             if (opt.id === optionId) {
-              updatedOpt = {
+              return {
                 ...opt,
                 name: body.name !== undefined ? body.name.trim() : opt.name,
                 value: body.value !== undefined ? body.value.trim() : opt.value,
                 enabled: body.enabled !== undefined ? !!body.enabled : opt.enabled,
                 order: body.order !== undefined ? parseInt(body.order) : opt.order
               };
-              return updatedOpt;
             }
             return opt;
           });
 
           await db.collection('product_filters').updateOne({ id }, { $set: { options: updatedOptions } });
-
-          // If this is Category filter, sync enabled/name changes with categories collection
-          if (group.key === 'category' && updatedOpt) {
-            const catQuery = { $or: [{ id: optionId }, { slug: updatedOpt.value }, { name: updatedOpt.name }] };
-            const catUpdate = {};
-            if (body.enabled !== undefined) {
-              catUpdate.active = !!body.enabled;
-              catUpdate.enabled = !!body.enabled;
-            }
-            if (body.name !== undefined) catUpdate.name = body.name.trim();
-            if (Object.keys(catUpdate).length > 0) {
-              await db.collection('categories').updateMany(catQuery, { $set: catUpdate });
-            }
-            _cache.delete('cats');
-            cacheBust('cats');
-          }
-
-          // If this is Collection filter, sync enabled/name changes with collections collection
-          if (group.key === 'collection' && updatedOpt) {
-            const colQuery = { $or: [{ id: optionId }, { slug: updatedOpt.value }, { name: updatedOpt.name }] };
-            const colUpdate = {};
-            if (body.enabled !== undefined) {
-              colUpdate.active = !!body.enabled;
-              colUpdate.enabled = !!body.enabled;
-            }
-            if (body.name !== undefined) colUpdate.name = body.name.trim();
-            if (Object.keys(colUpdate).length > 0) {
-              await db.collection('collections').updateMany(colQuery, { $set: colUpdate });
-            }
-            _cache.delete('cols');
-            cacheBust('cols');
-          }
-
-          _cache.delete('product_filters');
-          cacheBust('product_filters');
           return ok({ ok: true });
         }
 
@@ -4594,27 +4249,7 @@ async function handleRoute(request, { params }) {
         if (parts.length === 4 && parts[2] === 'options' && method === 'DELETE') {
           const id = parts[1];
           const optionId = parts[3];
-          const group = await db.collection('product_filters').findOne({ id });
-          const targetOpt = (group?.options || []).find(o => o.id === optionId);
-
           await db.collection('product_filters').updateOne({ id }, { $pull: { options: { id: optionId } } });
-
-          // If category group, also remove or deactivate from categories collection
-          if (group?.key === 'category' && targetOpt) {
-            await db.collection('categories').deleteMany({ $or: [{ id: optionId }, { slug: targetOpt.value }] });
-            _cache.delete('cats');
-            cacheBust('cats');
-          }
-
-          // If collection group, also remove or deactivate from collections collection
-          if (group?.key === 'collection' && targetOpt) {
-            await db.collection('collections').deleteMany({ $or: [{ id: optionId }, { slug: targetOpt.value }] });
-            _cache.delete('cols');
-            cacheBust('cols');
-          }
-
-          _cache.delete('product_filters');
-          cacheBust('product_filters');
           return ok({ ok: true });
         }
       }
@@ -4872,232 +4507,6 @@ async function handleRoute(request, { params }) {
         }
       }
 
-      // ============ ADMIN: SOCIAL MEDIA / FOLLOW OUR WORLD ============
-      if (sub.startsWith('social-media')) {
-        const parts = sub.split('/');
-
-        // Helper for URL validation
-        const isValidUrl = (str) => {
-          try {
-            const parsed = new URL(str);
-            return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-          } catch {
-            return false;
-          }
-        };
-
-        // GET /api/admin/social-media (List all items + settings)
-        if (parts.length === 1 && method === 'GET') {
-          if (!hasPermission(admin, 'settings.view')) return err('Permission denied: settings.view required', 403);
-          await seedSocialMediaIfEmpty(db);
-          const [items, settingsDoc] = await Promise.all([
-            db.collection('social_media').find({}).sort({ displayOrder: 1, createdAt: -1 }).toArray(),
-            db.collection('social_media_settings').findOne({ id: 'default' })
-          ]);
-          const settings = {
-            ...DEFAULT_SOCIAL_MEDIA_SETTINGS,
-            ...(settingsDoc || {})
-          };
-          return ok({
-            success: true,
-            items: items.map(clean),
-            settings: clean(settings)
-          });
-        }
-
-        // POST /api/admin/social-media (Create new item)
-        if (parts.length === 1 && method === 'POST') {
-          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied: settings.edit required', 403);
-          const body = await request.json();
-          const rawUrl = (body.url || '').trim();
-          const rawThumb = (body.thumbnailUrl || body.thumbnail || '').trim();
-
-          if (!rawUrl) return err('Social media URL is required', 400);
-          if (!isValidUrl(rawUrl)) return err('Please enter a valid URL (e.g. https://www.instagram.com/p/...)', 400);
-          if (!rawThumb) return err('Thumbnail image is required', 400);
-
-          const count = await db.collection('social_media').countDocuments();
-          const newItem = {
-            id: uuidv4(),
-            platform: body.platform || 'Instagram',
-            url: rawUrl,
-            thumbnailUrl: rawThumb,
-            title: (body.title || body.caption || '').trim(),
-            displayOrder: body.displayOrder !== undefined && body.displayOrder !== '' ? Number(body.displayOrder) : count + 1,
-            isActive: body.isActive !== undefined ? !!body.isActive : true,
-            openInNewTab: body.openInNewTab !== undefined ? !!body.openInNewTab : true,
-            createdAt: new Date(),
-            updatedAt: new Date()
-          };
-
-          await db.collection('social_media').insertOne(newItem);
-          _cache.delete('social_media_public');
-          _cache.delete('homepage_data');
-          cacheBust('social_media');
-          invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) {}
-
-          await logAdminActivity(db, {
-            admin,
-            action: 'SOCIAL_MEDIA_CREATED',
-            module: 'SOCIAL_MEDIA',
-            targetId: newItem.id,
-            targetName: newItem.platform + ' Post',
-            metadata: { url: newItem.url, platform: newItem.platform },
-            request
-          });
-
-          return ok({ success: true, item: clean(newItem) });
-        }
-
-        // PUT /api/admin/social-media/settings (Update global section settings)
-        if (parts.length === 2 && parts[1] === 'settings' && method === 'PUT') {
-          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied: settings.edit required', 403);
-          const body = await request.json();
-          const updateDoc = {};
-          if (body.showSection !== undefined) updateDoc.showSection = !!body.showSection;
-          if (body.eyebrow !== undefined) updateDoc.eyebrow = String(body.eyebrow).trim();
-          if (body.title !== undefined) updateDoc.title = String(body.title).trim();
-          if (body.subtitle !== undefined) updateDoc.subtitle = String(body.subtitle).trim();
-          if (body.maxVisible !== undefined) updateDoc.maxVisible = Math.max(1, Math.min(24, parseInt(body.maxVisible) || 6));
-          if (body.hoverAnimation !== undefined) updateDoc.hoverAnimation = !!body.hoverAnimation;
-          if (body.hoverScale !== undefined) updateDoc.hoverScale = Math.max(1.01, Math.min(1.5, Number(body.hoverScale) || 1.10));
-          updateDoc.updatedAt = new Date();
-
-          await db.collection('social_media_settings').updateOne(
-            { id: 'default' },
-            { $set: updateDoc },
-            { upsert: true }
-          );
-
-          _cache.delete('social_media_public');
-          _cache.delete('homepage_data');
-          cacheBust('social_media');
-          invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) {}
-
-          const updated = await db.collection('social_media_settings').findOne({ id: 'default' });
-          return ok({ success: true, settings: clean({ ...DEFAULT_SOCIAL_MEDIA_SETTINGS, ...updated }) });
-        }
-
-        // PATCH /api/admin/social-media/reorder (Bulk reorder displayOrder)
-        if (parts.length === 2 && parts[1] === 'reorder' && (method === 'PATCH' || method === 'PUT')) {
-          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied: settings.edit required', 403);
-          const body = await request.json();
-          const items = body.items || body.order || [];
-          if (!Array.isArray(items)) return err('Items array is required for reordering', 400);
-
-          const ops = items.map((it, idx) => {
-            const id = typeof it === 'string' ? it : it.id;
-            const order = typeof it === 'object' && it.displayOrder !== undefined ? Number(it.displayOrder) : idx + 1;
-            return {
-              updateOne: {
-                filter: { id },
-                update: { $set: { displayOrder: order, updatedAt: new Date() } }
-              }
-            };
-          });
-
-          if (ops.length > 0) {
-            await db.collection('social_media').bulkWrite(ops);
-          }
-
-          _cache.delete('social_media_public');
-          _cache.delete('homepage_data');
-          cacheBust('social_media');
-          invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) {}
-
-          const updatedList = await db.collection('social_media').find({}).sort({ displayOrder: 1 }).toArray();
-          return ok({ success: true, items: updatedList.map(clean) });
-        }
-
-        // PATCH /api/admin/social-media/:id/status (Toggle active status)
-        if (parts.length === 3 && parts[2] === 'status' && (method === 'PATCH' || method === 'PUT')) {
-          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied: settings.edit required', 403);
-          const id = parts[1];
-          const body = await request.json();
-          const item = await db.collection('social_media').findOne({ id });
-          if (!item) return err('Social media item not found', 404);
-
-          const newStatus = body.isActive !== undefined ? !!body.isActive : !item.isActive;
-          await db.collection('social_media').updateOne({ id }, { $set: { isActive: newStatus, updatedAt: new Date() } });
-
-          _cache.delete('social_media_public');
-          _cache.delete('homepage_data');
-          cacheBust('social_media');
-          invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) {}
-
-          return ok({ success: true, id, isActive: newStatus });
-        }
-
-        // PUT /api/admin/social-media/:id (Update single item)
-        if (parts.length === 2 && parts[1] !== 'settings' && parts[1] !== 'reorder' && method === 'PUT') {
-          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied: settings.edit required', 403);
-          const id = parts[1];
-          const body = await request.json();
-          const existing = await db.collection('social_media').findOne({ id });
-          if (!existing) return err('Social media item not found', 404);
-
-          if (body.url) {
-            const rawUrl = body.url.trim();
-            if (!isValidUrl(rawUrl)) return err('Please enter a valid URL', 400);
-          }
-
-          const updateDoc = {};
-          if (body.platform !== undefined) updateDoc.platform = body.platform;
-          if (body.url !== undefined) updateDoc.url = body.url.trim();
-          if (body.thumbnailUrl !== undefined || body.thumbnail !== undefined) {
-            updateDoc.thumbnailUrl = (body.thumbnailUrl || body.thumbnail || '').trim();
-          }
-          if (body.title !== undefined || body.caption !== undefined) {
-            updateDoc.title = (body.title || body.caption || '').trim();
-          }
-          if (body.displayOrder !== undefined) updateDoc.displayOrder = Number(body.displayOrder);
-          if (body.isActive !== undefined) updateDoc.isActive = !!body.isActive;
-          if (body.openInNewTab !== undefined) updateDoc.openInNewTab = !!body.openInNewTab;
-          updateDoc.updatedAt = new Date();
-
-          await db.collection('social_media').updateOne({ id }, { $set: updateDoc });
-          _cache.delete('social_media_public');
-          _cache.delete('homepage_data');
-          cacheBust('social_media');
-          invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) {}
-
-          const updated = await db.collection('social_media').findOne({ id });
-          return ok({ success: true, item: clean(updated) });
-        }
-
-        // DELETE /api/admin/social-media/:id (Delete item)
-        if (parts.length === 2 && parts[1] !== 'settings' && parts[1] !== 'reorder' && method === 'DELETE') {
-          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied: settings.edit required', 403);
-          const id = parts[1];
-          const existing = await db.collection('social_media').findOne({ id });
-          if (!existing) return err('Social media item not found', 404);
-
-          await db.collection('social_media').deleteOne({ id });
-          _cache.delete('social_media_public');
-          _cache.delete('homepage_data');
-          cacheBust('social_media');
-          invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) {}
-
-          await logAdminActivity(db, {
-            admin,
-            action: 'SOCIAL_MEDIA_DELETED',
-            module: 'SOCIAL_MEDIA',
-            targetId: id,
-            targetName: existing.title || existing.platform + ' item',
-            metadata: { url: existing.url },
-            request
-          });
-
-          return ok({ success: true, message: 'Social media post deleted successfully' });
-        }
-      }
-
       if (sub === 'dashboard' && method === 'GET') {
         const cached = cacheGet('admin_dashboard');
         if (cached) return ok(cached);
@@ -5277,13 +4686,7 @@ async function handleRoute(request, { params }) {
           updateData.images = b.images.split('\n').map(s => s.trim()).filter(Boolean);
         }
 
-        // Ratings & reviews are computed dynamically from actual reviews
-        delete updateData.rating;
-        delete updateData.reviews;
-        delete updateData.breakdown;
-
         await db.collection('products').updateOne({ id }, { $set: updateData });
-        await recalculateProductRating(db, id);
         cacheBust('products:');
         _cache.delete('admin_products');
         _cache.delete('admin_dashboard');
@@ -5294,406 +4697,14 @@ async function handleRoute(request, { params }) {
         if (!hasPermission(admin, 'products.delete')) return err('Permission denied: products.delete required', 403);
         const id = sub.split('/')[1];
         await db.collection('products').deleteOne({ id });
-        await db.collection('wishlist').deleteMany({ productId: id });
         cacheBust('products:');
         _cache.delete('admin_products');
         _cache.delete('admin_dashboard');
         return ok({ ok: true });
       }
 
-      // Admin Coupon Display / Helper Text Settings
-      if (sub === 'coupons/settings') {
-        if (method === 'GET') {
-          let settings = await db.collection('site_settings').findOne({ id: 'default' });
-          const helperText = settings?.couponHelperText !== undefined
-            ? settings.couponHelperText
-            : (DEFAULT_SITE_SETTINGS.couponHelperText || 'Try MIKUMANTRA10 or WELCOME2000');
-          return ok({
-            success: true,
-            data: { helperText },
-            helperText
-          });
-        }
-        if (method === 'PUT') {
-          const b = await request.json().catch(() => ({}));
-          const rawText = b.helperText !== undefined ? b.helperText : (b.data?.helperText !== undefined ? b.data.helperText : '');
-          const cleanText = typeof rawText === 'string' ? rawText.replace(/<[^>]*>?/gm, '').trim() : '';
-
-          await db.collection('site_settings').updateOne(
-            { id: 'default' },
-            { $set: { couponHelperText: cleanText, updatedAt: new Date() } },
-            { upsert: true }
-          );
-
-          _cache.delete('site_settings');
-          _cache.delete('coupon_settings');
-          _cache.delete('admin_coupons_settings');
-          cacheBust('site_settings');
-          invalidateSiteDataCache('site_settings');
-
-          return ok({
-            success: true,
-            data: { helperText: cleanText },
-            helperText: cleanText
-          });
-        }
-      }
-
-      // ============ ADMIN: CATEGORIES & CATEGORY SHOWCASE ============
-      if (sub.startsWith('categories') || sub.startsWith('category-showcase')) {
-        const parts = sub.split('/');
-
-        // 1. GET /api/admin/categories/settings or /api/admin/category-showcase/settings
-        if (parts.length === 2 && parts[1] === 'settings' && method === 'GET') {
-          if (!hasPermission(admin, 'settings.view') && !hasPermission(admin, 'products.view')) {
-            return err('Permission denied', 403);
-          }
-          await seedCategoryShowcaseIfEmpty(db);
-          const settingsDoc = await db.collection('category_showcase_settings').findOne({ id: 'default' });
-          const settings = {
-            ...DEFAULT_CATEGORY_SHOWCASE_SETTINGS,
-            ...(settingsDoc ? clean(settingsDoc) : {})
-          };
-          return ok({ success: true, settings, data: { settings } });
-        }
-
-        // 2. PUT /api/admin/categories/settings or /api/admin/category-showcase/settings
-        if (parts.length === 2 && parts[1] === 'settings' && method === 'PUT') {
-          if (!hasPermission(admin, 'settings.edit') && !hasPermission(admin, 'products.edit')) {
-            return err('Permission denied', 403);
-          }
-          const body = await request.json().catch(() => ({}));
-          const updateDoc = {};
-          if (body.sectionEnabled !== undefined) updateDoc.sectionEnabled = !!body.sectionEnabled;
-          if (body.eyebrow !== undefined) updateDoc.eyebrow = String(body.eyebrow).trim();
-          if (body.title !== undefined) updateDoc.title = String(body.title).trim();
-          if (body.subtitle !== undefined) updateDoc.subtitle = String(body.subtitle).trim();
-          if (body.buttonText !== undefined) updateDoc.buttonText = String(body.buttonText).trim();
-          if (body.hoverEnabled !== undefined) updateDoc.hoverEnabled = !!body.hoverEnabled;
-          if (body.hoverScale !== undefined) updateDoc.hoverScale = Math.max(1.0, Math.min(1.5, Number(body.hoverScale) || 1.10));
-          if (body.otherItemsScale !== undefined) updateDoc.otherItemsScale = Math.max(0.8, Math.min(1.0, Number(body.otherItemsScale) || 0.95));
-          if (body.transitionDuration !== undefined) updateDoc.transitionDuration = Math.max(100, Math.min(1000, Number(body.transitionDuration) || 300));
-          if (body.hoverOpacity !== undefined) updateDoc.hoverOpacity = Math.max(0.5, Math.min(1.0, Number(body.hoverOpacity) || 1.0));
-          if (body.imageHoverEffect !== undefined) updateDoc.imageHoverEffect = body.imageHoverEffect;
-          if (body.hoverBorder !== undefined) updateDoc.hoverBorder = !!body.hoverBorder;
-          if (body.hoverBorderWidth !== undefined) updateDoc.hoverBorderWidth = Math.max(1, Math.min(4, Number(body.hoverBorderWidth) || 1));
-          if (body.hoverShadow !== undefined) updateDoc.hoverShadow = !!body.hoverShadow;
-          if (body.desktopItems !== undefined) updateDoc.desktopItems = Math.max(2, Math.min(8, Number(body.desktopItems) || 6));
-          if (body.tabletItems !== undefined) updateDoc.tabletItems = Math.max(2, Math.min(6, Number(body.tabletItems) || 4));
-          if (body.mobileItems !== undefined) updateDoc.mobileItems = Math.max(1, Math.min(4, Number(body.mobileItems) || 2));
-          if (body.circleSize !== undefined) updateDoc.circleSize = Math.max(80, Math.min(260, Number(body.circleSize) || 170));
-          if (body.gap !== undefined) updateDoc.gap = Math.max(8, Math.min(60, Number(body.gap) || 24));
-          updateDoc.updatedAt = new Date();
-
-          await db.collection('category_showcase_settings').updateOne(
-            { id: 'default' },
-            { $set: updateDoc },
-            { upsert: true }
-          );
-
-          _cache.delete('cats');
-          _cache.delete('admin_categories');
-          _cache.delete('homepage_data');
-          cacheBust('cats');
-          invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) {}
-
-          const updated = await db.collection('category_showcase_settings').findOne({ id: 'default' });
-          const settings = {
-            ...DEFAULT_CATEGORY_SHOWCASE_SETTINGS,
-            ...(updated ? clean(updated) : {})
-          };
-          return ok({ success: true, settings, data: { settings } });
-        }
-
-        // 3. PATCH/PUT /api/admin/categories/reorder or /api/admin/category-showcase/reorder
-        if (parts.length === 2 && parts[1] === 'reorder' && (method === 'PATCH' || method === 'PUT')) {
-          if (!hasPermission(admin, 'products.edit') && !hasPermission(admin, 'settings.edit')) {
-            return err('Permission denied', 403);
-          }
-          const body = await request.json().catch(() => ({}));
-          const items = body.items || body.order || body.orderIds || [];
-          if (!Array.isArray(items)) return err('Items array is required for reordering', 400);
-
-          const ops = items.map((it, idx) => {
-            const id = typeof it === 'string' ? it : it.id;
-            const orderNum = typeof it === 'object' && (it.displayOrder !== undefined || it.order !== undefined)
-              ? Number(it.displayOrder ?? it.order)
-              : idx + 1;
-            return {
-              updateOne: {
-                filter: { id },
-                update: { $set: { order: orderNum, displayOrder: orderNum, updatedAt: new Date() } }
-              }
-            };
-          });
-
-          if (ops.length > 0) {
-            await db.collection('categories').bulkWrite(ops);
-          }
-
-          await syncCategoryAndCollectionFilterOptions(db);
-          _cache.delete('cats');
-          _cache.delete('admin_categories');
-          _cache.delete('homepage_data');
-          _cache.delete('product_filters');
-          cacheBust('cats');
-          cacheBust('product_filters');
-          invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) {}
-
-          return ok({ success: true, message: 'Categories reordered successfully' });
-        }
-
-        // 4. PATCH /api/admin/categories/:id/status
-        if (parts.length === 3 && parts[2] === 'status' && (method === 'PATCH' || method === 'PUT')) {
-          if (!hasPermission(admin, 'products.edit') && !hasPermission(admin, 'settings.edit')) {
-            return err('Permission denied', 403);
-          }
-          const id = parts[1];
-          const body = await request.json().catch(() => ({}));
-          const existing = await db.collection('categories').findOne({ id });
-          if (!existing) return err('Category not found', 404);
-
-          const newActive = body.active !== undefined ? !!body.active : (body.isActive !== undefined ? !!body.isActive : !existing.active);
-
-          await db.collection('categories').updateOne(
-            { id },
-            { $set: { active: newActive, enabled: newActive, updatedAt: new Date() } }
-          );
-
-          await syncCategoryAndCollectionFilterOptions(db);
-          _cache.delete('cats');
-          _cache.delete('admin_categories');
-          _cache.delete('homepage_data');
-          _cache.delete('product_filters');
-          cacheBust('cats');
-          cacheBust('product_filters');
-          invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) {}
-
-          const up = await db.collection('categories').findOne({ id });
-          return ok({ success: true, item: clean(up) });
-        }
-
-        // 5. GET /api/admin/categories or /api/admin/category-showcase (List all items)
-        if (parts.length === 1 && method === 'GET') {
-          if (!hasPermission(admin, 'products.view') && !hasPermission(admin, 'settings.view')) {
-            return err('Permission denied', 403);
-          }
-          await seedCategoryShowcaseIfEmpty(db);
-          const [list, settingsDoc] = await Promise.all([
-            db.collection('categories').find({}).sort({ order: 1, displayOrder: 1, createdAt: 1 }).toArray(),
-            db.collection('category_showcase_settings').findOne({ id: 'default' })
-          ]);
-          const settings = {
-            ...DEFAULT_CATEGORY_SHOWCASE_SETTINGS,
-            ...(settingsDoc ? clean(settingsDoc) : {})
-          };
-          const formatted = list.map((c, idx) => {
-            const cleanItem = clean(c);
-            return {
-              ...cleanItem,
-              id: cleanItem.id,
-              name: cleanItem.name,
-              slug: cleanItem.slug,
-              img: cleanItem.img || cleanItem.imageUrl || '',
-              imageUrl: cleanItem.img || cleanItem.imageUrl || '',
-              link: cleanItem.link || `/shop?category=${cleanItem.slug}`,
-              buttonText: cleanItem.buttonText || '',
-              displayOrder: Number(cleanItem.order ?? cleanItem.displayOrder ?? (idx + 1)),
-              order: Number(cleanItem.order ?? cleanItem.displayOrder ?? (idx + 1)),
-              active: cleanItem.active !== false && cleanItem.enabled !== false,
-              enabled: cleanItem.active !== false && cleanItem.enabled !== false,
-              isActive: cleanItem.active !== false && cleanItem.enabled !== false,
-              openInNewTab: !!cleanItem.openInNewTab
-            };
-          });
-
-          return ok({
-            success: true,
-            categories: formatted,
-            items: formatted,
-            settings
-          });
-        }
-
-        // 6. POST /api/admin/categories or /api/admin/category-showcase (Create category)
-        if (parts.length === 1 && method === 'POST') {
-          if (!hasPermission(admin, 'products.create') && !hasPermission(admin, 'settings.edit')) {
-            return err('Permission denied', 403);
-          }
-          const b = await request.json().catch(() => ({}));
-          if (!b.name || !b.name.trim()) return err('Category name is required', 400);
-
-          const name = b.name.trim();
-          const slug = (b.slug || name.toLowerCase().replace(/[^a-z0-9_-]/g, '-')).trim();
-          const imgUrl = (b.img || b.imageUrl || '').trim();
-          const link = (b.link || `/shop?category=${slug}`).trim();
-          const count = await db.collection('categories').countDocuments();
-          const orderNum = b.displayOrder !== undefined ? Number(b.displayOrder) : (b.order !== undefined ? Number(b.order) : count + 1);
-          const activeStatus = b.active !== false && b.enabled !== false && b.isActive !== false;
-
-          const doc = {
-            id: uuidv4(),
-            name,
-            slug,
-            img: imgUrl,
-            imageUrl: imgUrl,
-            link,
-            buttonText: (b.buttonText || '').trim(),
-            description: (b.description || '').trim(),
-            order: orderNum,
-            displayOrder: orderNum,
-            active: activeStatus,
-            enabled: activeStatus,
-            openInNewTab: !!b.openInNewTab,
-            createdAt: new Date(),
-            updatedAt: new Date()
-          };
-
-          await db.collection('categories').insertOne(doc);
-          await syncCategoryAndCollectionFilterOptions(db);
-
-          _cache.delete('cats');
-          _cache.delete('admin_categories');
-          _cache.delete('homepage_data');
-          _cache.delete('product_filters');
-          cacheBust('cats');
-          cacheBust('product_filters');
-          invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) {}
-
-          await logAdminActivity(db, {
-            admin,
-            action: 'CATEGORY_CREATED',
-            module: 'CATEGORIES',
-            targetId: doc.id,
-            targetName: doc.name,
-            metadata: { slug: doc.slug },
-            request
-          });
-
-          return ok({ success: true, item: clean(doc), category: clean(doc) });
-        }
-
-        // 7. PUT /api/admin/categories/:id or /api/admin/category-showcase/:id (Update category)
-        if (parts.length === 2 && parts[1] !== 'settings' && parts[1] !== 'reorder' && method === 'PUT') {
-          if (!hasPermission(admin, 'products.edit') && !hasPermission(admin, 'settings.edit')) {
-            return err('Permission denied', 403);
-          }
-          const id = parts[1];
-          const b = await request.json().catch(() => ({}));
-          const existing = await db.collection('categories').findOne({ id });
-          if (!existing) return err('Category not found', 404);
-
-          const updateDoc = {};
-          if (b.name !== undefined) updateDoc.name = b.name.trim();
-          if (b.slug !== undefined) updateDoc.slug = b.slug.trim();
-          if (b.img !== undefined || b.imageUrl !== undefined) {
-            updateDoc.img = (b.img || b.imageUrl || '').trim();
-            updateDoc.imageUrl = updateDoc.img;
-          }
-          if (b.link !== undefined) updateDoc.link = b.link.trim();
-          if (b.buttonText !== undefined) updateDoc.buttonText = b.buttonText.trim();
-          if (b.description !== undefined) updateDoc.description = b.description.trim();
-          if (b.order !== undefined || b.displayOrder !== undefined) {
-            const ord = Number(b.order ?? b.displayOrder);
-            updateDoc.order = ord;
-            updateDoc.displayOrder = ord;
-          }
-          if (b.active !== undefined || b.enabled !== undefined || b.isActive !== undefined) {
-            const act = b.active !== false && b.enabled !== false && b.isActive !== false;
-            updateDoc.active = act;
-            updateDoc.enabled = act;
-          }
-          if (b.openInNewTab !== undefined) updateDoc.openInNewTab = !!b.openInNewTab;
-          updateDoc.updatedAt = new Date();
-
-          await db.collection('categories').updateOne({ id }, { $set: updateDoc });
-          await syncCategoryAndCollectionFilterOptions(db);
-
-          _cache.delete('cats');
-          _cache.delete('admin_categories');
-          _cache.delete('homepage_data');
-          _cache.delete('product_filters');
-          cacheBust('cats');
-          cacheBust('product_filters');
-          invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) {}
-
-          const up = await db.collection('categories').findOne({ id });
-          return ok({ success: true, item: clean(up), category: clean(up) });
-        }
-
-        // 8. DELETE /api/admin/categories/:id or /api/admin/category-showcase/:id (Delete category)
-        if (parts.length === 2 && parts[1] !== 'settings' && parts[1] !== 'reorder' && method === 'DELETE') {
-          if (!hasPermission(admin, 'products.delete') && !hasPermission(admin, 'settings.edit')) {
-            return err('Permission denied', 403);
-          }
-          const id = parts[1];
-          const catDoc = await db.collection('categories').findOne({ id });
-          if (!catDoc) return err('Category not found', 404);
-
-          // Check if assigned to products
-          const assignedCount = await db.collection('products').countDocuments({
-            $or: [
-              { category: catDoc.slug },
-              { category: catDoc.name }
-            ]
-          });
-          if (assignedCount > 0) {
-            return err(`Cannot delete category "${catDoc.name}": ${assignedCount} product(s) are currently assigned to it. Please reassign or delete the products first.`, 400);
-          }
-
-          // Clean up unused upload if local
-          if (catDoc.img) {
-            try {
-              const imgUrl = catDoc.img;
-              const count = await db.collection('categories').countDocuments({ img: imgUrl, id: { $ne: id } });
-              if (count === 0) {
-                let filename = '';
-                if (imgUrl.includes('/api/uploads/')) filename = imgUrl.split('/api/uploads/')[1];
-                else if (imgUrl.includes('/uploads/')) filename = imgUrl.split('/uploads/')[1];
-                if (filename) {
-                  await db.collection('uploads').deleteOne({ filename });
-                  const filePath = pathModule.join(process.cwd(), 'public', 'uploads', filename);
-                  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-                }
-              }
-            } catch (delErr) {
-              console.warn('Failed to clean up category media:', delErr.message);
-            }
-          }
-
-          await db.collection('categories').deleteOne({ id });
-          await syncCategoryAndCollectionFilterOptions(db);
-
-          _cache.delete('cats');
-          _cache.delete('admin_categories');
-          _cache.delete('homepage_data');
-          _cache.delete('product_filters');
-          cacheBust('cats');
-          cacheBust('product_filters');
-          invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) {}
-
-          await logAdminActivity(db, {
-            admin,
-            action: 'CATEGORY_DELETED',
-            module: 'CATEGORIES',
-            targetId: id,
-            targetName: catDoc.name,
-            metadata: { slug: catDoc.slug },
-            request
-          });
-
-          return ok({ ok: true, success: true });
-        }
-      }
-
-      // Collections, Banners, Coupons CRUD (uniform)
-      for (const col of ['collections', 'banners', 'coupons']) {
+      // Categories, Collections, Banners CRUD (uniform)
+      for (const col of ['categories', 'collections', 'banners', 'coupons']) {
         if (sub === col && method === 'GET') {
           const cached = cacheGet('admin_' + col);
           if (cached) return ok(cached);
@@ -5704,38 +4715,16 @@ async function handleRoute(request, { params }) {
         }
         if (sub === col && method === 'POST') {
           const b = await request.json();
+          if (col === 'categories' && (!b.name || !b.name.trim())) {
+            return err('Category name is required', 400);
+          }
           if (col === 'collections') {
             if (!b.name || !b.name.trim()) return err('Collection name is required', 400);
             if (!b.slug || !b.slug.trim()) return err('Collection slug is required', 400);
           }
-          if (col === 'coupons') {
-            const rawCode = (b.code || '').trim().toUpperCase();
-            if (!rawCode) return err('Coupon code is required', 400);
-            const existing = await db.collection('coupons').findOne({ code: rawCode });
-            if (existing) return err(`Coupon code '${rawCode}' already exists`, 400);
-
-            const type = b.type === 'flat' ? 'flat' : 'percent';
-            const numVal = Number(b.value);
-            if (isNaN(numVal) || numVal <= 0) return err('Discount value must be a number greater than 0', 400);
-            if (type === 'percent' && numVal > 100) return err('Percentage discount cannot exceed 100%', 400);
-
-            const minOrderNum = Math.max(0, Number(b.minOrder) || 0);
-
-            b.code = rawCode;
-            b.type = type;
-            b.value = numVal;
-            b.minOrder = minOrderNum;
-            b.active = b.active !== false;
-          }
           const doc = { id: uuidv4(), createdAt: new Date(), ...b };
           await db.collection(col).insertOne(doc);
           _cache.delete('admin_' + col);
-          if (col === 'collections') {
-            await syncCategoryAndCollectionFilterOptions(db);
-            _cache.delete('product_filters');
-            cacheBust('product_filters');
-            _cache.delete('cols');
-          }
           return ok({ item: clean(doc) });
         }
         if (sub.startsWith(col + '/') && method === 'PUT') {
@@ -5745,35 +4734,8 @@ async function handleRoute(request, { params }) {
             if (b.name !== undefined && !b.name.trim()) return err('Collection name is required', 400);
             if (b.slug !== undefined && !b.slug.trim()) return err('Collection slug is required', 400);
           }
-          if (col === 'coupons') {
-            if (b.code !== undefined) {
-              const rawCode = (b.code || '').trim().toUpperCase();
-              if (!rawCode) return err('Coupon code is required', 400);
-              const existing = await db.collection('coupons').findOne({ code: rawCode, id: { $ne: id } });
-              if (existing) return err(`Coupon code '${rawCode}' already exists`, 400);
-              b.code = rawCode;
-            }
-            if (b.type !== undefined) {
-              b.type = b.type === 'flat' ? 'flat' : 'percent';
-            }
-            if (b.value !== undefined) {
-              const numVal = Number(b.value);
-              if (isNaN(numVal) || numVal <= 0) return err('Discount value must be a number greater than 0', 400);
-              if (b.type === 'percent' && numVal > 100) return err('Percentage discount cannot exceed 100%', 400);
-              b.value = numVal;
-            }
-            if (b.minOrder !== undefined) {
-              b.minOrder = Math.max(0, Number(b.minOrder) || 0);
-            }
-          }
           await db.collection(col).updateOne({ id }, { $set: b });
           _cache.delete('admin_' + col);
-          if (col === 'collections') {
-            await syncCategoryAndCollectionFilterOptions(db);
-            _cache.delete('product_filters');
-            cacheBust('product_filters');
-            _cache.delete('cols');
-          }
           const up = await db.collection(col).findOne({ id });
           return ok({ item: clean(up) });
         }
@@ -5781,7 +4743,23 @@ async function handleRoute(request, { params }) {
           const id = sub.split('/')[1];
           _cache.delete('admin_' + col);
 
-          if (col === 'banners') {
+          // Check category dependencies before deletion
+          if (col === 'categories') {
+            const catDoc = await db.collection('categories').findOne({ id });
+            if (catDoc) {
+              const assignedCount = await db.collection('products').countDocuments({
+                $or: [
+                  { category: catDoc.slug },
+                  { category: catDoc.name }
+                ]
+              });
+              if (assignedCount > 0) {
+                return err(`Cannot delete category "${catDoc.name}": ${assignedCount} product(s) are currently assigned to it. Please reassign or delete the products first.`, 400);
+              }
+            }
+          }
+
+          if (col === 'banners' || col === 'categories') {
             try {
               const doc = await db.collection(col).findOne({ id });
               if (doc && doc.img) {
@@ -5808,12 +4786,6 @@ async function handleRoute(request, { params }) {
             }
           }
           await db.collection(col).deleteOne({ id });
-          if (col === 'collections') {
-            await syncCategoryAndCollectionFilterOptions(db);
-            _cache.delete('product_filters');
-            cacheBust('product_filters');
-            _cache.delete('cols');
-          }
           return ok({ ok: true });
         }
       }
@@ -5841,6 +4813,10 @@ async function handleRoute(request, { params }) {
             $or: [
               { id: reg },
               { orderNumber: reg },
+              { trackingNumber: reg },
+              { 'courier.trackingNumber': reg },
+              { carrier: reg },
+              { 'courier.carrier': reg },
               { 'address.fullName': reg },
               { 'address.phone': reg },
               { 'items.name': reg },
@@ -5917,17 +4893,61 @@ async function handleRoute(request, { params }) {
           return err('Cancelled orders cannot be updated. Cancelled is a terminal state.', 400);
         }
 
+        const targetStatus = b.status || existingOrder.status;
+        const isStatusChanging = b.status && b.status !== existingOrder.status;
+        const hasCourierInput = Boolean(
+          b.courier !== undefined ||
+          b.carrier !== undefined ||
+          b.trackingNumber !== undefined ||
+          b.trackingUrl !== undefined ||
+          b.notes !== undefined
+        );
+
         const notes = {
           packed: 'Order packed & ready to ship.',
           shipped: 'Shipped via courier.',
           delivered: 'Delivered successfully.',
-          cancelled: 'Cancelled by MikuMantra',
+          cancelled: 'Order cancelled.',
           confirmed: 'Order confirmed.'
         };
-        const setDoc = { status: b.status };
+        const setDoc = {};
+        if (b.status) setDoc.status = b.status;
         if (b.status === 'delivered') {
           setDoc.deliveredAt = new Date();
         }
+
+        let courierDoc = null;
+        if (hasCourierInput || targetStatus === 'shipped') {
+          const rawCarrier = b.courier?.carrier !== undefined ? b.courier.carrier : (b.carrier !== undefined ? b.carrier : (existingOrder.courier?.carrier || existingOrder.carrier || ''));
+          const rawTrackingNum = b.courier?.trackingNumber !== undefined ? b.courier.trackingNumber : (b.trackingNumber !== undefined ? b.trackingNumber : (existingOrder.courier?.trackingNumber || existingOrder.trackingNumber || ''));
+          let rawTrackingUrl = b.courier?.trackingUrl !== undefined ? b.courier.trackingUrl : (b.trackingUrl !== undefined ? b.trackingUrl : (existingOrder.courier?.trackingUrl || existingOrder.trackingUrl || ''));
+          const rawNotes = b.courier?.notes !== undefined ? b.courier.notes : (b.notes !== undefined ? b.notes : (existingOrder.courier?.notes || ''));
+
+          const carrier = (rawCarrier || '').trim();
+          const trackingNumber = (rawTrackingNum || '').trim();
+          let trackingUrl = (rawTrackingUrl || '').trim();
+          if (!trackingUrl && carrier && trackingNumber) {
+            trackingUrl = generateTrackingUrl(carrier, trackingNumber);
+          }
+          const shippedAt = b.courier?.shippedAt ? new Date(b.courier.shippedAt) : (existingOrder.shippedAt || existingOrder.courier?.shippedAt || new Date());
+
+          courierDoc = {
+            carrier,
+            trackingNumber,
+            trackingUrl,
+            shippedAt,
+            notes: (rawNotes || '').trim()
+          };
+
+          setDoc.courier = courierDoc;
+          setDoc.carrier = carrier;
+          setDoc.trackingNumber = trackingNumber;
+          setDoc.trackingUrl = trackingUrl;
+          if (!existingOrder.shippedAt) {
+            setDoc.shippedAt = shippedAt;
+          }
+        }
+
         if (b.status === 'cancelled') {
           if (!hasPermission(admin, 'orders.cancel') && !hasPermission(admin, 'orders.update')) {
             return err('Permission denied: orders.cancel required', 403);
@@ -5951,21 +4971,39 @@ async function handleRoute(request, { params }) {
           }
         }
 
+        let historyNote = b.note || (b.status ? notes[b.status] : '') || '';
+        if (targetStatus === 'shipped') {
+          const carrier = courierDoc?.carrier || existingOrder.carrier || '';
+          const trackingNum = courierDoc?.trackingNumber || existingOrder.trackingNumber || '';
+          if (carrier && trackingNum) {
+            historyNote = b.note || `Shipped via ${carrier} (AWB: ${trackingNum})`;
+          } else if (carrier) {
+            historyNote = b.note || `Shipped via ${carrier}`;
+          }
+        } else if (hasCourierInput) {
+          const carrier = courierDoc?.carrier || existingOrder.carrier || '';
+          const trackingNum = courierDoc?.trackingNumber || existingOrder.trackingNumber || '';
+          historyNote = b.note || `Courier tracking updated: ${carrier || 'Courier'}${trackingNum ? ` (AWB: ${trackingNum})` : ''}`;
+        }
+
+        const effectiveStatus = b.status || existingOrder.status;
+        const updateOps = { $set: setDoc };
+        if (historyNote || isStatusChanging) {
+          updateOps.$push = {
+            statusHistory: {
+              status: effectiveStatus,
+              at: new Date(),
+              note: historyNote
+            }
+          };
+        }
+
         const updateResult = await db.collection('orders').updateOne(
           { id, status: { $ne: 'cancelled' } },
-          {
-            $set: setDoc,
-            $push: {
-              statusHistory: {
-                status: b.status,
-                at: new Date(),
-                note: b.note || notes[b.status] || ''
-              }
-            }
-          }
+          updateOps
         );
 
-        if (updateResult.modifiedCount === 0) {
+        if (updateResult.matchedCount === 0) {
           return err('Cancelled orders cannot be updated.', 400);
         }
 
@@ -5982,6 +5020,16 @@ async function handleRoute(request, { params }) {
         }
 
         const up = await db.collection('orders').findOne({ id });
+
+        // Trigger notifications if shipped or if courier details updated on a shipped/delivered order
+        if (targetStatus === 'shipped' || (existingOrder.status === 'shipped' && hasCourierInput)) {
+          const customerUser = up.userId ? await db.collection('users').findOne({ id: up.userId }) : null;
+          try {
+            await sendOrderShippedNotification({ order: up, user: customerUser, db });
+          } catch (notifErr) {
+            console.error('[Notification error] Order shipped notification:', notifErr);
+          }
+        }
 
         if (b.status === 'cancelled') {
           try {
@@ -6006,6 +5054,26 @@ async function handleRoute(request, { params }) {
             await sendOrderCancelledNotification({ order: up, user: null, db });
           } catch (notifErr) {
             console.error('Failed to send order cancellation notification:', notifErr);
+          }
+        }
+
+        // Dispatch push notification to customer's mobile devices
+        if (up && up.userId && b.status) {
+          const statusMessages = {
+            packed: { title: 'Order Packed! 📦', body: `Your order #${up.orderNumber} has been packed and is ready for dispatch.` },
+            shipped: { title: 'Order Shipped! 🚚', body: `Your order #${up.orderNumber} is on its way${up.carrier ? ' via ' + up.carrier : ''}! Track your delivery.` },
+            out_for_delivery: { title: 'Out for Delivery! 🛵', body: `Your order #${up.orderNumber} is out for delivery today!` },
+            delivered: { title: 'Order Delivered! 🎉', body: `Your order #${up.orderNumber} has been delivered. Thank you for choosing MikuMantra!` }
+          };
+          const msg = statusMessages[b.status];
+          if (msg) {
+            sendPushNotification({
+              db,
+              userId: up.userId,
+              title: msg.title,
+              body: msg.body,
+              data: { orderId: up.id, orderNumber: up.orderNumber, status: b.status, type: 'order_status_update' }
+            }).catch(() => {});
           }
         }
 

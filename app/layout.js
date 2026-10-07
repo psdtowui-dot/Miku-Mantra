@@ -7,10 +7,20 @@ import AIChatMount from '@/components/site/ai-chat-mount'
 import { headers } from 'next/headers'
 import Navbar from '@/components/site/navbar';
 import Footer from '@/components/site/footer';
+import MobileBottomNav from '@/components/mobile/mobile-bottom-nav';
+import NativeBridge from '@/components/mobile/native-bridge';
 
 import { getSiteSettings, getHeaderData, getFooterData, getCanonicalBaseUrl, toAbsoluteUrl } from '@/lib/db-site-settings';
 
 export const dynamic = 'force-dynamic';
+
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+  viewportFit: 'cover',
+  themeColor: '#FAF6EF',
+};
 
 async function getBaseUrl() {
   try {
@@ -111,9 +121,13 @@ export default async function RootLayout({ children }) {
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(orgJsonLd) }} />
         <Providers>
           <Navbar initialData={headerData} />
-          {children}
+          <div className="pb-[calc(4.5rem+env(safe-area-inset-bottom))] lg:pb-0">
+            {children}
+          </div>
           <Footer initialData={footerData} />
+          <MobileBottomNav />
         </Providers>
+        <NativeBridge />
         <AIChatMount />
         <Toaster position="top-center" richColors />
         <Script src="https://accounts.google.com/gsi/client" strategy="afterInteractive" />

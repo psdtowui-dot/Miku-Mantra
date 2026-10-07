@@ -11,7 +11,6 @@ import {
   Compass, ArrowDownRight, Layers
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { getCancellationLabel } from '@/lib/utils';
 import OrderDetailModal from '@/components/ui/order-detail-modal';
 
 function getInitials(name) {
@@ -122,7 +121,7 @@ export default function AdminDashboard() {
     );
   }
 
-  const getStatusBadge = (status, order = {}) => {
+  const getStatusBadge = (status) => {
     switch (status?.toLowerCase()) {
       case 'delivered':
         return (
@@ -150,7 +149,7 @@ export default function AdminDashboard() {
         return (
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-rose-50 text-rose-800 border border-rose-200/90 shadow-2xs">
             <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.8)]" />
-            {getCancellationLabel(order) || 'Cancelled'}
+            Cancelled
           </span>
         );
       default:
@@ -642,7 +641,7 @@ export default function AdminDashboard() {
 
                       {/* Status */}
                       <td className="p-4">
-                        {getStatusBadge(o.status, o)}
+                        {getStatusBadge(o.status)}
                       </td>
 
                       {/* Payment */}

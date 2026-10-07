@@ -3,6 +3,5 @@ import { getHomepageData } from '@/lib/db-site-settings';
 
 export default async function Page() {
   const initialData = await getHomepageData();
-  const serialized = initialData ? JSON.parse(JSON.stringify(initialData)) : null;
-  return <HomePage initialData={serialized} />;
+  return <HomePage initialData={initialData} />;
 }
