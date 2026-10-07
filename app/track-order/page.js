@@ -202,11 +202,11 @@ function TrackOrderInner() {
         <div className="bg-white border border-[#EAE3D2] rounded-2xl p-5 sm:p-7 shadow-[0_4px_24px_rgba(156,107,48,0.06)] mb-8">
           
           {/* Mode Tabs */}
-          <div className="flex border-b border-neutral-200 mb-5">
+          <div className="flex border-b border-neutral-200 mb-5 overflow-x-auto scrollbar-none gap-4 sm:gap-6">
             <button
               type="button"
               onClick={() => { setSearchMode('order'); setErrorMsg(''); }}
-              className={`pb-3 text-xs sm:text-sm font-semibold tracking-wider uppercase transition cursor-pointer border-b-2 mr-6 ${
+              className={`pb-3 text-xs sm:text-sm font-semibold tracking-wider uppercase transition cursor-pointer border-b-2 whitespace-nowrap shrink-0 ${
                 searchMode === 'order'
                   ? 'border-[#9C6B30] text-[#9C6B30]'
                   : 'border-transparent text-neutral-400 hover:text-neutral-700'
@@ -217,7 +217,7 @@ function TrackOrderInner() {
             <button
               type="button"
               onClick={() => { setSearchMode('awb'); setErrorMsg(''); }}
-              className={`pb-3 text-xs sm:text-sm font-semibold tracking-wider uppercase transition cursor-pointer border-b-2 ${
+              className={`pb-3 text-xs sm:text-sm font-semibold tracking-wider uppercase transition cursor-pointer border-b-2 whitespace-nowrap shrink-0 ${
                 searchMode === 'awb'
                   ? 'border-[#9C6B30] text-[#9C6B30]'
                   : 'border-transparent text-neutral-400 hover:text-neutral-700'
@@ -336,9 +336,9 @@ function TrackOrderInner() {
             {trackedOrder.status !== 'cancelled' && (
               <div>
                 <div className="relative grid grid-cols-4 gap-1 sm:gap-2 mb-3">
-                  <div className="absolute top-4 sm:top-5 left-[12.5%] right-[12.5%] h-[2px] bg-neutral-200 -z-0" />
+                  <div className="absolute top-4 sm:top-5 left-[12.5%] right-[12.5%] h-[2px] bg-neutral-200 z-0" />
                   <div
-                    className="absolute top-4 sm:top-5 left-[12.5%] h-[2px] bg-[#9C6B30] -z-0 transition-all duration-500"
+                    className="absolute top-4 sm:top-5 left-[12.5%] h-[2px] bg-[#9C6B30] z-0 transition-all duration-500"
                     style={{ width: `${(activeIdx / (STEPS.length - 1)) * 75}%` }}
                   />
                   {STEPS.map((s, i) => {

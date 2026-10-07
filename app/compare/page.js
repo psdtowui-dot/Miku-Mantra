@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useCompare } from '@/lib/browsing';
 import { useCart } from '@/lib/cart-store';
-import { formatINR, formatRating, getNormalizedSpecs } from '@/lib/products';
+import { formatINR, getNormalizedSpecs } from '@/lib/products';
 import { toast } from 'sonner';
 import { GitCompare, X, ShoppingBag, Star, Loader2 } from 'lucide-react';
 
@@ -59,7 +59,7 @@ export default function ComparePage(){
     ['Rating', p => (
       <span className="flex items-center gap-1">
         <Star size={12} className={p.reviews > 0 ? "fill-[#D4AF37] stroke-[#D4AF37]" : "text-neutral-300"}/> 
-        <span className="font-medium text-neutral-700">{formatRating(p.rating)}</span>
+        <span className="font-medium text-neutral-700">{p.rating > 0 ? p.rating : '0.0'}</span>
         <span className="text-neutral-400">({p.reviews || 0})</span>
       </span>
     )],
@@ -72,7 +72,7 @@ export default function ComparePage(){
 
   return (
     <main className="bg-white min-h-screen">
-      <div className="max-w-[1400px] mx-auto px-4 md:px-8 py-12">
+      <div className="max-w-[1400px] mx-auto px-3 sm:px-6 md:px-8 py-6 sm:py-12">
         <div className="text-center mb-10">
           <div className="text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-2">Side by Side</div>
           <h1 className="font-display text-4xl md:text-5xl font-light text-[#1A1A1A]">Compare Pieces</h1>
@@ -124,17 +124,17 @@ export default function ComparePage(){
             </div>
 
             <div className="w-full overflow-x-auto rounded-xl border border-neutral-200/80 bg-white shadow-sm scrollbar-thin">
-              <table className="w-full min-w-[720px] table-fixed border-collapse border-spacing-0">
+              <table className="w-full min-w-[500px] sm:min-w-[700px] table-fixed border-collapse border-spacing-0">
                 <colgroup>
-                  <col className="w-40 sm:w-48" />
+                  <col className="w-32 xs:w-40 sm:w-48" />
                   {items.map(p => (
-                    <col key={p.id} className="w-[200px] sm:w-[260px]" />
+                    <col key={p.id} className="w-[180px] sm:w-[240px]" />
                   ))}
                 </colgroup>
                 
                 <thead>
                   <tr className="border-b border-neutral-200">
-                    <th className="bg-neutral-50/50 border-r border-neutral-200"></th>
+                    <th className="bg-neutral-50/90 border-r border-neutral-200 sticky left-0 z-20"></th>
                     {items.map(p=>(
                       <th key={p.id} className="p-5 border-r border-neutral-200 align-top relative last:border-r-0">
                         <div className="flex flex-col h-full justify-between relative pb-16">

@@ -2,7 +2,6 @@
 import React from 'react';
 import { X, Download, Calendar, User, Mail, Phone, MapPin, Wallet, CreditCard, Clock, FileText, CheckCircle2, Package, Truck, Home } from 'lucide-react';
 import { formatINR } from '@/lib/products';
-import { getCancellationLabel, getCancellationActor } from '@/lib/utils';
 import ShippingSlip from './shipping-slip';
 
 const STEPS = [
@@ -21,12 +20,10 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
   const historyByStatus = Object.fromEntries((order.statusHistory || []).map(h => [h.status, h]));
   const currentIdx = STEPS.findIndex(s => s.key === order.status);
   const activeIdx = order.status === 'cancelled' ? 0 : (currentIdx === -1 ? 0 : currentIdx);
-  const cancellationDisplayText = getCancellationLabel(order) || 'Cancelled';
-  const cancellationActor = getCancellationActor(order);
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-2 xs:p-4 overflow-y-auto" onClick={onClose}>
-      <div
+      <div 
         className="bg-[#F7F5F0] text-[#1A1A1A] w-full max-w-4xl rounded-xl sm:rounded-2xl border border-neutral-200 overflow-hidden shadow-2xl flex flex-col max-h-[94vh]"
         onClick={(e) => e.stopPropagation()}
       >
@@ -36,7 +33,7 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
             <div className="flex items-center gap-2 xs:gap-3 flex-wrap">
               <span className="text-[9px] xs:text-[10px] tracking-[0.2em] xs:tracking-[0.35em] uppercase text-[#D4AF37] font-semibold">MikuMantra Atelier</span>
               <span className={`px-2 py-0.5 text-[9px] tracking-widest uppercase rounded font-bold ${order.status === 'cancelled' ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/30'}`}>
-                {order.status === 'cancelled' ? cancellationDisplayText : order.status}
+                {order.status}
               </span>
             </div>
             <h2 className="font-display text-lg xs:text-xl sm:text-2xl font-light mt-1 flex items-center gap-2 flex-wrap">
@@ -46,7 +43,7 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
               ID: {order.id}
             </div>
           </div>
-          <button
+          <button 
             onClick={onClose}
             className="text-white/70 hover:text-white hover:bg-white/10 p-1.5 xs:p-2 rounded-full transition-colors shrink-0"
             aria-label="Close modal"
@@ -75,13 +72,13 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
                   {order.status === 'cancelled' ? (
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-red-700 bg-red-50 border border-red-200 rounded">
-                        {cancellationDisplayText.toUpperCase()}
+                        CANCELLED
                       </span>
                       <span className="text-[10px] text-neutral-400 font-mono">(Status cannot be changed after cancellation)</span>
                     </div>
                   ) : (
-                    <select
-                      value={order.status}
+                    <select 
+                      value={order.status} 
                       onChange={(e) => onUpdateStatus(order.id, e.target.value)}
                       className="border border-neutral-200 bg-[#F7F5F0] rounded-md px-2.5 py-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-700 focus:outline-none focus:border-[#9C6B30] cursor-pointer"
                     >
@@ -100,8 +97,8 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
             {order.status !== 'cancelled' ? (
               <div className="relative grid grid-cols-4 gap-1 sm:gap-2 py-3 sm:py-4">
                 <div className="absolute top-7 sm:top-9 left-[12.5%] right-[12.5%] h-[2px] bg-[#E8E8E8] -z-0" />
-                <div
-                  className="absolute top-7 sm:top-9 left-[12.5%] h-[2px] bg-[#9C6B30] -z-0 transition-all duration-500"
+                <div 
+                  className="absolute top-7 sm:top-9 left-[12.5%] h-[2px] bg-[#9C6B30] -z-0 transition-all duration-500" 
                   style={{ width: `${(activeIdx / (STEPS.length - 1)) * 75}%` }}
                 />
                 {STEPS.map((s, i) => {
@@ -128,12 +125,12 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
               <div className="bg-red-50 text-red-800 p-4 sm:p-5 rounded-lg border border-red-200 text-xs sm:text-sm space-y-2">
                 <div className="flex items-center gap-2 font-semibold text-red-900 text-sm">
                   <X size={18} className="shrink-0 text-red-600" />
-                  {cancellationDisplayText}
+                  This order was cancelled.
                 </div>
                 <div className="text-neutral-700 space-y-1">
                   <p>
                     <span className="font-semibold text-neutral-800 font-sans">Cancelled By:</span>{' '}
-                    <span className="font-medium">{cancellationActor || 'Unavailable'}</span>
+                    <span className="capitalize font-medium">{order.cancelledBy || 'Customer'}</span>
                     {order.cancelledAt && <span> on {new Date(order.cancelledAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
                   </p>
                   {order.cancellationReason && (
@@ -167,17 +164,17 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
               <h3 className="text-xs font-semibold tracking-widest uppercase text-neutral-400 flex items-center gap-1.5">
                 <User size={14} className="text-[#9C6B30]" /> Customer &amp; Shipping Address
               </h3>
-
+              
               <div className="space-y-2.5 text-xs sm:text-sm">
                 <div>
                   <span className="text-[11px] text-neutral-400 block">Name</span>
                   <span className="font-medium text-neutral-800">{address.fullName || '—'}</span>
                 </div>
-
+                
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
                   <div>
                     <span className="text-[11px] text-neutral-400 block">Email Address</span>
-                    <a
+                    <a 
                       href={`mailto:${order.customerEmail || order.guestEmail}`}
                       className="font-medium text-[#9C6B30] hover:underline break-all text-xs"
                     >
@@ -186,7 +183,7 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
                   </div>
                   <div>
                     <span className="text-[11px] text-neutral-400 block">Phone Number</span>
-                    <a
+                    <a 
                       href={`tel:${address.phone}`}
                       className="font-medium text-[#9C6B30] hover:underline text-xs"
                     >
@@ -215,7 +212,7 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
               <h3 className="text-xs font-semibold tracking-widest uppercase text-neutral-400 flex items-center gap-1.5">
                 <Wallet size={14} className="text-[#9C6B30]" /> Payment &amp; Transactions
               </h3>
-
+              
               <div className="space-y-2.5 text-xs sm:text-sm">
                 <div>
                   <span className="text-[11px] text-neutral-400 block">Payment Method</span>
@@ -283,16 +280,16 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
                 Order Items ({order.items?.length || 0})
               </h3>
             </div>
-
+            
             <div className="divide-y divide-neutral-100">
               {order.items?.map((it, idx) => (
                 <div key={idx} className="p-3.5 xs:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
                   <div className="flex gap-3 xs:gap-4 items-center">
                     {it.image ? (
-                      <img
-                        src={it.image}
-                        alt={it.name}
-                        className="w-12 h-12 xs:w-16 xs:h-16 object-cover rounded bg-neutral-50 border border-neutral-200 shrink-0"
+                      <img 
+                        src={it.image} 
+                        alt={it.name} 
+                        className="w-12 h-12 xs:w-16 xs:h-16 object-cover rounded bg-neutral-50 border border-neutral-200 shrink-0" 
                       />
                     ) : (
                       <div className="w-12 h-12 xs:w-16 xs:h-16 rounded bg-neutral-100 border border-neutral-200 flex items-center justify-center text-neutral-400 shrink-0 text-xs">
@@ -333,19 +330,19 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
           {/* Pricing Breakdown & PDF Download */}
           <div className="flex flex-col md:flex-row gap-6 justify-between items-start">
             <div className="w-full md:w-auto flex flex-col sm:flex-row gap-3">
-              <a
-                href={`/api/orders/${order.id}/invoice`}
-                target="_blank"
-                rel="noreferrer"
+              <a 
+                href={`/api/orders/${order.id}/invoice`} 
+                target="_blank" 
+                rel="noreferrer" 
                 className="inline-flex items-center justify-center gap-2 px-5 py-3 border border-neutral-800 text-xs font-semibold tracking-widest uppercase rounded-lg hover:bg-neutral-800 hover:text-white transition-all shadow-xs w-full sm:w-auto text-center"
               >
                 <Download size={14} /> Open/Download PDF Invoice
               </a>
-              <button
+              <button 
                 onClick={() => setShowShippingSlip(true)}
                 className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-[#9C6B30] text-white text-xs font-semibold tracking-widest uppercase rounded-lg hover:bg-[#855B29] transition-all shadow-xs w-full sm:w-auto text-center"
               >
-                <FileText size={14} /> Generate Shipping Slips (2 Copies)
+                <FileText size={14} /> Generate Shipping Slip
               </button>
             </div>
 
@@ -354,24 +351,24 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
                 <span>Subtotal</span>
                 <span>{formatINR(amounts.subtotal)}</span>
               </div>
-
+              
               {amounts.discount > 0 && (
                 <div className="flex justify-between text-[#9C6B30] font-medium">
                   <span>Discount {order.coupon ? `(${order.coupon})` : ''}</span>
                   <span>-{formatINR(amounts.discount)}</span>
                 </div>
               )}
-
+              
               <div className="flex justify-between text-neutral-500">
                 <span>Shipping Insurance</span>
                 <span>{amounts.shipping === 0 ? <span className="text-[#9C6B30] font-semibold">FREE</span> : formatINR(amounts.shipping)}</span>
               </div>
-
+              
               <div className="flex justify-between text-neutral-500">
                 <span>Tax (GST 3%)</span>
                 <span>{formatINR(amounts.tax)}</span>
               </div>
-
+              
               {amounts.giftWrap > 0 && (
                 <div className="flex justify-between text-neutral-500">
                   <span>Gift Wrap</span>
@@ -397,9 +394,7 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
                   <li key={idx} className="pl-6 relative">
                     <div className="absolute -left-[7px] top-1.5 w-3 h-3 rounded-full bg-[#9C6B30] ring-4 ring-white" />
                     <div className="flex items-baseline justify-between flex-wrap gap-2">
-                      <div className="font-semibold capitalize text-sm text-neutral-800">
-                        {h.status === 'cancelled' ? cancellationDisplayText : h.status}
-                      </div>
+                      <div className="font-semibold capitalize text-sm text-neutral-800">{h.status}</div>
                       <div className="text-xs text-neutral-400 font-mono">
                         {new Date(h.at).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                       </div>
@@ -413,9 +408,9 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
         </div>
       </div>
       {showShippingSlip && (
-        <ShippingSlip
-          order={order}
-          onClose={() => setShowShippingSlip(false)}
+        <ShippingSlip 
+          order={order} 
+          onClose={() => setShowShippingSlip(false)} 
         />
       )}
     </div>

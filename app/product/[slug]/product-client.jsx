@@ -5,21 +5,20 @@ import Link from 'next/link';
 import ProductCard from '@/components/site/product-card';
 import RecentlyViewed from '@/components/site/recently-viewed';
 import CompareBar from '@/components/site/compare-bar';
-import { getRelated, formatINR, formatRating, getNormalizedSpecs, getNormalizedBenefits } from '@/lib/products';
+import { getRelated, formatINR, getNormalizedSpecs, getNormalizedBenefits } from '@/lib/products';
 import { useCart, useWishlist } from '@/lib/cart-store';
 import { useCompare, useRecentlyViewed } from '@/lib/browsing';
 import { Heart, Share2, Truck, Minus, Plus, ChevronRight, ChevronDown, ChevronUp, Star, MapPin, Loader2, GitCompare, ShieldCheck } from 'lucide-react';
 import BenefitIcon from '@/components/ui/benefit-icon';
-import ProductImageZoom from '@/components/site/product-image-zoom';
 import { toast } from 'sonner';
 import { WAREHOUSE_PINCODE } from '@/lib/constants';
+import { shareProduct } from '@/lib/native-utils';
 
-export default function ProductClient({ initialProduct, slug, siteSettings }) {
+export default function ProductClient({ initialProduct, slug }) {
   const router = useRouter();
   const [p, setP] = useState(initialProduct);
   const [related, setRelated] = useState(getRelated(slug));
   const [loading, setLoading] = useState(!initialProduct);
-  const [zoomConfig, setZoomConfig] = useState(siteSettings?.zoomSettings || null);
   const { add } = useCart();
   const { has, toggle } = useWishlist();
   const { has: hasCmp, toggle: toggleCmp } = useCompare();
@@ -30,36 +29,13 @@ export default function ProductClient({ initialProduct, slug, siteSettings }) {
   const [pin, setPin] = useState('');
   const [pinResult, setPinResult] = useState('');
   const [checkingPin, setCheckingPin] = useState(false);
+  const [zoom, setZoom] = useState({ on: false, x: 50, y: 50 });
   const [reviewData, setReviewData] = useState({ reviews: [], averageRating: 0, totalReviews: 0, breakdown: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 }, customerReviewsEnabled: true });
   const [loadingReviews, setLoadingReviews] = useState(true);
   const [showAllReviews, setShowAllReviews] = useState(false);
   const reviewsContainerRef = useRef(null);
 
-  useEffect(() => {
-    setShowAllReviews(false);
-    (async () => {
-      try {
-        const r = await fetch(`/api/products/${slug}`, { cache: 'no-store' });
-        if (r.ok) {
-          const d = await r.json();
-          if (d.product) setP(d.product);
-          if (d.related) setRelated(d.related);
-          if (d.zoomSettings) setZoomConfig(d.zoomSettings);
-        }
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [slug]);
-
-  useEffect(() => {
-    if (!zoomConfig) {
-      fetch('/api/site-settings', { cache: 'no-store' })
-        .then(r => r.ok ? r.json() : null)
-        .then(d => { if (d?.zoomSettings) setZoomConfig(d.zoomSettings); })
-        .catch(() => {});
-    }
-  }, [zoomConfig]);
+  useEffect(() => { setShowAllReviews(false); (async () => { try { const r = await fetch(`/api/products/${slug}`, { cache: 'no-store' }); if (r.ok) { const d = await r.json(); if (d.product) setP(d.product); if (d.related) setRelated(d.related); } } finally { setLoading(false); } })(); }, [slug]);
   useEffect(() => { if (p?.id) pushRecent(p.id); }, [p?.id]);
 
   useEffect(() => {
@@ -136,17 +112,28 @@ export default function ProductClient({ initialProduct, slug, siteSettings }) {
       <section className="max-w-[1400px] mx-auto px-4 md:px-8 pb-16">
         <div className="grid md:grid-cols-2 gap-10 lg:gap-16">
           <div>
-            <ProductImageZoom
-              images={p.images || []}
-              productName={p.name}
-              badge={p.badge}
-              discount={disc}
-              isOutOfStock={isOutOfStock}
-              zoomSettings={zoomConfig || siteSettings?.zoomSettings || {}}
-              productZoomOverride={p.zoomMode || 'default'}
-              activeImageIndex={img}
-              onImageChange={(i) => setImg(i)}
-            />
+            <div onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); setZoom({ on: true, x: ((e.clientX - r.left) / r.width) * 100, y: ((e.clientY - r.top) / r.height) * 100 }); }} onMouseLeave={() => setZoom(z => ({ ...z, on: false }))} className="relative aspect-square rounded-2xl overflow-hidden bg-[#FAF6EF] luxe-shadow group">
+              <img src={p.images[img]} alt={p.name} className="w-full h-full object-cover transition-transform duration-500" style={zoom.on ? { transformOrigin: `${zoom.x}% ${zoom.y}%`, transform: 'scale(1.8)' } : {}} />
+              {isOutOfStock ? (
+                <span className="absolute top-3 left-3 sm:top-4 sm:left-4 bg-[#1A1A1A] text-white text-[9px] sm:text-[10px] tracking-wider sm:tracking-[0.25em] uppercase px-2 py-1 sm:px-3 sm:py-1.5 font-semibold z-10">OUT OF STOCK</span>
+              ) : (
+                p.badge && <span className="absolute top-3 left-3 sm:top-4 sm:left-4 bg-[#1A1A1A] text-white text-[9px] sm:text-[10px] tracking-wider sm:tracking-[0.25em] uppercase px-2 py-1 sm:px-3 sm:py-1.5">{p.badge}</span>
+              )}
+              {disc > 0 && <span className="absolute top-3 right-3 sm:top-4 sm:right-4 bg-[#9C6B30] text-white text-[9px] sm:text-[10px] tracking-wider uppercase px-2 py-1 sm:px-3 sm:py-1.5">-{disc}%</span>}
+            </div>
+            {p.images && p.images.length > 1 && (
+              <div className="mt-4 grid grid-cols-5 gap-2 sm:gap-3">
+                {p.images.map((im, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setImg(i)}
+                    className={`aspect-square rounded-lg overflow-hidden border-2 transition ${img === i ? 'border-[#9C6B30]' : 'border-transparent hover:border-[#E8E8E8]'}`}
+                  >
+                    <img loading="lazy" src={im} alt="" className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div>
             <div className="text-[10px] sm:text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-2">{p.metal}</div>
@@ -155,7 +142,7 @@ export default function ProductClient({ initialProduct, slug, siteSettings }) {
               <div className="flex items-center gap-1 text-xs sm:text-sm">
                 <Star size={14} className={(reviewData.totalReviews > 0 || p.rating > 0) ? "fill-[#D4AF37] stroke-[#D4AF37]" : "text-neutral-300 stroke-neutral-400"} />
                 <span className="font-medium">
-                  {reviewData.totalReviews > 0 ? formatRating(reviewData.averageRating) : formatRating(p.rating)}
+                  {reviewData.totalReviews > 0 ? reviewData.averageRating.toFixed(1) : (p.rating > 0 ? p.rating : '0.0')}
                 </span>
                 <span className="text-neutral-500">
                   ({reviewData.totalReviews > 0 ? reviewData.totalReviews : (p.reviews || 0)} {(reviewData.totalReviews || p.reviews) === 1 ? 'review' : 'reviews'})
@@ -195,7 +182,20 @@ export default function ProductClient({ initialProduct, slug, siteSettings }) {
               </div>
               <button onClick={() => toggle(p.id)} className={`w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-[#E8E8E8] flex items-center justify-center hover:border-[#9C6B30] ${has(p.id) ? 'text-[#9C6B30]' : ''}`}><Heart size={16} fill={has(p.id) ? '#9C6B30' : 'none'} /></button>
               <button onClick={() => { const r = toggleCmp(p.id); if (r.full) toast.error('Compare up to 4 items'); else toast.success(r.added ? 'Added to compare' : 'Removed from compare'); }} className={`w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-[#E8E8E8] flex items-center justify-center hover:border-[#9C6B30] ${hasCmp(p.id) ? 'text-[#9C6B30]' : ''}`}><GitCompare size={16} /></button>
-              <button onClick={() => { navigator.clipboard?.writeText(window.location.href); toast.success('Link copied'); }} className="w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-[#E8E8E8] flex items-center justify-center hover:border-[#9C6B30]"><Share2 size={16} /></button>
+              <button
+                onClick={() => {
+                  shareProduct({
+                    title: p.name,
+                    text: `Check out this beautiful handcrafted piece from MikuMantra:\n\n${p.name}\n${formatINR(p.price)}`,
+                    url: typeof window !== 'undefined' ? window.location.href : ''
+                  });
+                }}
+                title="Share product"
+                aria-label="Share product"
+                className="w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-[#E8E8E8] flex items-center justify-center hover:border-[#9C6B30] text-[#1A1A1A] hover:text-[#9C6B30] transition-colors"
+              >
+                <Share2 size={16} />
+              </button>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2 sm:gap-3">
               <button
@@ -226,15 +226,6 @@ export default function ProductClient({ initialProduct, slug, siteSettings }) {
               >
                 Buy Now
               </button>
-            </div>
-
-            <div className="mt-4 flex items-center justify-center gap-4 text-xs text-neutral-500">
-              <span className="flex items-center gap-1.5 text-neutral-600">
-                <ShieldCheck size={14} className="text-emerald-600" />
-                100% Secure Checkout
-              </span>
-              <span>•</span>
-              <span className="text-neutral-600">Easy Returns</span>
             </div>
             {(() => {
               const activeBenefits = getNormalizedBenefits(p).filter(b => b.enabled !== false && b.title?.trim());
@@ -290,7 +281,7 @@ export default function ProductClient({ initialProduct, slug, siteSettings }) {
                       <div className="sm:col-span-5 text-center sm:text-left space-y-2 sm:border-r border-[#E8E8E8] sm:pr-8">
                         <div className="flex items-baseline justify-center sm:justify-start gap-2">
                           <span className="text-4xl sm:text-5xl font-display font-light text-[#1A1A1A]">
-                            {formatRating(reviewData.averageRating)}
+                            {reviewData.averageRating > 0 ? reviewData.averageRating.toFixed(1) : '0.0'}
                           </span>
                           <span className="text-sm text-neutral-400 font-light">/ 5.0</span>
                         </div>

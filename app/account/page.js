@@ -4,10 +4,9 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { useWishlist } from '@/lib/cart-store';
-import { PRODUCTS, formatINR, formatRating } from '@/lib/products';
-import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound, RotateCcw, Clock, Star, Sparkles, CheckCircle2, Pencil, Truck, ExternalLink } from 'lucide-react';
+import { PRODUCTS, formatINR } from '@/lib/products';
+import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound, RotateCcw, Clock, Star, Sparkles, CheckCircle2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
-import { getCancellationLabel } from '@/lib/utils';
 
 export default function AccountPage() {
   const { user, loading, logout, refresh, changePassword } = useAuth();
@@ -365,8 +364,50 @@ export default function AccountPage() {
         </div>
       </div>
 
-      <div className="max-w-[1400px] mx-auto px-4 md:px-8 py-8 sm:py-12 grid md:grid-cols-4 gap-6 md:gap-8">
-        <aside className="md:col-span-1">
+      {/* Mobile Horizontal Tabs Navigation */}
+      <div className="md:hidden max-w-[1400px] mx-auto px-4 pt-4 pb-2">
+        <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar py-1">
+          {tabs.map(t => {
+            const isActive = tab === t.k;
+            if (t.href) {
+              return (
+                <Link
+                  key={t.k}
+                  href={t.href}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-medium whitespace-nowrap bg-white border border-[#EAE3D6] text-neutral-600 shrink-0 shadow-2xs active:scale-95 transition-all"
+                >
+                  <t.i size={14} className="text-neutral-400" />
+                  <span>{t.n}</span>
+                </Link>
+              );
+            }
+            return (
+              <button
+                key={t.k}
+                onClick={() => setTab(t.k)}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-medium whitespace-nowrap shrink-0 transition-all cursor-pointer shadow-2xs active:scale-95 ${
+                  isActive
+                    ? 'bg-[#1A1A1A] text-white shadow-xs'
+                    : 'bg-white border border-[#EAE3D6] text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                <t.i size={14} className={isActive ? 'text-[#D4AF37]' : 'text-neutral-400'} />
+                <span>{t.n}</span>
+              </button>
+            );
+          })}
+          <button
+            onClick={doLogout}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-medium whitespace-nowrap shrink-0 transition-all cursor-pointer bg-white border border-red-200 text-red-600 hover:bg-red-50 shadow-2xs active:scale-95"
+          >
+            <LogOut size={14} />
+            <span>Sign Out</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="max-w-[1400px] mx-auto px-4 md:px-8 py-4 sm:py-8 md:py-12 grid md:grid-cols-4 gap-6 md:gap-8">
+        <aside className="hidden md:block md:col-span-1">
           <div className="bg-white rounded-2xl border border-[#EAE3D6] shadow-[0_4px_24px_rgba(26,26,26,0.04)] overflow-hidden sticky top-28">
             <div className="p-5 sm:p-6 bg-gradient-to-b from-[#F9F6F0] via-[#FAF7F2] to-white border-b border-[#EAE3D6] text-center sm:text-left flex flex-col items-center sm:items-start">
               <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-tr from-[#8C602B] via-[#B88746] to-[#E5C378] p-[2.5px] shadow-[0_4px_16px_rgba(156,107,48,0.2)]">
@@ -718,35 +759,8 @@ export default function AccountPage() {
                                   ? 'bg-red-50 text-red-700 border-red-200'
                                   : 'bg-[#FAF5EB] text-[#9C6B30] border-[#9C6B30]/30'
                                 }`}>
-                                {o.status === 'cancelled'
-                                  ? (getCancellationLabel(o) || 'Cancelled')
-                                  : o.status}
+                                {o.status}
                               </span>
-
-                              {/* Compact Courier Tracking Badge */}
-                              {(o.courier?.carrier || o.carrier) && (
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-[9px] sm:text-[10px] font-semibold tracking-wider rounded-full bg-[#FAF5EB] text-[#9C6B30] border border-[#D4AF37]/30">
-                                  <Truck size={11} className="shrink-0" />
-                                  <span>{o.courier?.carrier || o.carrier}:</span>
-                                  <span className="font-mono font-bold">
-                                    {(o.courier?.trackingNumber || o.trackingNumber) ? `#${o.courier?.trackingNumber || o.trackingNumber}` : 'Pending AWB'}
-                                  </span>
-                                  {(o.courier?.trackingUrl || o.trackingUrl) && (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        window.open(o.courier?.trackingUrl || o.trackingUrl, '_blank', 'noopener,noreferrer');
-                                      }}
-                                      className="ml-0.5 text-[#9C6B30] underline hover:text-[#7A501F] font-bold cursor-pointer"
-                                      title="Open live carrier tracking portal"
-                                    >
-                                      [Track ↗]
-                                    </button>
-                                  )}
-                                </span>
-                              )}
                               {o.returnStatus && (
                                 <span className={`inline-block px-2.5 py-0.5 text-[9px] sm:text-[10px] tracking-wider uppercase rounded-full font-semibold border ${o.returnStatus === 'REQUESTED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
                                     o.returnStatus === 'APPROVED' ? 'bg-blue-50 text-blue-800 border-blue-200' :
@@ -787,28 +801,8 @@ export default function AccountPage() {
                               +{o.items.length - 5}
                             </div>
                           )}
-                          <div className="ml-auto flex items-center gap-2.5 shrink-0">
-                            {o.status !== 'cancelled' && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  if (o.courier?.trackingUrl || o.trackingUrl) {
-                                    window.open(o.courier?.trackingUrl || o.trackingUrl, '_blank', 'noopener,noreferrer');
-                                  } else {
-                                    router.push(`/orders/${o.id}#tracking`);
-                                  }
-                                }}
-                                className="px-3 py-1 bg-[#FAF5EB] hover:bg-[#9C6B30] text-[#9C6B30] hover:text-white border border-[#D4AF37]/40 rounded-full text-[10px] tracking-wider uppercase font-semibold transition flex items-center gap-1 cursor-pointer shadow-2xs"
-                                title="Track live order status"
-                              >
-                                <Truck size={11} /> Track Order
-                              </button>
-                            )}
-                            <span className="text-[11px] text-[#9C6B30] group-hover:underline flex items-center gap-1 font-medium tracking-wider uppercase">
-                              View Details <ChevronRight size={13} />
-                            </span>
+                          <div className="ml-auto text-[11px] text-[#9C6B30] group-hover:underline flex items-center gap-1 shrink-0 font-medium tracking-wider uppercase">
+                            View Details <ChevronRight size={13} />
                           </div>
                         </div>
                       </Link>
@@ -1035,7 +1029,7 @@ export default function AccountPage() {
                           {[1, 2, 3, 4, 5].map(s => (
                             <Star key={s} size={15} className={s <= r.rating ? 'fill-[#D4AF37] stroke-[#D4AF37]' : 'text-neutral-300'} />
                           ))}
-                          <span className="text-xs font-semibold text-neutral-800 ml-1">{formatRating(r.rating)} / 5.0</span>
+                          <span className="text-xs font-semibold text-neutral-800 ml-1">{r.rating}.0 / 5</span>
                         </div>
 
                         {r.title && (

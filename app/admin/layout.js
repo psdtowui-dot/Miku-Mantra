@@ -8,7 +8,7 @@ import {
   Ticket, MessageSquare, Image as ImageIcon, LogOut, Loader2, Menu, X,
   History, Settings, ChevronDown, ChevronRight, Layout, SlidersHorizontal,
   Globe, RotateCcw, ShieldCheck, KeyRound, Eye, EyeOff, Shield, UserCheck,
-  Lock, ScrollText, CreditCard, Share2
+  Lock, ScrollText, CreditCard
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -40,8 +40,6 @@ const UI_NAV = [
   { href: '/admin/header', label: 'Header', icon: Menu, permission: 'settings.view' },
   { href: '/admin/footer', label: 'Footer', icon: Settings, permission: 'settings.view' },
   { href: '/admin/product-filter', label: 'Product Filter', icon: SlidersHorizontal, permission: 'settings.view' },
-  { href: '/admin/social-media', label: 'Social Media', icon: Share2, permission: 'settings.view' },
-  { href: '/admin/categories', label: 'Category Showcase', icon: FolderTree, permission: 'settings.view' },
 ];
 
 function canAccess(user, permissionKey) {
@@ -81,21 +79,21 @@ export default function AdminLayout({ children }) {
   const [showAdminNew, setShowAdminNew] = useState(false);
   const [showAdminConf, setShowAdminConf] = useState(false);
 
-  const isLoginPage = pathname === '/admin/login' || pathname?.startsWith('/admin/login');
+  const isLoginPage = pathname === '/admin/login';
 
   useEffect(() => {
     if (isLoginPage) return;
     if (!loading) {
       if (!user) {
-        router.replace('/admin/login?redirect=' + encodeURIComponent(pathname));
+        router.push('/admin/login?redirect=' + encodeURIComponent(pathname));
       } else if (user.role !== 'admin') {
-        router.replace('/admin/login?error=forbidden&redirect=' + encodeURIComponent(pathname));
+        router.push('/admin/login?error=forbidden&redirect=' + encodeURIComponent(pathname));
       }
     }
   }, [loading, user, router, pathname, isLoginPage]);
 
   useEffect(() => {
-    if (pathname && (pathname.startsWith('/admin/payment-settings') || pathname.startsWith('/admin/site-settings') || pathname.startsWith('/admin/homepage') || pathname.startsWith('/admin/banners') || pathname.startsWith('/admin/header') || pathname.startsWith('/admin/footer') || pathname.startsWith('/admin/product-filter') || pathname.startsWith('/admin/social-media'))) {
+    if (pathname && (pathname.startsWith('/admin/payment-settings') || pathname.startsWith('/admin/site-settings') || pathname.startsWith('/admin/homepage') || pathname.startsWith('/admin/banners') || pathname.startsWith('/admin/header') || pathname.startsWith('/admin/footer') || pathname.startsWith('/admin/product-filter'))) {
       setUiExpanded(true);
     }
     if (pathname && (pathname.startsWith('/admin/admins') || pathname.startsWith('/admin/roles') || pathname.startsWith('/admin/permissions') || pathname.startsWith('/admin/activity-logs'))) {

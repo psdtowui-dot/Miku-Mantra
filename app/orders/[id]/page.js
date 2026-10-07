@@ -1,13 +1,12 @@
 'use client';
-import { useEffect, useState, Suspense, useRef } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/use-auth';
-import { formatINR, formatRating } from '@/lib/products';
-import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft, Star, Edit3, Trash2, Upload, Camera, Image as ImageIcon, Building2, Smartphone, ShieldCheck, Copy, ExternalLink, MapPin } from 'lucide-react';
+import { formatINR } from '@/lib/products';
+import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft, Star, Edit3, Trash2, Upload, Camera, Image as ImageIcon, Building2, Smartphone, ShieldCheck } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
-import { getCancellationLabel, getCancellationActor } from '@/lib/utils';
 
 const STEPS = [
   { key: 'confirmed', label: 'Confirmed', icon: CheckCircle2 },
@@ -107,58 +106,6 @@ function OrderInner() {
   const [reviewModalErr, setReviewModalErr] = useState('');
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoInputMode, setPhotoInputMode] = useState('upload'); // 'upload' | 'url'
-  const [copiedAwb, setCopiedAwb] = useState(false);
-
-  const handleCopyAwb = (awb) => {
-    if (!awb) return;
-    try {
-      navigator.clipboard.writeText(awb);
-      setCopiedAwb(true);
-      toast.success('AWB Number copied to clipboard');
-      setTimeout(() => setCopiedAwb(false), 2500);
-    } catch (e) {
-      toast.info(`AWB: ${awb}`);
-    }
-  };
-
-  const autoOpenedReviewRef = useRef(false);
-  const autoOpenedReturnRef = useRef(false);
-
-  const closeReviewModal = () => {
-    setShowReviewModal(false);
-    setReviewTargetItem(null);
-    setReviewModalErr('');
-    autoOpenedReviewRef.current = true;
-    if (typeof window !== 'undefined') {
-      try {
-        const url = new URL(window.location.href);
-        if (url.searchParams.has('action') || url.searchParams.has('itemId')) {
-          url.searchParams.delete('action');
-          url.searchParams.delete('itemId');
-          window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''));
-        }
-      } catch (e) {
-        console.error('Error cleaning up URL on review modal close:', e);
-      }
-    }
-  };
-
-  const closeReturnModal = () => {
-    setShowReturnModal(false);
-    setReturnModalErr('');
-    autoOpenedReturnRef.current = true;
-    if (typeof window !== 'undefined') {
-      try {
-        const url = new URL(window.location.href);
-        if (url.searchParams.has('action')) {
-          url.searchParams.delete('action');
-          window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''));
-        }
-      } catch (e) {
-        console.error('Error cleaning up URL on return modal close:', e);
-      }
-    }
-  };
 
   // Live timer ticker for 30-minute return countdown
   const [nowTime, setNowTime] = useState(Date.now());
@@ -428,7 +375,7 @@ function OrderInner() {
       const d = await r.json();
       if (r.ok && d.return) {
         setReturnRequest(d.return);
-        closeReturnModal();
+        setShowReturnModal(false);
         toast.success('Return request submitted successfully. We will review it shortly.');
         const rOrder = await fetch(`/api/orders/${order.id}`, { credentials: 'include' });
         const dOrder = await rOrder.json();
@@ -650,7 +597,7 @@ function OrderInner() {
         if (r.ok && d.review) {
           toast.success('Your review has been updated!');
           setOrderReviews(prev => prev.map(rev => rev.id === existingReview.id ? d.review : rev));
-          closeReviewModal();
+          setShowReviewModal(false);
         } else {
           setReviewModalErr(d.error || 'Failed to update review.');
           toast.error(d.error || 'Review update failed');
@@ -676,7 +623,7 @@ function OrderInner() {
         if (r.ok && d.review) {
           toast.success('Thank you! Your review has been submitted.');
           setOrderReviews(prev => [...prev, d.review]);
-          closeReviewModal();
+          setShowReviewModal(false);
         } else {
           setReviewModalErr(d.error || 'Failed to submit review.');
           toast.error(d.error || 'Review submission failed');
@@ -703,7 +650,7 @@ function OrderInner() {
       if (r.ok) {
         toast.success('Review deleted successfully');
         setOrderReviews(prev => prev.filter(rev => rev.id !== existingReview.id));
-        closeReviewModal();
+        setShowReviewModal(false);
       } else {
         const d = await r.json().catch(() => ({}));
         setReviewModalErr(d.error || 'Failed to delete review');
@@ -779,16 +726,14 @@ function OrderInner() {
 
   // Auto-open return modal if action=return query parameter exists and return is allowed
   useEffect(() => {
-    if (order && actionParam === 'return' && canRequestReturn && !autoOpenedReturnRef.current) {
-      autoOpenedReturnRef.current = true;
+    if (order && actionParam === 'return' && canRequestReturn && !showReturnModal) {
       openReturnModal();
     }
   }, [order, actionParam, canRequestReturn]);
 
   // Auto-open review modal if action=review query parameter exists on delivered order
   useEffect(() => {
-    if (order && actionParam === 'review' && order.status === 'delivered' && !autoOpenedReviewRef.current) {
-      autoOpenedReviewRef.current = true;
+    if (order && actionParam === 'review' && order.status === 'delivered' && !showReviewModal) {
       const target = itemIdParam
         ? order.items?.find(it => it.id === itemIdParam || it.slug === itemIdParam)
         : (order.items?.find(it => !orderReviews.some(r => r.productId === it.id || r.productSlug === it.slug)) || order.items?.[0]);
@@ -797,7 +742,7 @@ function OrderInner() {
         openReviewModal(target);
       }
     }
-  }, [order, actionParam, itemIdParam, orderReviews]);
+  }, [order, actionParam, itemIdParam, orderReviews, showReviewModal]);
 
   if (authLoading || loading) return <div className="h-96 flex items-center justify-center"><Loader2 className="animate-spin text-[#9C6B30]" /></div>;
   if (!user) return null;
@@ -809,8 +754,6 @@ function OrderInner() {
 
   // Cancellation eligibility
   const isCancellable = ['confirmed', 'placed', 'processing', 'packed'].includes(order.status) && order.status !== 'cancelled';
-  const cancellationDisplayText = getCancellationLabel(order) || 'Cancelled';
-  const cancellationActor = getCancellationActor(order);
 
   return (
     <main className="bg-white min-h-screen">
@@ -833,24 +776,7 @@ function OrderInner() {
               <div className="text-xs text-neutral-500 mt-1">Placed {new Date(order.placedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
             </div>
             <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-              <span className={`inline-block px-3 sm:px-4 py-1.5 text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full capitalize font-semibold ${order.status === 'cancelled' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-[#FAF6EF] text-[#9C6B30]'}`}>{order.status === 'cancelled' ? cancellationDisplayText : order.status}</span>
-              {(order.courier?.trackingUrl || order.trackingUrl) ? (
-                <a
-                  href={order.courier?.trackingUrl || order.trackingUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 bg-[#9C6B30] hover:bg-[#7A501F] text-white text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full font-semibold transition shadow-xs"
-                >
-                  <Truck size={12} /> Track Package
-                </a>
-              ) : (
-                <a
-                  href="#tracking"
-                  className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 border border-[#9C6B30] text-[#9C6B30] hover:bg-[#FAF6EF] text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full font-semibold transition"
-                >
-                  <Truck size={12} /> Track Order
-                </a>
-              )}
+              <span className={`inline-block px-3 sm:px-4 py-1.5 text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full capitalize font-semibold ${order.status === 'cancelled' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-[#FAF6EF] text-[#9C6B30]'}`}>{order.status}</span>
               <a href={`/api/orders/${order.id}/invoice`} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 border border-[#1A1A1A] text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full hover:bg-[#1A1A1A] hover:text-white transition"><Download size={12} /> Invoice</a>
             </div>
           </div>
@@ -1297,14 +1223,10 @@ function OrderInner() {
             <div className="mb-6 p-4 sm:p-5 bg-red-50/70 border border-red-200 rounded-xl space-y-2 text-xs sm:text-sm">
               <div className="flex items-center gap-2 text-red-800 font-semibold text-sm">
                 <X size={18} className="shrink-0 text-red-600" />
-                {cancellationDisplayText}
+                Order Cancelled
               </div>
               <p className="text-neutral-700">
-                {cancellationActor ? (
-                  <>Cancelled by <span className="font-medium">{cancellationActor}</span></>
-                ) : (
-                  <span>Order cancelled</span>
-                )}
+                Cancelled by <span className="font-medium capitalize">{order.cancelledBy || 'customer'}</span>
                 {order.cancelledAt && <span> on {new Date(order.cancelledAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
               </p>
               {order.cancellationReason && (
@@ -1341,8 +1263,8 @@ function OrderInner() {
           {/* Progress bar */}
           {order.status !== 'cancelled' ? (
             <div className="relative grid grid-cols-4 gap-1 sm:gap-2 mb-4">
-              <div className="absolute top-4 sm:top-5 left-[12.5%] right-[12.5%] h-[2px] bg-[#E8E8E8] -z-0" />
-              <div className="absolute top-4 sm:top-5 left-[12.5%] h-[2px] bg-[#9C6B30] -z-0 transition-all duration-500" style={{ width: `${(activeIdx / (STEPS.length - 1)) * 75}%` }} />
+              <div className="absolute top-4 sm:top-5 left-[12.5%] right-[12.5%] h-[2px] bg-[#E8E8E8] z-0" />
+              <div className="absolute top-4 sm:top-5 left-[12.5%] h-[2px] bg-[#9C6B30] z-0 transition-all duration-500" style={{ width: `${(activeIdx / (STEPS.length - 1)) * 75}%` }} />
               {STEPS.map((s, i) => {
                 const done = i <= activeIdx;
                 const h = historyByStatus[s.key];
@@ -1370,116 +1292,13 @@ function OrderInner() {
                   <li key={i} className="pl-4 sm:pl-5 relative">
                     <div className="absolute -left-[7px] top-1 w-3 h-3 rounded-full bg-[#9C6B30] ring-4 ring-[#FAF6EF]" />
                     <div className="flex items-baseline justify-between flex-wrap gap-2">
-                      <div className="font-medium capitalize text-[#1A1A1A] text-xs sm:text-sm">
-                        {h.status === 'cancelled' ? cancellationDisplayText : h.status}
-                      </div>
+                      <div className="font-medium capitalize text-[#1A1A1A] text-xs sm:text-sm">{h.status}</div>
                       <div className="text-[11px] sm:text-xs text-neutral-500">{new Date(h.at).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
                     </div>
                     {h.note && <div className="text-xs text-neutral-500 mt-0.5">{h.note}</div>}
                   </li>
                 ))}
               </ol>
-            </div>
-          )}
-
-          {/* High-End Live Courier Tracking Card */}
-          {(order.status !== 'cancelled') && (
-            <div id="tracking" className="mb-6 rounded-2xl bg-gradient-to-br from-[#FAF8F5] via-white to-[#FAF6EF] border border-[#D4AF37]/40 p-5 sm:p-7 shadow-[0_4px_24px_rgba(156,107,48,0.08)] relative overflow-hidden">
-              {/* Subtle luxury ambient accent */}
-              <div className="absolute -right-8 -top-8 w-32 h-32 bg-[#D4AF37]/10 rounded-full blur-2xl pointer-events-none" />
-
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-5 relative z-10">
-                <div className="flex items-start gap-4">
-                  {/* Delivery truck emblem */}
-                  <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-[#0F0F10] text-[#D4AF37] border border-[#D4AF37]/30 flex items-center justify-center shrink-0 shadow-md">
-                    <Truck size={24} className="stroke-[2.2]" />
-                  </div>
-
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-[10px] sm:text-[11px] font-semibold tracking-[0.2em] uppercase text-[#9C6B30] bg-[#FAF5EB] px-2.5 py-0.5 rounded-full border border-[#D4AF37]/30">
-                        {order.status === 'delivered' ? 'Delivery Completed' : order.status === 'shipped' ? 'In Transit' : 'Preparing Shipment'}
-                      </span>
-                      {(order.courier?.shippedAt || order.shippedAt) && (
-                        <span className="text-xs text-neutral-400">
-                          Dispatched on {new Date(order.courier?.shippedAt || order.shippedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                        </span>
-                      )}
-                    </div>
-
-                    <h3 className="font-display text-lg sm:text-xl text-[#1A1A1A] font-medium mt-1">
-                      {order.status === 'delivered' ? 'Delivered via' : order.status === 'shipped' ? 'In Transit via' : 'Courier Partner:'}{' '}
-                      <span className="text-[#9C6B30]">{order.courier?.carrier || order.carrier || 'Pending Assignment'}</span>
-                    </h3>
-
-                    {/* AWB Number with 1-click copy */}
-                    <div className="flex items-center gap-2 mt-2 flex-wrap">
-                      <span className="text-xs text-neutral-500 font-medium">AWB / Consignment:</span>
-                      {(order.courier?.trackingNumber || order.trackingNumber) ? (
-                        <div className="inline-flex items-center gap-1.5 bg-white border border-[#EAE3D2] px-3 py-1 rounded-lg shadow-2xs">
-                          <code className="font-mono font-bold text-xs sm:text-sm text-neutral-900 tracking-wider">
-                            {order.courier?.trackingNumber || order.trackingNumber}
-                          </code>
-                          <button
-                            type="button"
-                            onClick={() => handleCopyAwb(order.courier?.trackingNumber || order.trackingNumber)}
-                            className="p-1 text-neutral-400 hover:text-[#9C6B30] hover:bg-neutral-50 rounded transition cursor-pointer"
-                            title="Copy AWB Tracking Number"
-                          >
-                            {copiedAwb ? (
-                              <Check size={14} className="text-emerald-600" />
-                            ) : (
-                              <Copy size={14} />
-                            )}
-                          </button>
-                        </div>
-                      ) : (
-                        <span className="italic text-xs text-neutral-400">AWB assigned upon courier dispatch</span>
-                      )}
-                      {copiedAwb && (
-                        <span className="text-[11px] text-emerald-600 font-medium animate-in fade-in">
-                          Copied!
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Direct Gold CTA: Track Shipment ↗ */}
-                {(order.courier?.trackingUrl || order.trackingUrl) ? (
-                  <div className="shrink-0 pt-2 md:pt-0">
-                    <a
-                      href={order.courier?.trackingUrl || order.trackingUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-gradient-to-r from-[#9C6B30] to-[#B38747] hover:from-[#855B29] hover:to-[#9C6B30] text-white font-semibold text-xs uppercase tracking-widest rounded-xl transition-all shadow-md hover:shadow-lg w-full sm:w-auto"
-                    >
-                      Track Package <ExternalLink size={14} />
-                    </a>
-                  </div>
-                ) : (
-                  <div className="shrink-0 text-xs text-neutral-500 bg-[#FAF5EB] px-3.5 py-2.5 rounded-lg border border-[#D4AF37]/20 flex items-center gap-2">
-                    <Clock size={14} className="text-[#9C6B30]" />
-                    <span>Live portal active upon courier pickup</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Courier notes (if present) */}
-              {order.courier?.notes && (
-                <div className="mt-4 pt-3 border-t border-[#EAE3D2]/70 text-xs text-neutral-600 flex items-center gap-2">
-                  <span className="font-semibold text-neutral-700">Dispatch Note:</span>
-                  <span className="italic">{order.courier.notes}</span>
-                </div>
-              )}
-
-              {/* Luxury Assurance Statement */}
-              <div className="mt-4 pt-3.5 border-t border-[#EAE3D2] flex items-center gap-2.5 text-xs text-neutral-600 bg-white/60 -mx-5 -mb-5 sm:-mx-7 sm:-mb-7 px-5 sm:px-7 py-3 rounded-b-2xl">
-                <ShieldCheck size={16} className="text-[#9C6B30] shrink-0" />
-                <span className="font-medium text-[#4A3B2C] text-[11px] sm:text-xs">
-                  Your jewellery is fully insured in transit and packaged in tamper-evident velvet security casing.
-                </span>
-              </div>
             </div>
           )}
 
@@ -1554,7 +1373,7 @@ function OrderInner() {
                                 <Star key={s} size={11} className={s <= itemReview.rating ? 'fill-[#D4AF37] stroke-[#D4AF37]' : 'text-neutral-300'} />
                               ))}
                             </span>
-                            <span>{formatRating(itemReview.rating)} · Reviewed</span>
+                            <span>{itemReview.rating}.0 · Reviewed</span>
                           </span>
                           {itemReview.title && (
                             <span className="text-xs text-neutral-600 font-medium italic truncate max-w-[200px] sm:max-w-xs">
@@ -1625,7 +1444,7 @@ function OrderInner() {
                 <div className="text-[10px] tracking-widest uppercase text-[#9C6B30] font-semibold">Order Cancellation</div>
                 <h3 className="font-display text-lg sm:text-xl font-light">Cancel Order #{order.orderNumber}</h3>
               </div>
-              <button type="button" disabled={cancelling} onClick={() => setShowCancelModal(false)} className="text-neutral-400 hover:text-white transition p-1 cursor-pointer">
+              <button disabled={cancelling} onClick={() => setShowCancelModal(false)} className="text-neutral-400 hover:text-white transition p-1 cursor-pointer">
                 <X size={18} />
               </button>
             </div>
@@ -1730,7 +1549,7 @@ function OrderInner() {
 
       {/* Return Order Modal */}
       {showReturnModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto" onClick={() => !submittingReturn && closeReturnModal()}>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto" onClick={() => !submittingReturn && setShowReturnModal(false)}>
           <div className="bg-white text-[#1A1A1A] w-full max-w-xl rounded-xl border border-neutral-200 overflow-hidden shadow-2xl my-6" onClick={e => e.stopPropagation()}>
             <div className="bg-[#1A1A1A] text-white p-4 sm:p-5 flex justify-between items-center">
               <div>
@@ -1739,7 +1558,7 @@ function OrderInner() {
                 </div>
                 <h3 className="font-display text-lg sm:text-xl font-light">Return Order #{order.orderNumber}</h3>
               </div>
-              <button type="button" disabled={submittingReturn} onClick={closeReturnModal} className="text-neutral-400 hover:text-white transition p-1 cursor-pointer">
+              <button disabled={submittingReturn} onClick={() => setShowReturnModal(false)} className="text-neutral-400 hover:text-white transition p-1 cursor-pointer">
                 <X size={18} />
               </button>
             </div>
@@ -1930,7 +1749,7 @@ function OrderInner() {
                 </div>
 
                 <div className="pt-3 border-t border-[#E8E8E8] flex gap-3 justify-end items-center">
-                  <button type="button" disabled={submittingReturn} onClick={closeReturnModal} className="px-4 py-2 text-xs text-neutral-600 hover:text-neutral-900 cursor-pointer">
+                  <button type="button" onClick={() => setShowReturnModal(false)} className="px-4 py-2 text-xs text-neutral-600 hover:text-neutral-900 cursor-pointer">
                     Cancel
                   </button>
                   <button type="submit" className="px-6 py-2.5 bg-[#1A1A1A] text-white text-[11px] tracking-wider uppercase rounded-md hover:bg-[#9C6B30] transition font-semibold cursor-pointer">
@@ -2041,7 +1860,7 @@ function OrderInner() {
       {showReviewModal && reviewTargetItem && (
         <div
           className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
-          onClick={() => !submittingReview && !deletingReview && closeReviewModal()}
+          onClick={() => !submittingReview && !deletingReview && setShowReviewModal(false)}
         >
           <div
             className="bg-white text-[#1A1A1A] w-full max-w-lg rounded-xl border border-neutral-200 overflow-hidden shadow-2xl my-6"
@@ -2057,9 +1876,8 @@ function OrderInner() {
                 </h3>
               </div>
               <button
-                type="button"
                 disabled={submittingReview || deletingReview}
-                onClick={closeReviewModal}
+                onClick={() => setShowReviewModal(false)}
                 className="text-neutral-400 hover:text-white transition p-1 cursor-pointer"
               >
                 <X size={18} />
@@ -2123,11 +1941,11 @@ function OrderInner() {
                   <span className="text-xs font-semibold text-[#9C6B30] ml-2">
                     {(() => {
                       const cur = hoverRating || reviewForm.rating;
-                      if (cur === 5) return '5.0 / 5 · Exceptional';
-                      if (cur === 4) return '4.0 / 5 · Very Good';
-                      if (cur === 3) return '3.0 / 5 · Good';
-                      if (cur === 2) return '2.0 / 5 · Fair';
-                      return '1.0 / 5 · Poor';
+                      if (cur === 5) return '5 / 5 · Exceptional';
+                      if (cur === 4) return '4 / 5 · Very Good';
+                      if (cur === 3) return '3 / 5 · Good';
+                      if (cur === 2) return '2 / 5 · Fair';
+                      return '1 / 5 · Poor';
                     })()}
                   </span>
                 </div>
@@ -2294,7 +2112,7 @@ function OrderInner() {
                   <button
                     type="button"
                     disabled={submittingReview || deletingReview}
-                    onClick={closeReviewModal}
+                    onClick={() => setShowReviewModal(false)}
                     className="px-4 py-2 border border-[#E8E8E8] text-neutral-700 text-xs uppercase tracking-wider rounded-md hover:bg-neutral-50 cursor-pointer"
                   >
                     Cancel
