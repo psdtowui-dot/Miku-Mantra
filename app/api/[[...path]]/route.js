@@ -12,11 +12,20 @@ import { buildInvoicePDF } from '@/lib/pdf-invoice'
 import { buildShippingSlipPDF } from '@/lib/pdf-shippingslip'
 import { WAREHOUSE_PINCODE } from '@/lib/constants'
 import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification } from '@/lib/notifications'
-import { sendPasswordResetEmail } from '@/lib/email-service'
+import { sendPasswordResetEmail, checkEmailProviderStatus, sendTestCampaignEmail } from '@/lib/email-service'
 import { seedRbacIfEmpty, resolveUserPermissions, hasPermission, logAdminActivity, validatePrivilegeEscalation, PERMISSIONS, DEFAULT_ROLES } from '@/lib/rbac'
 import { invalidateSiteDataCache } from '@/lib/db-site-settings'
 import { DEFAULT_SOCIAL_MEDIA_SETTINGS, DEFAULT_SOCIAL_MEDIA_ITEMS, DEFAULT_CATEGORY_SHOWCASE_SETTINGS } from '@/lib/site-defaults'
-import { calculateCartPricing, validateCouponRules } from '@/lib/cart-pricing'
+import {
+  subscribeCustomer, getSubscribers, updateSubscriberStatus, deleteSubscriber,
+  exportSubscribersCSV, getNewsletterSettings, updateNewsletterSettings,
+  getWelcomeTemplate, updateWelcomeTemplate, handleBulkSubscriberAction,
+  getCampaigns, getCampaignById, createCampaign, updateCampaign, deleteCampaign,
+  cancelCampaign, executeCampaignSend, getCampaignLogs, processUnsubscribeToken,
+  getAnalytics
+} from '@/lib/newsletter-service'
+
+
 
 
 // Simple in-memory server cache with TTL
@@ -274,7 +283,10 @@ async function ensureIndexes(database) {
       database.collection('categories').createIndex({ id: 1 }),
       database.collection('collections').createIndex({ id: 1 }),
       database.collection('activity_logs').createIndex({ timestamp: -1 }),
-      database.collection('wishlist').createIndex({ userId: 1, productId: 1 }, { unique: true })
+      database.collection('wishlist').createIndex({ userId: 1, productId: 1 }, { unique: true }),
+      database.collection('newsletter_subscribers').createIndex({ email: 1 }, { unique: true }),
+      database.collection('newsletter_subscribers').createIndex({ status: 1 }),
+      database.collection('newsletter_subscribers').createIndex({ subscribedAt: -1 })
     ]);
   } catch (e) {
     console.warn('Index creation notice:', e.message);
@@ -3828,6 +3840,46 @@ async function handleRoute(request, { params }) {
       return err('Invalid header subroute or method', 404);
     }
 
+    // ============ PUBLIC NEWSLETTER SETTINGS ============
+    if ((route === '/newsletter/settings' || route === '/api/newsletter/settings') && method === 'GET') {
+      try {
+        const cached = cacheGet('newsletter_settings_public');
+        if (cached) return ok(cached);
+        const settings = await getNewsletterSettings(db);
+        cacheSet('newsletter_settings_public', settings, 30000);
+        return ok(settings);
+      } catch (err) {
+        console.error('Public newsletter settings error:', err);
+        return ok({});
+      }
+    }
+
+    // ============ PUBLIC NEWSLETTER SUBSCRIBE ============
+    if ((route === '/newsletter/subscribe' || route === '/api/newsletter/subscribe' || route === '/newsletter') && method === 'POST') {
+      try {
+        const body = await request.json().catch(() => ({}));
+        const result = await subscribeCustomer(db, { email: body.email, source: body.source });
+        return NextResponse.json(result, { status: result.statusCode || 200 });
+      } catch (err) {
+        console.error('Public newsletter subscribe error:', err);
+        return NextResponse.json({ success: false, message: 'An error occurred while subscribing. Please try again.' }, { status: 500 });
+      }
+    }
+
+    // ============ PUBLIC NEWSLETTER UNSUBSCRIBE ============
+    if ((route === '/newsletter/unsubscribe' || route === '/api/newsletter/unsubscribe') && (method === 'GET' || method === 'POST')) {
+      try {
+        const body = method === 'POST' ? await request.json().catch(() => ({})) : {};
+        const token = q.get('token') || body.token || '';
+        const email = q.get('email') || body.email || '';
+        const result = await processUnsubscribeToken(db, { token, email });
+        return NextResponse.json(result, { status: result.success ? 200 : 400 });
+      } catch (err) {
+        console.error('Public unsubscribe error:', err);
+        return NextResponse.json({ success: false, message: 'An error occurred while unsubscribing.' }, { status: 500 });
+      }
+    }
+
     // ============ ADMIN ============
     if (route.startsWith('/admin/')) {
       const admin = await requireAdmin(db, request)
@@ -3847,10 +3899,253 @@ async function handleRoute(request, { params }) {
         _cache.delete('header_config');
         _cache.delete('admin_dashboard');
         _cache.delete('social_media_public');
+        _cache.delete('newsletter_settings_public');
         cacheBust('social_media');
         cacheBust('coupons');
         invalidateUserSessionCache();
         try { invalidateSiteDataCache(); } catch (e) {}
+      }
+
+      // ============ ADMIN NEWSLETTER HEALTH CHECK ============
+      if (sub === 'newsletter/health' && method === 'GET') {
+        const health = await checkEmailProviderStatus(db);
+        return ok(health);
+      }
+
+      // ============ ADMIN NEWSLETTER SETTINGS ============
+      if (sub === 'newsletter/settings') {
+        if (method === 'GET') {
+          if (!hasPermission(admin, 'settings.view') && !hasPermission(admin, 'customers.view')) {
+            return err('Permission denied', 403);
+          }
+          const settings = await getNewsletterSettings(db);
+          return ok(settings);
+        }
+        if (method === 'PUT' || method === 'POST') {
+          if (!hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied: settings.edit required', 403);
+          }
+          const body = await request.json().catch(() => ({}));
+          const updated = await updateNewsletterSettings(db, body);
+          _cache.delete('newsletter_settings_public');
+          try { revalidatePath('/', 'layout'); } catch (e) {}
+
+          await logAdminActivity(db, {
+            admin,
+            action: 'NEWSLETTER_SETTINGS_UPDATED',
+            module: 'MARKETING',
+            targetId: 'default',
+            targetName: 'Newsletter Settings',
+            metadata: { isEnabled: updated.isEnabled },
+            request
+          });
+
+          return ok({ success: true, message: 'Newsletter settings saved successfully.', settings: updated });
+        }
+      }
+
+      // ============ ADMIN NEWSLETTER TEMPLATES ============
+      if (sub === 'newsletter/templates') {
+        if (method === 'GET') {
+          const template = await getWelcomeTemplate(db);
+          return ok(template);
+        }
+        if (method === 'PUT' || method === 'POST') {
+          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied', 403);
+          const body = await request.json().catch(() => ({}));
+          const updated = await updateWelcomeTemplate(db, body);
+          return ok({ success: true, message: 'Welcome email template saved successfully.', template: updated });
+        }
+      }
+
+      // ============ ADMIN NEWSLETTER BULK ACTIONS ============
+      if (sub === 'newsletter/bulk' && method === 'POST') {
+        if (!hasPermission(admin, 'customers.edit')) return err('Permission denied', 403);
+        const body = await request.json().catch(() => ({}));
+        const result = await handleBulkSubscriberAction(db, body);
+        return ok(result);
+      }
+
+      // ============ ADMIN NEWSLETTER CAMPAIGNS ============
+      if (sub === 'newsletter/campaigns') {
+        if (method === 'GET') {
+          const campaigns = await getCampaigns(db);
+          return ok({ success: true, campaigns });
+        }
+        if (method === 'POST') {
+          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied', 403);
+          const body = await request.json().catch(() => ({}));
+          const created = await createCampaign(db, body);
+          await logAdminActivity(db, {
+            admin,
+            action: 'NEWSLETTER_CAMPAIGN_CREATED',
+            module: 'MARKETING',
+            targetId: created.id,
+            targetName: created.name,
+            metadata: { status: created.status },
+            request
+          });
+          return ok({ success: true, campaign: created });
+        }
+      }
+
+      if (sub.startsWith('newsletter/campaigns/')) {
+        const remaining = sub.replace('newsletter/campaigns/', '');
+        const parts = remaining.split('/');
+        const campaignId = parts[0];
+        const action = parts[1]; // test, send, cancel, logs, undefined
+
+        if (action === 'test' && method === 'POST') {
+          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied', 403);
+          const body = await request.json().catch(() => ({}));
+          const testEmail = (body.toEmail || body.email || admin.email || '').trim();
+          if (!testEmail) return err('Test recipient email address is required.', 400);
+
+          const campaign = await getCampaignById(db, campaignId) || body;
+          const template = await getWelcomeTemplate(db);
+          const result = await sendTestCampaignEmail({ toEmail: testEmail, campaign, template });
+
+          await logAdminActivity(db, {
+            admin,
+            action: 'NEWSLETTER_TEST_EMAIL_SENT',
+            module: 'MARKETING',
+            targetId: campaignId,
+            targetName: campaign?.name || 'Test Email',
+            metadata: { recipient: testEmail, success: result.success },
+            request
+          });
+
+          if (!result.success) {
+            return err(result.message || result.error || 'Failed to send test email.', 400);
+          }
+          return ok({ success: true, message: `Test email successfully sent to ${testEmail}.` });
+        }
+
+        if (action === 'send' && method === 'POST') {
+          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied', 403);
+          const result = await executeCampaignSend(db, campaignId, admin);
+
+          await logAdminActivity(db, {
+            admin,
+            action: 'NEWSLETTER_CAMPAIGN_SENT',
+            module: 'MARKETING',
+            targetId: campaignId,
+            targetName: 'Campaign Broadcast',
+            metadata: result.stats || {},
+            request
+          });
+
+          if (!result.success) {
+            return err(result.message, result.statusCode || 400);
+          }
+          return ok(result);
+        }
+
+        if (action === 'cancel' && method === 'POST') {
+          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied', 403);
+          const result = await cancelCampaign(db, campaignId);
+          await logAdminActivity(db, {
+            admin,
+            action: 'NEWSLETTER_CAMPAIGN_CANCELLED',
+            module: 'MARKETING',
+            targetId: campaignId,
+            targetName: 'Campaign Broadcast',
+            request
+          });
+          return ok(result);
+        }
+
+        if (action === 'logs' && method === 'GET') {
+          const logs = await getCampaignLogs(db, campaignId);
+          return ok({ success: true, logs });
+        }
+
+        if (!action && (method === 'PUT' || method === 'PATCH')) {
+          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied', 403);
+          const body = await request.json().catch(() => ({}));
+          const updated = await updateCampaign(db, campaignId, body);
+          return ok({ success: true, campaign: updated });
+        }
+
+        if (!action && method === 'DELETE') {
+          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied', 403);
+          await deleteCampaign(db, campaignId);
+          await logAdminActivity(db, {
+            admin,
+            action: 'NEWSLETTER_CAMPAIGN_DELETED',
+            module: 'MARKETING',
+            targetId: campaignId,
+            targetName: 'Campaign Draft',
+            request
+          });
+          return ok({ success: true, message: 'Campaign deleted successfully.' });
+        }
+      }
+
+      // ============ ADMIN NEWSLETTER ANALYTICS ============
+      if (sub === 'newsletter/analytics' && method === 'GET') {
+        const analytics = await getAnalytics(db);
+        return ok({ success: true, analytics });
+      }
+
+      // ============ ADMIN NEWSLETTER SUBSCRIBERS EXPORT ============
+      if (sub === 'newsletter/export') {
+        if (method === 'GET') {
+          if (!hasPermission(admin, 'customers.view') && !hasPermission(admin, 'reports.export') && !hasPermission(admin, 'settings.view')) {
+            return err('Permission denied', 403);
+          }
+          const search = (q.get('search') || '').trim();
+          const status = q.get('status') || 'ALL';
+          const idsParam = q.get('ids');
+          const ids = idsParam ? idsParam.split(',').filter(Boolean) : [];
+          const csvData = await exportSubscribersCSV(db, { search, status, ids });
+          return new NextResponse(csvData, {
+            status: 200,
+            headers: {
+              'Content-Type': 'text/csv; charset=utf-8',
+              'Content-Disposition': `attachment; filename="newsletter_subscribers_${Date.now()}.csv"`
+            }
+          });
+        }
+      }
+
+      // ============ ADMIN NEWSLETTER SUBSCRIBERS CRUD ============
+      if (sub === 'newsletter') {
+        if (method === 'GET') {
+          if (!hasPermission(admin, 'customers.view') && !hasPermission(admin, 'settings.view')) {
+            return err('Permission denied', 403);
+          }
+          const page = q.get('page');
+          const limit = q.get('limit');
+          const search = q.get('search');
+          const status = q.get('status');
+          const result = await getSubscribers(db, { page, limit, search, status });
+          return ok(result);
+        }
+      }
+
+      if (sub.startsWith('newsletter/')) {
+        const subscriberId = sub.replace('newsletter/', '');
+        if (subscriberId && !['settings', 'templates', 'bulk', 'campaigns', 'analytics', 'export'].includes(subscriberId)) {
+          if (method === 'PUT' || method === 'PATCH') {
+            if (!hasPermission(admin, 'customers.edit') && !hasPermission(admin, 'settings.edit')) {
+              return err('Permission denied', 403);
+            }
+            const body = await request.json().catch(() => ({}));
+            const result = await updateSubscriberStatus(db, subscriberId, body.status);
+            if (!result.success) return err(result.message, result.statusCode || 400);
+            return ok(result);
+          }
+
+          if (method === 'DELETE') {
+            if (!hasPermission(admin, 'customers.delete') && !hasPermission(admin, 'settings.edit')) {
+              return err('Permission denied', 403);
+            }
+            const result = await deleteSubscriber(db, subscriberId);
+            if (!result.success) return err(result.message, result.statusCode || 400);
+            return ok(result);
+          }
+        }
       }
 
       // ============ RBAC: ADMIN MANAGEMENT ============
