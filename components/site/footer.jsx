@@ -3,12 +3,49 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import * as Lucide from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function Footer({ initialData }) {
   const pathname = usePathname();
   const [data, setData] = useState(initialData || null);
   const [loading, setLoading] = useState(!initialData);
   const [error, setError] = useState(null);
+  const [footerEmail, setFooterEmail] = useState('');
+  const [footerSubmitting, setFooterSubmitting] = useState(false);
+
+  const handleFooterSubscribe = async (e) => {
+    e.preventDefault();
+    const trimmed = (footerEmail || '').trim();
+    if (!trimmed) {
+      toast.error('Please enter your email address.');
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmed)) {
+      toast.error('Please enter a valid email address.');
+      return;
+    }
+
+    setFooterSubmitting(true);
+    try {
+      const res = await fetch('/api/newsletter/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: trimmed, source: 'website-footer' })
+      });
+      const resData = await res.json();
+      if (res.ok && resData.success) {
+        toast.success(resData.message || 'You have successfully joined the MikuMantra Circle.');
+        setFooterEmail('');
+      } else {
+        toast.error(resData.message || resData.error || 'Failed to subscribe. Please try again.');
+      }
+    } catch (err) {
+      toast.error('Network error. Please check your connection and try again.');
+    } finally {
+      setFooterSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     if (initialData) {
@@ -141,18 +178,22 @@ export default function Footer({ initialData }) {
                 <p className="text-xs text-white/60 mb-3">
                   {newsletter.description || 'Receive updates, access to exclusive deals, and more.'}
                 </p>
-                <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); toast.success('Subscribed successfully!'); e.target.reset(); }}>
+                <form className="flex gap-2" onSubmit={handleFooterSubscribe}>
                   <input
                     type="email"
                     required
+                    value={footerEmail}
+                    onChange={(e) => setFooterEmail(e.target.value)}
+                    disabled={footerSubmitting}
                     placeholder="Your email address"
-                    className="bg-white/10 text-white placeholder-white/40 text-xs px-3 py-2.5 rounded border border-white/20 focus:outline-none focus:border-[#D4AF37] flex-1"
+                    className="bg-white/10 text-white placeholder-white/40 text-xs px-3 py-2.5 rounded border border-white/20 focus:outline-none focus:border-[#D4AF37] flex-1 disabled:opacity-60"
                   />
                   <button
                     type="submit"
-                    className="bg-[#D4AF37] text-[#4a2536] hover:bg-white hover:text-[#4a2536] px-4 py-2.5 rounded text-xs uppercase tracking-widest font-semibold transition-colors"
+                    disabled={footerSubmitting}
+                    className="bg-[#D4AF37] text-[#4a2536] hover:bg-white hover:text-[#4a2536] px-4 py-2.5 rounded text-xs uppercase tracking-widest font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center min-w-[90px]"
                   >
-                    Subscribe
+                    {footerSubmitting ? <Lucide.Loader2 size={14} className="animate-spin" /> : 'Subscribe'}
                   </button>
                 </form>
               </div>

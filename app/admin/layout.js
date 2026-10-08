@@ -8,7 +8,7 @@ import {
   Ticket, MessageSquare, Image as ImageIcon, LogOut, Loader2, Menu, X,
   History, Settings, ChevronDown, ChevronRight, Layout, SlidersHorizontal,
   Globe, RotateCcw, ShieldCheck, KeyRound, Eye, EyeOff, Shield, UserCheck,
-  Lock, ScrollText, CreditCard
+  Lock, ScrollText, CreditCard, Share2, Mail, Send, FileText, BarChart3
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -23,6 +23,14 @@ const NAV = [
   { href: '/admin/customers', label: 'Customers', icon: Users, permission: 'customers.view' },
   { href: '/admin/coupons', label: 'Coupons', icon: Ticket, permission: 'products.view' },
   { href: '/admin/reviews', label: 'Reviews', icon: MessageSquare, permission: 'products.view' },
+];
+
+const MARKETING_NAV = [
+  { href: '/admin/newsletter', label: 'Newsletter Subscribers', icon: Mail, permission: 'customers.view' },
+  { href: '/admin/newsletter/settings', label: 'Newsletter Settings', icon: Settings, permission: 'settings.view' },
+  { href: '/admin/newsletter/campaigns', label: 'Campaigns', icon: Send, permission: 'settings.view' },
+  { href: '/admin/newsletter/templates', label: 'Templates', icon: FileText, permission: 'settings.view' },
+  { href: '/admin/newsletter/analytics', label: 'Analytics', icon: BarChart3, permission: 'settings.view' }
 ];
 
 const ADMIN_MGMT_NAV = [
@@ -40,6 +48,8 @@ const UI_NAV = [
   { href: '/admin/header', label: 'Header', icon: Menu, permission: 'settings.view' },
   { href: '/admin/footer', label: 'Footer', icon: Settings, permission: 'settings.view' },
   { href: '/admin/product-filter', label: 'Product Filter', icon: SlidersHorizontal, permission: 'settings.view' },
+  { href: '/admin/social-media', label: 'Social Media', icon: Share2, permission: 'settings.view' },
+  { href: '/admin/categories', label: 'Category Showcase', icon: FolderTree, permission: 'settings.view' },
 ];
 
 function canAccess(user, permissionKey) {
@@ -57,6 +67,7 @@ export default function AdminLayout({ children }) {
   const [open, setOpen] = useState(false);
   const [uiExpanded, setUiExpanded] = useState(false);
   const [adminExpanded, setAdminExpanded] = useState(true);
+  const [marketingExpanded, setMarketingExpanded] = useState(true);
   const [mounted, setMounted] = useState(false);
   const [siteLogo, setSiteLogo] = useState('/logo.png');
 
@@ -67,7 +78,7 @@ export default function AdminLayout({ children }) {
       .then(d => {
         if (d?.logo) setSiteLogo(d.logo);
       })
-      .catch(() => { });
+      .catch(() => {});
   }, []);
 
   // Admin password change modal state
@@ -79,25 +90,28 @@ export default function AdminLayout({ children }) {
   const [showAdminNew, setShowAdminNew] = useState(false);
   const [showAdminConf, setShowAdminConf] = useState(false);
 
-  const isLoginPage = pathname === '/admin/login';
+  const isLoginPage = pathname === '/admin/login' || pathname?.startsWith('/admin/login');
 
   useEffect(() => {
     if (isLoginPage) return;
     if (!loading) {
       if (!user) {
-        router.push('/admin/login?redirect=' + encodeURIComponent(pathname));
+        router.replace('/admin/login?redirect=' + encodeURIComponent(pathname));
       } else if (user.role !== 'admin') {
-        router.push('/admin/login?error=forbidden&redirect=' + encodeURIComponent(pathname));
+        router.replace('/admin/login?error=forbidden&redirect=' + encodeURIComponent(pathname));
       }
     }
   }, [loading, user, router, pathname, isLoginPage]);
 
   useEffect(() => {
-    if (pathname && (pathname.startsWith('/admin/payment-settings') || pathname.startsWith('/admin/site-settings') || pathname.startsWith('/admin/homepage') || pathname.startsWith('/admin/banners') || pathname.startsWith('/admin/header') || pathname.startsWith('/admin/footer') || pathname.startsWith('/admin/product-filter'))) {
+    if (pathname && (pathname.startsWith('/admin/payment-settings') || pathname.startsWith('/admin/site-settings') || pathname.startsWith('/admin/homepage') || pathname.startsWith('/admin/banners') || pathname.startsWith('/admin/header') || pathname.startsWith('/admin/footer') || pathname.startsWith('/admin/product-filter') || pathname.startsWith('/admin/social-media'))) {
       setUiExpanded(true);
     }
     if (pathname && (pathname.startsWith('/admin/admins') || pathname.startsWith('/admin/roles') || pathname.startsWith('/admin/permissions') || pathname.startsWith('/admin/activity-logs'))) {
       setAdminExpanded(true);
+    }
+    if (pathname && pathname.startsWith('/admin/newsletter')) {
+      setMarketingExpanded(true);
     }
   }, [pathname]);
 
@@ -161,7 +175,7 @@ export default function AdminLayout({ children }) {
   }
 
   return (
-    <div className="h-screen max-h-screen w-full bg-[#F7F5F0] flex overflow-hidden">
+    <div className="min-h-screen bg-[#F7F5F0] flex">
       {/* Mobile Drawer Backdrop Overlay */}
       {open && (
         <div
@@ -172,7 +186,7 @@ export default function AdminLayout({ children }) {
 
       {/* Sidebar Drawer */}
       <aside
-        className={`${open ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 fixed lg:sticky top-0 left-0 z-50 h-screen w-[85vw] max-w-[320px] lg:w-72 bg-[#0F0F10] text-white flex flex-col transition-transform duration-300 ease-in-out shadow-2xl lg:shadow-none shrink-0`}
+        className={`${open ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 fixed lg:sticky top-0 z-50 h-screen w-[85vw] max-w-[320px] lg:w-72 bg-[#0F0F10] text-white flex flex-col transition-transform duration-300 ease-in-out shadow-2xl lg:shadow-none`}
       >
         <div className="p-4 xs:p-6 border-b border-white/10 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
@@ -190,8 +204,9 @@ export default function AdminLayout({ children }) {
                 key={n.href}
                 href={n.href}
                 onClick={() => setOpen(false)}
-                className={`flex items-center gap-3 px-5 xs:px-6 py-3 text-xs sm:text-sm transition ${Active ? 'bg-white/10 text-[#D4AF37] border-l-2 border-[#D4AF37]' : 'text-white/70 hover:bg-white/5'
-                  }`}
+                className={`flex items-center gap-3 px-5 xs:px-6 py-3 text-xs sm:text-sm transition ${
+                  Active ? 'bg-white/10 text-[#D4AF37] border-l-2 border-[#D4AF37]' : 'text-white/70 hover:bg-white/5'
+                }`}
               >
                 <n.icon size={16} className="shrink-0" />
                 <span className="truncate">{n.label}</span>
@@ -199,16 +214,63 @@ export default function AdminLayout({ children }) {
             );
           })}
 
+          {/* MARKETING SECTION */}
+          {MARKETING_NAV.some(n => canAccess(user, n.permission)) && (
+            <div className="pt-2">
+              <div className="mx-5 xs:mx-6 my-2 border-t border-white/10" />
+              <button
+                onClick={() => setMarketingExpanded(!marketingExpanded)}
+                className={`w-full flex items-center justify-between px-5 xs:px-6 py-2.5 text-xs sm:text-sm transition ${
+                  pathname?.startsWith('/admin/newsletter')
+                    ? 'text-[#D4AF37] hover:bg-white/5 font-medium'
+                    : 'text-white/70 hover:bg-white/5'
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <Mail size={16} className="shrink-0 text-[#D4AF37]" />
+                  <span className="tracking-wide">Marketing</span>
+                </div>
+                {marketingExpanded ? <ChevronDown size={14} className="opacity-70 shrink-0" /> : <ChevronRight size={14} className="opacity-70 shrink-0" />}
+              </button>
+
+              {marketingExpanded && (
+                <div className="bg-black/20 py-1 transition-all">
+                  {MARKETING_NAV.filter(n => canAccess(user, n.permission)).map((n, idx, arr) => {
+                    const Active = pathname === n.href || pathname?.startsWith(n.href);
+                    const isLast = idx === arr.length - 1;
+                    return (
+                      <Link
+                        key={n.href}
+                        href={n.href}
+                        onClick={() => setOpen(false)}
+                        className={`flex items-center pl-8 xs:pl-10 pr-4 xs:pr-6 py-2 text-xs sm:text-sm transition ${
+                          Active
+                            ? 'text-[#D4AF37] font-medium bg-white/5 border-l-2 border-[#D4AF37] pl-[30px] xs:pl-[38px]'
+                            : 'text-white/60 hover:text-white hover:bg-white/[0.02]'
+                        }`}
+                      >
+                        <span className="text-white/30 font-mono mr-1.5 text-xs shrink-0">{isLast ? '└──' : '├──'}</span>
+                        <n.icon size={14} className="mr-2 shrink-0" />
+                        <span className="truncate">{n.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* ADMIN MANAGEMENT SECTION */}
           {ADMIN_MGMT_NAV.some(n => canAccess(user, n.permission)) && (
             <div className="pt-2">
               <div className="mx-5 xs:mx-6 my-2 border-t border-white/10" />
               <button
                 onClick={() => setAdminExpanded(!adminExpanded)}
-                className={`w-full flex items-center justify-between px-5 xs:px-6 py-2.5 text-xs sm:text-sm transition ${pathname?.startsWith('/admin/admins') || pathname?.startsWith('/admin/roles') || pathname?.startsWith('/admin/permissions') || pathname?.startsWith('/admin/activity-logs')
+                className={`w-full flex items-center justify-between px-5 xs:px-6 py-2.5 text-xs sm:text-sm transition ${
+                  pathname?.startsWith('/admin/admins') || pathname?.startsWith('/admin/roles') || pathname?.startsWith('/admin/permissions') || pathname?.startsWith('/admin/activity-logs')
                     ? 'text-[#D4AF37] hover:bg-white/5 font-medium'
                     : 'text-white/70 hover:bg-white/5'
-                  }`}
+                }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <Shield size={16} className="shrink-0 text-[#D4AF37]" />
@@ -227,10 +289,11 @@ export default function AdminLayout({ children }) {
                         key={n.href}
                         href={n.href}
                         onClick={() => setOpen(false)}
-                        className={`flex items-center pl-8 xs:pl-10 pr-4 xs:pr-6 py-2 text-xs sm:text-sm transition ${Active
+                        className={`flex items-center pl-8 xs:pl-10 pr-4 xs:pr-6 py-2 text-xs sm:text-sm transition ${
+                          Active
                             ? 'text-[#D4AF37] font-medium bg-white/5 border-l-2 border-[#D4AF37] pl-[30px] xs:pl-[38px]'
                             : 'text-white/60 hover:text-white hover:bg-white/[0.02]'
-                          }`}
+                        }`}
                       >
                         <span className="text-white/30 font-mono mr-1.5 text-xs shrink-0">{isLast ? '└──' : '├──'}</span>
                         <n.icon size={14} className="mr-2 shrink-0" />
@@ -249,10 +312,11 @@ export default function AdminLayout({ children }) {
               <div className="mx-5 xs:mx-6 my-2 border-t border-white/10" />
               <button
                 onClick={() => setUiExpanded(!uiExpanded)}
-                className={`w-full flex items-center justify-between px-5 xs:px-6 py-2.5 text-xs sm:text-sm transition ${pathname?.startsWith('/admin/payment-settings') || pathname?.startsWith('/admin/banners') || pathname?.startsWith('/admin/header') || pathname?.startsWith('/admin/footer') || pathname?.startsWith('/admin/product-filter') || pathname?.startsWith('/admin/site-settings') || pathname?.startsWith('/admin/homepage')
+                className={`w-full flex items-center justify-between px-5 xs:px-6 py-2.5 text-xs sm:text-sm transition ${
+                  pathname?.startsWith('/admin/payment-settings') || pathname?.startsWith('/admin/banners') || pathname?.startsWith('/admin/header') || pathname?.startsWith('/admin/footer') || pathname?.startsWith('/admin/product-filter') || pathname?.startsWith('/admin/site-settings') || pathname?.startsWith('/admin/homepage')
                     ? 'text-[#D4AF37] hover:bg-white/5 font-medium'
                     : 'text-white/70 hover:bg-white/5'
-                  }`}
+                }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <Layout size={16} className="shrink-0" />
@@ -271,10 +335,11 @@ export default function AdminLayout({ children }) {
                         key={n.href}
                         href={n.href}
                         onClick={() => setOpen(false)}
-                        className={`flex items-center pl-8 xs:pl-10 pr-4 xs:pr-6 py-2 text-xs sm:text-sm transition ${Active
+                        className={`flex items-center pl-8 xs:pl-10 pr-4 xs:pr-6 py-2 text-xs sm:text-sm transition ${
+                          Active
                             ? 'text-[#D4AF37] font-medium bg-white/5 border-l-2 border-[#D4AF37] pl-[30px] xs:pl-[38px]'
                             : 'text-white/60 hover:text-white hover:bg-white/[0.02]'
-                          }`}
+                        }`}
                       >
                         <span className="text-white/30 font-mono mr-1.5 text-xs shrink-0">{isLast ? '└──' : '├──'}</span>
                         <n.icon size={14} className="mr-2 shrink-0" />
@@ -315,9 +380,9 @@ export default function AdminLayout({ children }) {
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 min-w-0 flex flex-col h-screen overflow-y-auto">
+      <div className="flex-1 min-w-0 flex flex-col">
         {/* Mobile Header Bar */}
-        <header className="lg:hidden bg-[#0F0F10] text-white border-b border-white/10 px-3.5 py-3 flex items-center justify-between sticky top-0 z-30 shrink-0">
+        <header className="lg:hidden bg-[#0F0F10] text-white border-b border-white/10 px-3.5 py-3 flex items-center justify-between sticky top-0 z-30">
           <button onClick={() => setOpen(true)} className="p-1 hover:text-[#D4AF37] transition-colors" aria-label="Open sidebar">
             <Menu size={20} />
           </button>
