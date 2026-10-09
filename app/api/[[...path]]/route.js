@@ -850,13 +850,21 @@ async function syncEnvAdminEmailsWithDatabase(db) {
       }
     }
 
-    // 2. If any user was previously synced from .env, but is NO LONGER in .env, automatically revoke their admin role in MongoDB
+    // 2. If any user was previously synced from .env, but is NO LONGER in .env, automatically revoke their admin role in MongoDB unless they have an explicit DB admin roleKey
     const obsoleteEnvAdmins = await db.collection('users').find({
       syncedFromEnv: true,
       email: { $nin: envAdmins }
     }).toArray();
 
+    const adminRoleKeys = ['SUPER_ADMIN', 'ADMIN', 'PRODUCT_MANAGER', 'ORDER_MANAGER', 'CUSTOMER_SUPPORT', 'FINANCE_MANAGER', 'MARKETING_MANAGER'];
     for (const obsoleteUser of obsoleteEnvAdmins) {
+      if (obsoleteUser.roleKey && adminRoleKeys.includes(obsoleteUser.roleKey)) {
+        await db.collection('users').updateOne(
+          { id: obsoleteUser.id },
+          { $set: { syncedFromEnv: false, updatedAt: new Date() } }
+        );
+        continue;
+      }
       console.log(`[Auto-Sync] Revoking admin role in DB for deleted .env email: ${obsoleteUser.email}`);
       await db.collection('users').updateOne(
         { id: obsoleteUser.id },
@@ -920,6 +928,11 @@ async function getCurrentUser(db, request) {
   if (request && request.headers) {
     token = request.headers.get('x-auth-token') || request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
   }
+  if (!token && request && request.cookies) {
+    try {
+      token = typeof request.cookies.get === 'function' ? request.cookies.get(SESSION_COOKIE)?.value : request.cookies[SESSION_COOKIE];
+    } catch (e) {}
+  }
   if (!token) {
     try {
       const store = await cookies();
@@ -938,6 +951,7 @@ async function getCurrentUser(db, request) {
 
   // Self-healing & dynamic revocation from .env:
   const envAdmins = getEnvAdminEmails();
+  const adminRoleKeys = ['SUPER_ADMIN', 'ADMIN', 'PRODUCT_MANAGER', 'ORDER_MANAGER', 'CUSTOMER_SUPPORT', 'FINANCE_MANAGER', 'MARKETING_MANAGER'];
   if (u.email && envAdmins.includes(u.email.toLowerCase())) {
     if (u.role !== 'admin' || !u.syncedFromEnv || !u.roleKey) {
       await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'admin', roleKey: u.roleKey || 'SUPER_ADMIN', roleId: u.roleId || 'role_super_admin', syncedFromEnv: true, status: u.status || 'active' } });
@@ -946,13 +960,16 @@ async function getCurrentUser(db, request) {
       u.status = u.status || 'active';
     }
   } else if (u.syncedFromEnv && !envAdmins.includes(u.email.toLowerCase())) {
-    // Revoke admin if removed from .env
-    await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'user', syncedFromEnv: false } });
-    u.role = 'user';
+    // Revoke admin if removed from .env unless they have an assigned DB admin roleKey
+    if (!u.roleKey || !adminRoleKeys.includes(u.roleKey)) {
+      await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'user', syncedFromEnv: false } });
+      u.role = 'user';
+    } else {
+      await db.collection('users').updateOne({ id: u.id }, { $set: { syncedFromEnv: false } });
+    }
   }
 
   // Ensure any user holding an admin roleKey has role: 'admin'
-  const adminRoleKeys = ['SUPER_ADMIN', 'ADMIN', 'PRODUCT_MANAGER', 'ORDER_MANAGER', 'CUSTOMER_SUPPORT', 'FINANCE_MANAGER', 'MARKETING_MANAGER'];
   if (u.roleKey && adminRoleKeys.includes(u.roleKey) && u.role !== 'admin') {
     u.role = 'admin';
     await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'admin' } });
@@ -4070,6 +4087,16 @@ async function handleRoute(request, context) {
       } catch (err) {
         console.error('Public unsubscribe error:', err);
         return NextResponse.json({ success: false, message: 'An error occurred while unsubscribing.' }, { status: 500 });
+      }
+    }
+
+    // ============ EMAIL / NEWSLETTER INFRASTRUCTURE HEALTH STATUS ============
+    if ((route === '/admin/newsletter/health' || route === '/newsletter/health' || route === '/api/admin/newsletter/health') && method === 'GET') {
+      try {
+        const health = await checkEmailProviderStatus(db);
+        return ok(health);
+      } catch (e) {
+        return ok({ isConfigured: false, provider: 'Error', error: e.message });
       }
     }
 

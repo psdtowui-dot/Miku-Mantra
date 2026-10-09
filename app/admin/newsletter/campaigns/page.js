@@ -353,37 +353,57 @@ export default function AdminNewsletterCampaignsPage() {
 
       {/* Email Provider Infrastructure Health Banner */}
       <div className={`p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 ${
-        health?.isConfigured ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900' : 'bg-amber-50 border-amber-200 text-amber-900'
+        health === null
+          ? 'bg-neutral-50 border-neutral-200 text-neutral-700'
+          : health?.isConfigured
+          ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
+          : 'bg-amber-50 border-amber-200 text-amber-900'
       }`}>
         <div className="flex items-start gap-3">
-          {health?.isConfigured ? (
+          {health === null ? (
+            <Loader2 size={20} className="text-neutral-500 mt-0.5 shrink-0 animate-spin" />
+          ) : health?.isConfigured ? (
             <ShieldCheck size={20} className="text-emerald-600 mt-0.5 shrink-0" />
           ) : (
             <AlertCircle size={20} className="text-amber-600 mt-0.5 shrink-0" />
           )}
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wider">
-              Email Infrastructure Status: {health?.isConfigured ? `ACTIVE (${health.provider})` : 'UNCONFIGURED'}
+            <div className="text-xs font-semibold uppercase tracking-wider flex items-center gap-2">
+              Email Infrastructure Status:{' '}
+              {health === null
+                ? 'CHECKING / VERIFYING...'
+                : health?.isConfigured
+                ? `ACTIVE (${health.provider})`
+                : 'UNCONFIGURED'}
+              {health?.verified === false && (
+                <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-normal lowercase tracking-normal">
+                  (handshake delayed, ready)
+                </span>
+              )}
             </div>
             <div className="text-xs opacity-90 mt-0.5 font-light flex flex-wrap items-center gap-2">
               <span>
-                {health?.isConfigured
+                {health === null
+                  ? 'Connecting to configured email provider...'
+                  : health?.isConfigured
                   ? `Ready for live dispatch via ${health.from || 'configured sender'}.`
                   : (health?.error || 'SMTP_USER and SMTP_PASS or RESEND_API_KEY environment variables are required in .env.')}
               </span>
-              <button
-                onClick={() => {
-                  setSenderForm({
-                    fromName: health?.fromName || 'MikuMantra',
-                    fromEmail: health?.fromAddress || 'kk1414497@gmail.com',
-                    replyTo: health?.replyTo || 'support@mikumantra.com'
-                  });
-                  setShowEditSenderModal(true);
-                }}
-                className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#9C6B30] hover:text-[#845826] bg-white px-2 py-0.5 rounded border border-black/10 hover:bg-neutral-50 transition"
-              >
-                <Edit3 size={11} /> Edit Sender Email
-              </button>
+              {health && (
+                <button
+                  onClick={() => {
+                    setSenderForm({
+                      fromName: health?.fromName || 'MikuMantra',
+                      fromEmail: health?.fromAddress || 'kk1414497@gmail.com',
+                      replyTo: health?.replyTo || 'support@mikumantra.com'
+                    });
+                    setShowEditSenderModal(true);
+                  }}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#9C6B30] hover:text-[#845826] bg-white px-2 py-0.5 rounded border border-black/10 hover:bg-neutral-50 transition"
+                >
+                  <Edit3 size={11} /> Edit Sender Email
+                </button>
+              )}
             </div>
           </div>
         </div>

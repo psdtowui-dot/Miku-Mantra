@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { authFetch } from '@/lib/use-auth';
 import {
   Mail, Search, X, Download, Trash2, CheckCircle2, XCircle,
   Loader2, ChevronLeft, ChevronRight, RefreshCw, Filter, AlertTriangle,
@@ -66,8 +67,7 @@ export default function AdminNewsletterPage() {
         status: statusFilter
       });
 
-      const res = await fetch(`/api/admin/newsletter?${queryParams.toString()}`, {
-        credentials: 'include',
+      const res = await authFetch(`/api/admin/newsletter?${queryParams.toString()}`, {
         cache: 'no-store'
       });
       const data = await res.json();
@@ -135,10 +135,9 @@ export default function AdminNewsletterPage() {
   const executeStatusUpdate = async (idKey, newStatus) => {
     setUpdatingId(idKey);
     try {
-      const res = await fetch(`/api/admin/newsletter/${idKey}`, {
+      const res = await authFetch(`/api/admin/newsletter/${idKey}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ status: newStatus })
       });
       const data = await res.json();
@@ -163,10 +162,9 @@ export default function AdminNewsletterPage() {
 
     setActionBusy(true);
     try {
-      const res = await fetch('/api/admin/newsletter/bulk', {
+      const res = await authFetch('/api/admin/newsletter/bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ ids, action: actionType })
       });
       const data = await res.json();
@@ -189,9 +187,8 @@ export default function AdminNewsletterPage() {
   const executeDelete = async (idKey) => {
     setActionBusy(true);
     try {
-      const res = await fetch(`/api/admin/newsletter/${idKey}`, {
-        method: 'DELETE',
-        credentials: 'include'
+      const res = await authFetch(`/api/admin/newsletter/${idKey}`, {
+        method: 'DELETE'
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -220,9 +217,7 @@ export default function AdminNewsletterPage() {
         queryParams.set('ids', customIds.join(','));
       }
 
-      const res = await fetch(`/api/admin/newsletter/export?${queryParams.toString()}`, {
-        credentials: 'include'
-      });
+      const res = await authFetch(`/api/admin/newsletter/export?${queryParams.toString()}`);
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
