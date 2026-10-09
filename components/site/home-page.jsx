@@ -4,9 +4,11 @@ import Link from 'next/link';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import {
   ArrowRight, ShieldCheck, Truck, RefreshCw, Sparkles, Award, Heart, ChevronLeft, ChevronRight, Instagram, Loader2,
-  Check, Globe, Lock, Gift, Tag, Star, Clock, Gem
+  Check, Globe, Lock, Gift, Tag, Star, Clock, Gem, Mail, CheckCircle2
 } from 'lucide-react';
 import ProductCard from '@/components/site/product-card';
+import { toast } from 'sonner';
+
 
 const LUCIDE_ICONS_MAP = {
   ShieldCheck,
@@ -286,7 +288,178 @@ function WhyUs({ assuranceSection, assuranceCards = [] }) {
 
 
 function Newsletter() {
-  return (<section className="py-24 bg-gradient-to-br from-[#FAF6EF] via-white to-[#FAF6EF]"><div className="max-w-2xl mx-auto text-center px-6"><div className="text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-3">The MikuMantra Circle</div><h2 className="font-display text-4xl md:text-5xl text-[#1A1A1A] font-light">Be the first to know</h2><div className="gold-line w-16 mx-auto my-5" /><p className="text-neutral-500 font-light mb-8">New collections, private previews, and ₹2,000 off your first order.</p><form onSubmit={(e) => { e.preventDefault(); e.currentTarget.reset(); import('sonner').then(({ toast }) => toast.success('Welcome to the MikuMantra Circle')); }} className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto"><input required type="email" placeholder="Enter your email" className="flex-1 border border-[#E8E8E8] rounded-full px-6 py-3.5 text-sm focus:outline-none focus:border-[#9C6B30]" /><button className="bg-[#1A1A1A] text-white px-8 py-3.5 rounded-full text-[11px] tracking-[0.3em] uppercase hover:bg-[#9C6B30] transition">Subscribe</button></form></div></section>);
+  const [settings, setSettings] = useState(null);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [submittedSuccess, setSubmittedSuccess] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    fetch('/api/newsletter/settings')
+      .then(r => r.json())
+      .then(d => {
+        if (isMounted) {
+          setSettings(d || {});
+          setSettingsLoading(false);
+        }
+      })
+      .catch(() => {
+        if (isMounted) setSettingsLoading(false);
+      });
+    return () => { isMounted = false; };
+  }, []);
+
+  if (settingsLoading) return null;
+  if (!settings || settings.isEnabled === false) return null;
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const trimmed = (email || '').trim();
+    if (!trimmed) {
+      toast.error(settings.invalidEmailMessage || 'Please enter a valid email address.');
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmed)) {
+      toast.error(settings.invalidEmailMessage || 'Please enter a valid email address.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch('/api/newsletter/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: trimmed, source: 'website-newsletter' })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast.success(data.message || settings.successMessage);
+        setSubmittedSuccess(true);
+        setEmail('');
+      } else {
+        toast.error(data.message || data.error || settings.errorMessage);
+      }
+    } catch (err) {
+      toast.error(settings.errorMessage || 'Network error. Please check your connection and try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const design = settings.design || {};
+
+  return (
+    <section
+      className="py-20 sm:py-24 relative overflow-hidden transition-colors duration-300"
+      style={{ backgroundColor: design.backgroundColor || '#FAF6EF' }}
+    >
+      {/* Decorative ambient radial lighting */}
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(212,175,55,0.08),transparent_70%)] pointer-events-none" />
+
+      <div className="max-w-3xl mx-auto text-center px-6 relative z-10">
+        {/* Diamond ornament badge */}
+        <div className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-[#9C6B30]/10 text-[#9C6B30] mb-4">
+          <Sparkles size={16} />
+        </div>
+
+        {settings.eyebrow && (
+          <div
+            className="text-[11px] sm:text-xs tracking-[0.35em] uppercase mb-3 font-semibold transition-colors duration-300"
+            style={{ color: design.accentColor || '#9C6B30' }}
+          >
+            {settings.eyebrow}
+          </div>
+        )}
+
+        {settings.title && (
+          <h2
+            className="font-display text-3xl sm:text-4xl md:text-5xl font-light tracking-tight transition-colors duration-300"
+            style={{ color: design.textColor || '#1A1A1A' }}
+          >
+            {settings.title}
+          </h2>
+        )}
+
+        <div className="gold-line w-16 mx-auto my-5 opacity-80" />
+
+        {settings.description && (
+          <p
+            className="text-xs sm:text-sm md:text-base font-light mb-8 max-w-xl mx-auto leading-relaxed transition-colors duration-300"
+            style={{ color: design.textColor || '#555555' }}
+          >
+            {settings.description}
+          </p>
+        )}
+
+        {submittedSuccess ? (
+          <div className="bg-white/90 backdrop-blur-xs border border-[#9C6B30]/30 rounded-2xl p-6 sm:p-8 max-w-md mx-auto shadow-xl space-y-3 animate-in fade-in zoom-in-95">
+            <div className="w-12 h-12 mx-auto rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+              <CheckCircle2 size={24} />
+            </div>
+            <h3 className="font-display text-xl text-neutral-900 font-medium">Welcome to the Circle</h3>
+            <p className="text-xs text-neutral-600 leading-relaxed">
+              {settings.successMessage || 'You have successfully joined the MikuMantra Circle.'}
+            </p>
+            <button
+              onClick={() => setSubmittedSuccess(false)}
+              className="mt-2 text-[11px] font-semibold text-[#9C6B30] hover:underline uppercase tracking-wider"
+            >
+              Subscribe another email
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row items-center gap-3 max-w-md mx-auto">
+            <div className="relative flex-1 w-full">
+              <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none" />
+              <input
+                required
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={loading}
+                placeholder={settings.inputPlaceholder || ''}
+                className="w-full border border-[#E8E8E8] rounded-full pl-11 pr-5 py-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#9C6B30]/20 focus:border-[#9C6B30] disabled:opacity-60 bg-white/90 backdrop-blur-xs transition shadow-xs"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              style={{
+                backgroundColor: design.buttonBackground || '#1A1A1A',
+                color: design.buttonTextColor || '#FFFFFF'
+              }}
+              className="w-full sm:w-auto px-8 py-3.5 rounded-full text-[11px] tracking-[0.25em] uppercase font-medium transition hover:opacity-90 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center min-w-[150px] shadow-md"
+            >
+              {loading ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin" />
+                  <span>{settings.loadingMessage || ''}</span>
+                </span>
+              ) : (
+                settings.buttonText || ''
+              )}
+            </button>
+          </form>
+        )}
+
+        {/* Privilege Highlights */}
+        <div className="mt-10 pt-6 border-t border-black/5 flex flex-wrap items-center justify-center gap-6 text-[11px] font-light text-neutral-500">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[#9C6B30]">✦</span> ₹2,000 Off First Order
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[#9C6B30]">✦</span> Private Previews & Access
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[#9C6B30]">✦</span> Zero Spam • Unsubscribe Anytime
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 const FALLBACK_HERO = [{ title: 'The Bridal Edit', kicker: 'Wedding Collection', copy: 'Heirloom polki chokers, uncut diamond haars & maang tikkas — handcrafted over 120+ hours.', cta: 'Discover the Edit', href: '/shop?category=wedding', img: 'https://images.unsplash.com/photo-1601121141461-9d6647bca1ed?crop=entropy&cs=srgb&fm=jpg&q=85' }];
