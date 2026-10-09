@@ -15,7 +15,7 @@ async function getSitemapData() {
   }
 
   const directUrl = process.env.MONGO_DIRECT_URL || "mongodb://akashsriv1984_db_user:2M5Edv773XLUmT15@ac-htqrxv1-shard-00-00.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-01.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-02.7szyylz.mongodb.net:27017/userPortal?ssl=true&replicaSet=atlas-1c5jr9-shard-0&authSource=admin&retryWrites=true&w=majority";
-  const mongoUrl = process.env.MONGO_URL || process.env.MONGODB_URI || process.env.MONGO_DIRECT_URL || directUrl;
+  const mongoUrl = process.env.MONGO_DIRECT_URL || process.env.MONGO_URL || process.env.MONGODB_URI || directUrl;
   if (!mongoUrl) {
     return {
       products: SEED_PRODUCTS,
@@ -32,18 +32,16 @@ async function getSitemapData() {
     try {
       client = new MongoClient(mongoUrl, {
         connectTimeoutMS: 5000,
-        socketTimeoutMS: 15000,
+        socketTimeoutMS: 5000,
         serverSelectionTimeoutMS: 5000,
-        maxIdleTimeMS: 30000,
       });
       await client.connect();
     } catch (srvErr) {
       if (directUrl && mongoUrl !== directUrl) {
         client = new MongoClient(directUrl, {
           connectTimeoutMS: 5000,
-          socketTimeoutMS: 15000,
+          socketTimeoutMS: 5000,
           serverSelectionTimeoutMS: 5000,
-          maxIdleTimeMS: 30000,
         });
         await client.connect();
       } else {

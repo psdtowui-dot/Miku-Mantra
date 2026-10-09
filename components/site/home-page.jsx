@@ -28,8 +28,6 @@ const LUCIDE_ICONS_MAP = {
 };
 import RecentlyViewed from '@/components/site/recently-viewed';
 import CompareBar from '@/components/site/compare-bar';
-import SocialMediaSection from '@/components/site/social-media-section';
-import CategoryShowcaseSection from '@/components/site/category-showcase-section';
 import { PRODUCTS as SEED, CATEGORIES as SEED_C, COLLECTIONS as SEED_K } from '@/lib/products';
 
 function Hero({ slides, transitionStyle = 'fade' }) {
@@ -205,7 +203,32 @@ function SectionTitle({ eyebrow, title, sub }) {
   return (<div className="text-center max-w-2xl mx-auto mb-8 sm:mb-12"><div className="text-[10px] sm:text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-2 sm:mb-3">{eyebrow}</div><h2 className="font-display text-2xl xs:text-3xl md:text-5xl text-[#1A1A1A] font-light break-words">{title}</h2><div className="gold-line w-16 mx-auto my-4 sm:my-5" />{sub && <p className="text-xs sm:text-base text-neutral-500 font-light">{sub}</p>}</div>);
 }
 
-
+function CategoriesRow({ categories }) {
+  return (
+    <section className="max-w-[1400px] mx-auto px-4 sm:px-6 md:px-8 py-10 md:py-20">
+      <SectionTitle eyebrow="Curated Categories" title="Shop by Category" sub="From everyday layering to once-in-a-lifetime heirlooms." />
+      {!categories ? (
+        <div className="flex justify-center items-center py-12">
+          <Loader2 className="animate-spin text-[#9C6B30]" size={28} />
+        </div>
+      ) : (
+        <div className="flex flex-wrap justify-center items-center gap-3 xs:gap-4 md:gap-8">
+          {categories.map((c, i) => (
+            <motion.div key={c.slug} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * .06 }} className="w-[110px] xs:w-[130px] sm:w-[180px] flex-shrink-0">
+              <Link href={`/shop?category=${c.slug}`} className="group block">
+                <div className="relative aspect-square rounded-full overflow-hidden bg-[#FAF6EF] luxe-shadow">
+                  <img src={c.img} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt={c.name} />
+                  <div className="absolute inset-0 ring-1 ring-inset ring-[#D4AF37]/30 rounded-full" />
+                </div>
+                <div className="text-center mt-3 sm:mt-4"><div className="font-serif-luxe text-base sm:text-lg text-[#1A1A1A] group-hover:text-[#9C6B30] truncate">{c.name}</div><div className="text-[9px] sm:text-[10px] tracking-wider sm:tracking-[0.3em] uppercase text-neutral-400 mt-0.5 sm:mt-1">Shop Now</div></div>
+              </Link>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
 
 function CollectionsTabs({ collections, allProducts }) {
   const [active, setActive] = useState(collections[0]?.slug || 'trending');
@@ -285,7 +308,10 @@ function WhyUs({ assuranceSection, assuranceCards = [] }) {
 
 
 
-
+function InstagramStrip() {
+  const imgs = ['https://images.unsplash.com/photo-1651160670627-2896ddf7822f?crop=entropy&cs=srgb&fm=jpg&q=85', 'https://images.unsplash.com/photo-1685970731194-e27b477e87ba?crop=entropy&cs=srgb&fm=jpg&q=85', 'https://images.unsplash.com/photo-1622398925373-3f91b1e275f5?crop=entropy&cs=srgb&fm=jpg&q=85', 'https://images.unsplash.com/photo-1585960622850-ed33c41d6418?crop=entropy&cs=srgb&fm=jpg&q=85', 'https://images.unsplash.com/photo-1610173827043-9db50e0d8ef9?crop=entropy&cs=srgb&fm=jpg&q=85', 'https://images.unsplash.com/photo-1600685890506-593fdf55949b?crop=entropy&cs=srgb&fm=jpg&q=85'];
+  return (<section className="py-12 md:py-20"><div className="max-w-[1400px] mx-auto px-4 sm:px-6 md:px-8"><SectionTitle eyebrow="@mikumantra.jewels" title="Follow Our World" sub="Real stories, real sparkle — tagged on Instagram." /><div className="grid grid-cols-3 md:grid-cols-6 gap-2">{imgs.map((im, i) => (<a key={i} href="#" className="relative aspect-square overflow-hidden group"><img src={im} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" /><div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100"><Instagram className="text-white" size={22} /></div></a>)) }</div></div></section>);
+}
 
 function Newsletter() {
   const [settings, setSettings] = useState(null);
@@ -524,11 +550,11 @@ export default function HomePage({ initialData }) {
   return (
     <main className="bg-white text-[#333]">
       <Hero slides={banners} transitionStyle={transition} />
-      <CategoryShowcaseSection initialCategories={initialData?.categories} initialSettings={initialData?.categoryShowcaseSettings} />
+      <CategoriesRow categories={categories} />
       <CollectionsTabs collections={collections} allProducts={products} />
       <OfferBanner promotions={homepageCMS.homepagePromotions} />
       <WhyUs assuranceSection={homepageCMS.assuranceSection} assuranceCards={homepageCMS.assuranceCards} />
-      <SocialMediaSection initialItems={initialData?.socialMedia} initialSettings={initialData?.socialMediaSettings} />
+      <InstagramStrip />
       <Newsletter />
       <RecentlyViewed />
       <CompareBar />

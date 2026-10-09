@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { Search, Heart, ShoppingBag, User, Menu, X, ChevronDown, ChevronRight, ChevronUp, Loader2 } from 'lucide-react';
 import { useAuth } from '@/lib/use-auth';
 import { useCart, useWishlist } from '@/lib/cart-store';
@@ -11,7 +11,6 @@ import AuthModal from '@/components/site/auth-modal';
 
 export default function Navbar({ initialData }) {
   const pathname = usePathname();
-  const router = useRouter();
   const [headerData, setHeaderData] = useState(initialData || null);
   const [scrolled, setScrolled] = useState(false);
   const [mobile, setMobile] = useState(false);
@@ -167,14 +166,14 @@ export default function Navbar({ initialData }) {
       {/* Main navbar */}
       <nav className={`bg-[#fbf4eed9] transition-all duration-300 ${scrolled ? 'shadow-[0_4px_24px_-8px_rgba(26,26,26,0.08)] border-b border-neutral-100' : 'border-b border-neutral-200/60'}`}>
         <div className="max-w-[1400px] mx-auto px-3 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-20">
+          <div className="flex items-center justify-between h-16 sm:h-20">
             {/* Logo Link (Aligned Left) */}
             <div className="flex items-center">
-              <Link href={logoSettings?.url || "/"} className="flex items-center max-w-[95px] xs:max-w-[120px] sm:max-w-[200px] lg:max-w-[280px]">
+              <Link href={logoSettings?.url || "/"} className="flex items-center max-w-[110px] xs:max-w-[130px] sm:max-w-[200px] lg:max-w-[280px]">
                 <img
                   src={logoSettings?.image || "/logo.png"}
                   alt={logoSettings?.alt || "Logo"}
-                  className="h-7 sm:h-10 object-contain max-w-full"
+                  className="h-8 sm:h-10 object-contain max-w-full"
                   onError={(e) => {
                     if (typeof window !== 'undefined' && e.target.src !== window.location.origin + '/logo.png') {
                       e.target.src = '/logo.png';
@@ -254,10 +253,10 @@ export default function Navbar({ initialData }) {
             </ul>
 
             {/* Desktop & Mobile Action Icons (Grouped Right) */}
-            <div className="flex items-center justify-end gap-1.5 xs:gap-2 sm:gap-4 lg:gap-5 text-[#1A1A1A]">
+            <div className="flex items-center justify-end gap-1 xs:gap-1.5 sm:gap-4 lg:gap-5 text-[#1A1A1A]">
               {headerSettings.searchEnabled && (
-                <button onClick={() => setSearchOpen(true)} className="hover:text-[#9C6B30] transition-colors p-1" title="Search">
-                  <Search size={19} />
+                <button onClick={() => setSearchOpen(true)} className="hover:text-[#9C6B30] transition-colors p-1.5 xs:p-2" title="Search">
+                  <Search size={18} />
                 </button>
               )}
               {headerSettings.wishlistEnabled && (
@@ -276,10 +275,10 @@ export default function Navbar({ initialData }) {
                 </Link>
               )}
               {headerSettings.cartEnabled && (
-                <Link href="/cart" className="relative hover:text-[#9C6B30] transition-colors p-1" title="Shopping Cart">
-                  <ShoppingBag size={19} />
+                <Link href="/cart" className="relative hover:text-[#9C6B30] transition-colors p-1.5 xs:p-2" title="Shopping Cart">
+                  <ShoppingBag size={18} />
                   {count > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-[#9C6B30] text-white text-[9px] rounded-full h-4 w-4 flex items-center justify-center">
+                    <span className="absolute -top-0.5 -right-0.5 bg-[#9C6B30] text-white text-[9px] rounded-full h-4 w-4 flex items-center justify-center font-semibold">
                       {count}
                     </span>
                   )}
@@ -287,7 +286,7 @@ export default function Navbar({ initialData }) {
               )}
               {/* Mobile Hamburger menu icon (last in flex layout for RIGHT actions group) */}
               <button
-                className="lg:hidden text-[#1A1A1A] p-2 hover:text-[#9C6B30] relative w-10 h-10 flex flex-col justify-center items-center z-[60] transition-colors"
+                className="lg:hidden text-[#1A1A1A] p-2 hover:text-[#9C6B30] relative w-9 h-9 sm:w-10 sm:h-10 flex flex-col justify-center items-center z-[60] transition-colors"
                 onClick={() => setMobile(!mobile)}
                 aria-label={mobile ? "Close navigation menu" : "Open navigation menu"}
                 aria-expanded={mobile}
@@ -312,7 +311,7 @@ export default function Navbar({ initialData }) {
             className="text-[11px] tracking-[0.2em] uppercase"
             style={{ backgroundColor: announcement.backgroundColor || '#4a2536', color: announcement.textColor || '#FFFFFF' }}
           >
-            <div className="overflow-hidden py-3">
+            <div className="overflow-hidden py-2.5 sm:py-3">
               <div className="marquee whitespace-nowrap">
                 {[...Array(20)].map((_, i) => (
                   <div key={i} className="flex gap-12 shrink-0">
@@ -325,7 +324,7 @@ export default function Navbar({ initialData }) {
           </div>
         ) : (
           <div
-            className="text-[11px] tracking-[0.2em] uppercase py-3 flex justify-center items-center text-center px-4"
+            className="text-[11px] tracking-[0.2em] uppercase py-2.5 sm:py-3 flex justify-center items-center text-center px-4"
             style={{ backgroundColor: announcement.backgroundColor || '#4a2536', color: announcement.textColor || '#FFFFFF' }}
           >
             <span>{announcement.announcementText}</span>
@@ -336,24 +335,12 @@ export default function Navbar({ initialData }) {
       {/* Search overlay */}
       <AnimatePresence>
         {searchOpen && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[70]" onClick={() => setSearchOpen(false)}>
-            <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -20, opacity: 0 }} className="bg-white max-w-2xl mx-2 sm:mx-auto mt-6 sm:mt-24 rounded-xl p-4 sm:p-6 luxe-shadow-lg" onClick={(e) => e.stopPropagation()}>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[70] p-3 sm:p-0" onClick={() => setSearchOpen(false)}>
+            <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -20, opacity: 0 }} className="bg-white max-w-2xl mx-auto mt-4 sm:mt-24 rounded-xl p-4 sm:p-6 luxe-shadow-lg max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center border-b border-[#E8E8E8] pb-3">
-                <Search size={18} className="text-[#9C6B30] mr-3" />
-                <input
-                  autoFocus
-                  value={q}
-                  onChange={e => setQ(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && q.trim()) {
-                      router.push(`/shop?search=${encodeURIComponent(q.trim())}`);
-                      setSearchOpen(false);
-                    }
-                  }}
-                  placeholder="Search for gold, diamond, bridal…"
-                  className="w-full bg-transparent outline-none font-serif-luxe text-lg sm:text-xl"
-                />
-                <button onClick={() => setSearchOpen(false)}><X size={18} /></button>
+                <Search size={18} className="text-[#9C6B30] mr-3 shrink-0" />
+                <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search for gold, diamond, bridal…" className="w-full bg-transparent outline-none font-serif-luxe text-base sm:text-xl" />
+                <button onClick={() => setSearchOpen(false)} className="p-1 hover:text-[#9C6B30]"><X size={18} /></button>
               </div>
               <div className="mt-4">
                 {q.trim() === '' ? (
@@ -369,52 +356,32 @@ export default function Navbar({ initialData }) {
                         Searching database...
                       </li>
                     ) : results.length === 0 ? (
-                      <li className="py-10 text-center">
-                        <div className="font-serif-luxe text-xl text-neutral-800 font-medium">Product not found</div>
-                        <p className="text-xs text-neutral-500 mt-1.5">
-                          {q.trim() ? (
-                            <>No products match &quot;{q.trim()}&quot;. Try checking for typos or searching with different keywords.</>
-                          ) : (
-                            <>Try searching for keywords like &quot;bridal&quot;, &quot;solitaire&quot;, or &quot;diamond&quot;.</>
-                          )}
-                        </p>
-                      </li>
+                      <li className="py-4 text-sm text-neutral-500">No results — try &quot;bridal&quot; or &quot;solitaire&quot;.</li>
                     ) : (
-                      <>
-                        {results.map(r => (
-                          <li key={r.id}>
-                            <Link
-                              href={`/product/${r.slug}`}
-                              onClick={() => setSearchOpen(false)}
-                              className="flex items-center gap-3 sm:gap-4 py-3 hover:bg-[#FAF6EF] rounded-md px-2"
-                            >
-                              <img
-                                src={r.images && r.images[0] ? r.images[0] : '/logo.png'}
-                                className="w-12 h-12 sm:w-14 sm:h-14 object-cover rounded shrink-0"
-                                alt={r.name}
-                              />
-                              <div className="flex-1 min-w-0">
-                                <div className="font-serif-luxe text-base sm:text-lg leading-tight truncate">{r.name}</div>
-                                <div className="text-xs text-neutral-500 capitalize">
-                                  {r.category} · {r.metal || 'Fine Jewellery'}
-                                </div>
-                              </div>
-                              <div className="text-xs sm:text-sm font-medium text-[#9C6B30] shrink-0">
-                                ₹{r.price.toLocaleString('en-IN')}
-                              </div>
-                            </Link>
-                          </li>
-                        ))}
-                        <li className="pt-3 pb-1 text-center">
+                      results.map(r => (
+                        <li key={r.id}>
                           <Link
-                            href={`/shop?search=${encodeURIComponent(q.trim())}`}
+                            href={`/product/${r.slug}`}
                             onClick={() => setSearchOpen(false)}
-                            className="text-xs text-[#9C6B30] hover:underline font-medium uppercase tracking-wider inline-flex items-center gap-1"
+                            className="flex items-center gap-3 sm:gap-4 py-3 hover:bg-[#FAF6EF] rounded-md px-2"
                           >
-                            View all results for &quot;{q.trim()}&quot; →
+                            <img
+                              src={r.images && r.images[0] ? r.images[0] : '/logo.png'}
+                              className="w-12 h-12 sm:w-14 sm:h-14 object-cover rounded shrink-0"
+                              alt={r.name}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="font-serif-luxe text-base sm:text-lg leading-tight truncate">{r.name}</div>
+                              <div className="text-xs text-neutral-500 capitalize">
+                                {r.category} · {r.metal || 'Fine Jewellery'}
+                              </div>
+                            </div>
+                            <div className="text-xs sm:text-sm font-medium text-[#9C6B30] shrink-0">
+                              ₹{r.price.toLocaleString('en-IN')}
+                            </div>
                           </Link>
                         </li>
-                      </>
+                      ))
                     )}
                   </ul>
                 )}
@@ -440,7 +407,7 @@ export default function Navbar({ initialData }) {
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
               transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-              className="bg-white h-full w-[85vw] max-w-[300px] p-4 xs:p-6 overflow-y-auto flex flex-col justify-between z-50"
+              className="bg-white h-full w-[85vw] max-w-[320px] p-4 xs:p-6 overflow-y-auto flex flex-col justify-between z-50 pb-[max(1.5rem,calc(1rem+env(safe-area-inset-bottom)))]"
               onClick={e => e.stopPropagation()}
             >
               <div>
