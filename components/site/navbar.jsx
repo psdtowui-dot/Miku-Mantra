@@ -13,6 +13,7 @@ export default function Navbar({ initialData }) {
   const pathname = usePathname();
   const [headerData, setHeaderData] = useState(initialData || null);
   const [scrolled, setScrolled] = useState(false);
+  const [headerVisible, setHeaderVisible] = useState(true);
   const [mobile, setMobile] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -135,11 +136,88 @@ export default function Navbar({ initialData }) {
   }, [initialData]);
 
   useEffect(() => {
-    const on = () => setScrolled(window.scrollY > 10);
-    on();
-    window.addEventListener('scroll', on);
-    return () => window.removeEventListener('scroll', on);
+    let lastScrollY = typeof window !== 'undefined' ? window.scrollY : 0;
+    const SCROLL_THRESHOLD = 8;
+
+    const handleWindowScroll = () => {
+      const currentScrollY = window.scrollY || 0;
+      setScrolled(currentScrollY > 10);
+
+      // Keep header visible at the top of the page
+      if (currentScrollY <= 15) {
+        setHeaderVisible(true);
+        lastScrollY = currentScrollY;
+        return;
+      }
+
+      const diff = currentScrollY - lastScrollY;
+      if (diff > SCROLL_THRESHOLD) {
+        // Scrolling down -> hide header
+        setHeaderVisible(false);
+      } else if (diff < -SCROLL_THRESHOLD) {
+        // Scrolling up -> show header
+        setHeaderVisible(true);
+      }
+
+      lastScrollY = currentScrollY;
+    };
+
+    // Capture-phase listener for custom scroll containers (such as the cart product list)
+    const handleCaptureScroll = (e) => {
+      if (!e.target || e.target === window || e.target === document) return;
+      const target = e.target;
+      if (typeof target.scrollTop === 'number' && target.classList && target.classList.contains('cart-products-scroll')) {
+        const currentScroll = target.scrollTop;
+        setScrolled(currentScroll > 10);
+
+        if (currentScroll <= 15) {
+          setHeaderVisible(true);
+          target.__lastScrollTop = currentScroll;
+          return;
+        }
+
+        const prev = target.__lastScrollTop ?? 0;
+        const diff = currentScroll - prev;
+        if (diff > SCROLL_THRESHOLD) {
+          setHeaderVisible(false);
+        } else if (diff < -SCROLL_THRESHOLD) {
+          setHeaderVisible(true);
+        }
+        target.__lastScrollTop = currentScroll;
+      }
+    };
+
+    // Dedicated custom event listener for explicit cart or other scroll dispatchers
+    const handleCustomHeaderScroll = (e) => {
+      const { direction, atTop } = e.detail || {};
+      if (atTop) {
+        setHeaderVisible(true);
+        setScrolled(false);
+      } else if (direction === 'down') {
+        setHeaderVisible(false);
+        setScrolled(true);
+      } else if (direction === 'up') {
+        setHeaderVisible(true);
+        setScrolled(true);
+      }
+    };
+
+    window.addEventListener('scroll', handleWindowScroll, { passive: true });
+    window.addEventListener('scroll', handleCaptureScroll, { capture: true, passive: true });
+    window.addEventListener('header-scroll', handleCustomHeaderScroll);
+
+    return () => {
+      window.removeEventListener('scroll', handleWindowScroll);
+      window.removeEventListener('scroll', handleCaptureScroll, { capture: true });
+      window.removeEventListener('header-scroll', handleCustomHeaderScroll);
+    };
   }, []);
+
+  // Reset header to visible whenever pathname changes
+  useEffect(() => {
+    setHeaderVisible(true);
+    setScrolled(false);
+  }, [pathname]);
 
   if (pathname?.startsWith('/admin')) {
     return null;
@@ -161,8 +239,14 @@ export default function Navbar({ initialData }) {
     (announcement.isEnabled ?? announcement.enabled ?? false)
   );
 
+  const isHeaderVisible = headerVisible || mobile || searchOpen || authPromptOpen;
+
   return (
-    <div className="sticky top-0 z-50">
+    <div
+      className={`sticky top-0 z-50 transition-transform duration-300 ease-in-out ${
+        isHeaderVisible ? 'translate-y-0' : '-translate-y-full'
+      }`}
+    >
       {/* Main navbar */}
       <nav className={`bg-[#fbf4eed9] transition-all duration-300 ${scrolled ? 'shadow-[0_4px_24px_-8px_rgba(26,26,26,0.08)] border-b border-neutral-100' : 'border-b border-neutral-200/60'}`}>
         <div className="max-w-[1400px] mx-auto px-3 sm:px-6 lg:px-8">

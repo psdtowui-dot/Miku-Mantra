@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useCart } from '@/lib/cart-store';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { formatINR } from '@/lib/products';
@@ -25,6 +25,58 @@ export default function CartPage() {
     freeShippingThreshold: 2000,
     standardShippingCharge: 500
   });
+
+  const productListRef = useRef(null);
+  const lastScrollTopRef = useRef(0);
+
+  // Scroll handler on product list container to trigger header show/hide
+  const handleProductListScroll = (e) => {
+    const scrollTop = e.currentTarget.scrollTop;
+    const delta = scrollTop - lastScrollTopRef.current;
+    const THRESHOLD = 8;
+
+    if (scrollTop <= 15) {
+      window.dispatchEvent(new CustomEvent('header-scroll', { detail: { direction: 'up', atTop: true } }));
+    } else if (delta > THRESHOLD) {
+      window.dispatchEvent(new CustomEvent('header-scroll', { detail: { direction: 'down', atTop: false } }));
+    } else if (delta < -THRESHOLD) {
+      window.dispatchEvent(new CustomEvent('header-scroll', { detail: { direction: 'up', atTop: false } }));
+    }
+
+    lastScrollTopRef.current = scrollTop;
+  };
+
+  // Prevent document/body from scrolling on desktop cart page so only the product list scrolls
+  useEffect(() => {
+    const handleResize = () => {
+      if (typeof window !== 'undefined' && window.innerWidth >= 1024 && window.innerHeight >= 600 && items.length > 0) {
+        document.documentElement.style.overflow = 'hidden';
+      } else if (typeof document !== 'undefined') {
+        document.documentElement.style.overflow = '';
+      }
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => {
+      if (typeof document !== 'undefined') {
+        document.documentElement.style.overflow = '';
+      }
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [items.length]);
+
+  // Forward desktop wheel events outside the product list to the product list container
+  useEffect(() => {
+    const handleWheel = (e) => {
+      if (window.innerWidth >= 1024 && productListRef.current) {
+        if (!productListRef.current.contains(e.target)) {
+          productListRef.current.scrollTop += e.deltaY;
+        }
+      }
+    };
+    window.addEventListener('wheel', handleWheel, { passive: true });
+    return () => window.removeEventListener('wheel', handleWheel);
+  }, []);
 
   useEffect(() => {
     authFetch('/api/site-settings')
@@ -125,19 +177,23 @@ export default function CartPage() {
   const hasStockIssue = items.some(i => stockStatus[i.id]?.status === 'out_of_stock' || stockStatus[i.id]?.status === 'insufficient_stock');
 
   return (
-    <main className="bg-white min-h-screen">
-      <div className="max-w-[1400px] mx-auto px-4 md:px-8 py-6 sm:py-12">
-        <div className="text-center mb-8 sm:mb-10">
-          <div className="text-[10px] sm:text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-2">Your Selection</div>
+    <main className="bg-white min-h-screen lg:h-[calc(100vh-5rem)] lg:max-h-[calc(100vh-5rem)] lg:overflow-hidden flex flex-col">
+      <div className="max-w-[1400px] w-full mx-auto px-4 md:px-8 pt-4 sm:pt-6 pb-2 lg:pb-3 shrink-0">
+        <div className="text-center">
+          <div className="text-[10px] sm:text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-1.5">Your Selection</div>
           <h1 className="font-display text-2xl xs:text-3xl sm:text-4xl md:text-5xl font-light text-[#1A1A1A] break-words">Shopping Bag</h1>
-          <div className="gold-line w-16 mx-auto my-4" />
+          <div className="gold-line w-16 mx-auto my-3" />
           <div className="text-xs sm:text-sm text-neutral-500">{items.length} {items.length === 1 ? 'item' : 'items'} · in your shopping bag</div>
         </div>
+      </div>
 
-        <div className="grid lg:grid-cols-3 gap-6 lg:gap-10">
-          <div className="lg:col-span-2 space-y-4">
+      <div className="max-w-[1400px] w-full mx-auto px-4 md:px-8 pb-6 lg:pb-8 flex-1 min-h-0 flex flex-col">
+        <div className="grid lg:grid-cols-3 gap-6 lg:gap-10 flex-1 min-h-0 items-start">
+          {/* Left Column: Fixed Progress Bar + Dedicated Scrollable Products List */}
+          <div className="lg:col-span-2 flex flex-col lg:h-full lg:min-h-0">
+            {/* Free shipping bar fixed above the products */}
             {freeEnabled && subtotal > 0 && (
-              <div className="p-4 rounded-xl border border-[#E8E8E8] bg-[#FAF6EF]/60 shadow-xs mb-4">
+              <div className="p-3.5 sm:p-4 rounded-xl border border-[#E8E8E8] bg-[#FAF6EF]/60 shadow-xs mb-4 shrink-0">
                 <div className="flex items-center justify-between text-xs sm:text-sm font-medium mb-2">
                   <span className="flex items-center gap-2 text-[#1A1A1A]">
                     <Truck size={16} className="text-[#9C6B30] shrink-0" />
@@ -159,56 +215,71 @@ export default function CartPage() {
                 </div>
               </div>
             )}
-            <AnimatePresence>
-              {items.map(item => {
-                const info = stockStatus[item.id];
-                const isOut = info?.status === 'out_of_stock';
-                const isInsufficient = info?.status === 'insufficient_stock';
-                return (
-                  <motion.div key={item.id} layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -30 }} className={`flex gap-2.5 xs:gap-3 sm:gap-5 p-3 sm:p-5 border rounded-xl bg-white transition ${isOut ? 'border-red-300 bg-red-50/10' : isInsufficient ? 'border-amber-300 bg-amber-50/10' : 'border-[#E8E8E8] hover:border-[#D4AF37]'}`}>
-                    <Link href={`/product/${item.slug}`} className="w-16 h-16 xs:w-20 xs:h-20 sm:w-28 sm:h-28 md:w-32 md:h-32 rounded-lg overflow-hidden bg-[#FAF6EF] shrink-0 relative flex items-center justify-center">
-                      {item.image && item.image.trim() ? (
-                        <img src={item.image.trim()} alt={item.name || 'Product'} className="w-full h-full object-cover" />
-                      ) : (
-                        <ShoppingBag size={24} className="text-[#9C6B30]/40" />
-                      )}
-                      {isOut && <span className="absolute inset-0 bg-black/50 flex items-center justify-center text-white text-[9px] font-semibold uppercase px-1 text-center">Out of stock</span>}
-                    </Link>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-start gap-2">
-                        <div className="min-w-0">
-                          <Link href={`/product/${item.slug}`}><h3 className="font-serif-luxe text-base sm:text-xl text-[#1A1A1A] hover:text-[#9C6B30] break-words">{item.name}</h3></Link>
-                          {isOut ? (
-                            <div className="text-[11px] font-semibold text-red-600 mt-0.5 sm:mt-1">Out of stock</div>
-                          ) : isInsufficient ? (
-                            <div className="text-[11px] font-semibold text-amber-700 mt-0.5 sm:mt-1">Only {info.availableStock} item(s) currently available</div>
-                          ) : (
-                            <div className="text-[11px] sm:text-xs text-neutral-500 mt-0.5 sm:mt-1">In Stock · Ships in 2-3 days</div>
-                          )}
+
+            {/* Scrollable Container - ONLY section that scrolls */}
+            <div
+              ref={productListRef}
+              onScroll={handleProductListScroll}
+              className="cart-products-scroll flex-1 min-h-0 lg:overflow-y-auto pr-1.5 sm:pr-2.5 space-y-3.5 sm:space-y-4"
+            >
+              <AnimatePresence>
+                {items.map(item => {
+                  const info = stockStatus[item.id];
+                  const isOut = info?.status === 'out_of_stock';
+                  const isInsufficient = info?.status === 'insufficient_stock';
+                  return (
+                    <motion.div key={item.id} layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -30 }} className={`flex gap-2.5 xs:gap-3 sm:gap-5 p-3 sm:p-5 border rounded-xl bg-white transition ${isOut ? 'border-red-300 bg-red-50/10' : isInsufficient ? 'border-amber-300 bg-amber-50/10' : 'border-[#E8E8E8] hover:border-[#D4AF37]'}`}>
+                      <Link href={`/product/${item.slug}`} className="w-16 h-16 xs:w-20 xs:h-20 sm:w-28 sm:h-28 md:w-32 md:h-32 rounded-lg overflow-hidden bg-[#FAF6EF] shrink-0 relative flex items-center justify-center">
+                        {item.image && item.image.trim() ? (
+                          <img src={item.image.trim()} alt={item.name || 'Product'} className="w-full h-full object-cover" />
+                        ) : (
+                          <ShoppingBag size={24} className="text-[#9C6B30]/40" />
+                        )}
+                        {isOut && <span className="absolute inset-0 bg-black/50 flex items-center justify-center text-white text-[9px] font-semibold uppercase px-1 text-center">Out of stock</span>}
+                      </Link>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-start gap-2">
+                          <div className="min-w-0">
+                            <Link href={`/product/${item.slug}`}><h3 className="font-serif-luxe text-base sm:text-xl text-[#1A1A1A] hover:text-[#9C6B30] break-words">{item.name}</h3></Link>
+                            {isOut ? (
+                              <div className="text-[11px] font-semibold text-red-600 mt-0.5 sm:mt-1">Out of stock</div>
+                            ) : isInsufficient ? (
+                              <div className="text-[11px] font-semibold text-amber-700 mt-0.5 sm:mt-1">Only {info.availableStock} item(s) currently available</div>
+                            ) : (
+                              <div className="text-[11px] sm:text-xs text-neutral-500 mt-0.5 sm:mt-1">In Stock · Ships in 2-3 days</div>
+                            )}
+                          </div>
+                          <button onClick={() => remove(item.id)} className="text-neutral-400 hover:text-[#9C6B30] shrink-0 p-0.5 cursor-pointer"><X size={18} /></button>
                         </div>
-                        <button onClick={() => remove(item.id)} className="text-neutral-400 hover:text-[#9C6B30] shrink-0 p-0.5"><X size={18} /></button>
-                      </div>
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sm:gap-3 mt-3 sm:mt-4">
-                        <div className="flex items-center border border-[#E8E8E8] rounded-full w-fit">
-                          <button onClick={() => setQty(item.id, item.qty - 1)} className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center hover:text-[#9C6B30]"><Minus size={13} /></button>
-                          <span className="w-7 sm:w-8 text-center text-xs sm:text-sm">{item.qty}</span>
-                          <button disabled={isOut || (info?.availableStock !== undefined && item.qty >= info.availableStock)} onClick={() => setQty(item.id, item.qty + 1)} className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center hover:text-[#9C6B30] disabled:opacity-40"><Plus size={13} /></button>
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sm:gap-3 mt-3 sm:mt-4">
+                          <div className="flex items-center border border-[#E8E8E8] rounded-full w-fit">
+                            <button onClick={() => setQty(item.id, item.qty - 1)} className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center hover:text-[#9C6B30] cursor-pointer"><Minus size={13} /></button>
+                            <span className="w-7 sm:w-8 text-center text-xs sm:text-sm font-medium">{item.qty}</span>
+                            <button disabled={isOut || (info?.availableStock !== undefined && item.qty >= info.availableStock)} onClick={() => setQty(item.id, item.qty + 1)} className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center hover:text-[#9C6B30] disabled:opacity-40 cursor-pointer"><Plus size={13} /></button>
+                          </div>
+                          <div className="text-left sm:text-right"><div className="font-display text-lg sm:text-xl text-[#1A1A1A]">{formatINR(item.price * item.qty)}</div>{item.mrp > item.price && <div className="text-[11px] sm:text-xs text-neutral-400 line-through">{formatINR(item.mrp * item.qty)}</div>}</div>
                         </div>
-                        <div className="text-left sm:text-right"><div className="font-display text-lg sm:text-xl text-[#1A1A1A]">{formatINR(item.price * item.qty)}</div>{item.mrp > item.price && <div className="text-[11px] sm:text-xs text-neutral-400 line-through">{formatINR(item.mrp * item.qty)}</div>}</div>
                       </div>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </AnimatePresence>
-            <Link href="/shop" className="inline-flex items-center gap-2 text-[#9C6B30] text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase mt-4 hover:gap-4 transition-all">← Continue Shopping</Link>
+                    </motion.div>
+                  );
+                })}
+              </AnimatePresence>
+
+              {/* Continue Shopping at the bottom of the product list */}
+              <div className="pt-2 pb-6">
+                <Link href="/shop" className="inline-flex items-center gap-2 text-[#9C6B30] text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase hover:gap-4 transition-all">
+                  ← Continue Shopping
+                </Link>
+              </div>
+            </div>
           </div>
 
-          <aside className="lg:col-span-1">
-            <div className="sticky top-32 border border-[#E8E8E8] rounded-xl p-4 sm:p-6 bg-[#FAF6EF]/30">
+          {/* Right Column: Order Summary - STATIONARY */}
+          <aside className="lg:col-span-1 shrink-0">
+            <div className="border border-[#E8E8E8] rounded-xl p-4 sm:p-6 bg-[#FAF6EF]/30 shadow-xs">
               <div className="font-display text-xl sm:text-2xl text-[#1A1A1A] mb-1">Order Summary</div>
               <div className="gold-line w-12 mb-4 sm:mb-6" />
-              <div className="flex flex-wrap xs:flex-nowrap gap-2 mb-2"><div className="flex-1 min-w-[120px] flex items-center border border-[#E8E8E8] rounded-md bg-white"><Tag size={14} className="ml-2.5 text-[#9C6B30] shrink-0" /><input value={coupon} onChange={e => setCoupon(e.target.value)} placeholder="Enter coupon" className="flex-1 px-2.5 py-2 sm:px-3 sm:py-2.5 text-xs sm:text-sm bg-transparent focus:outline-none min-w-0" /></div><button disabled={applying} onClick={applyCoupon} className="px-3.5 sm:px-5 py-2 sm:py-2.5 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-widest uppercase rounded-md hover:bg-[#9C6B30] disabled:opacity-60 shrink-0">{applying ? '…' : 'Apply'}</button></div>
+              <div className="flex flex-wrap xs:flex-nowrap gap-2 mb-2"><div className="flex-1 min-w-[120px] flex items-center border border-[#E8E8E8] rounded-md bg-white"><Tag size={14} className="ml-2.5 text-[#9C6B30] shrink-0" /><input value={coupon} onChange={e => setCoupon(e.target.value)} placeholder="Enter coupon" className="flex-1 px-2.5 py-2 sm:px-3 sm:py-2.5 text-xs sm:text-sm bg-transparent focus:outline-none min-w-0" /></div><button disabled={applying} onClick={applyCoupon} className="px-3.5 sm:px-5 py-2 sm:py-2.5 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-widest uppercase rounded-md hover:bg-[#9C6B30] disabled:opacity-60 shrink-0 cursor-pointer">{applying ? '…' : 'Apply'}</button></div>
               <div className="text-[10px] text-neutral-500 mb-4">Try <span className="text-[#9C6B30]">MIKUMANTRA10</span> or <span className="text-[#9C6B30]">WELCOME2000</span></div>
               <label className="flex items-start gap-3 border border-dashed border-[#E8E8E8] rounded-md p-3 mb-5 cursor-pointer hover:border-[#9C6B30]"><input type="checkbox" checked={gift} onChange={e => setGift(e.target.checked)} className="mt-0.5 accent-[#9C6B30] shrink-0" /><div><div className="text-xs sm:text-sm font-medium flex items-center gap-2"><Gift size={14} className="text-[#9C6B30] shrink-0" /> Signature Gift Wrap</div><div className="text-[11px] sm:text-xs text-neutral-500">Silk pouch, handwritten note. +₹250</div></div></label>
               <div className="space-y-2.5 sm:space-y-3 text-xs sm:text-sm">
@@ -220,7 +291,7 @@ export default function CartPage() {
               </div>
               <div className="gold-line w-full my-4 sm:my-5" />
               <div className="flex justify-between items-baseline mb-6"><span className="text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase">Total</span><span className="font-display text-2xl sm:text-3xl text-[#1A1A1A]">{formatINR(total)}</span></div>
-              <button disabled={hasStockIssue} onClick={goCheckout} className={`w-full py-3.5 sm:py-4 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase transition rounded-md ${hasStockIssue ? 'bg-neutral-400 text-white cursor-not-allowed opacity-70' : 'bg-[#1A1A1A] text-white hover:bg-[#9C6B30]'}`}>Proceed to Checkout</button>
+              <button disabled={hasStockIssue} onClick={goCheckout} className={`w-full py-3.5 sm:py-4 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase transition rounded-md cursor-pointer ${hasStockIssue ? 'bg-neutral-400 text-white cursor-not-allowed opacity-70' : 'bg-[#1A1A1A] text-white hover:bg-[#9C6B30]'}`}>Proceed to Checkout</button>
               <div className="mt-5 space-y-2 text-xs text-neutral-500"><div className="flex items-center gap-2"><Truck size={13} className="text-[#9C6B30] shrink-0" /> Insured, tracked delivery</div><div className="flex items-center gap-2"><ShieldCheck size={13} className="text-[#9C6B30] shrink-0" /> Secure checkout · SGL certified</div></div>
             </div>
           </aside>
