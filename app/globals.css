@@ -82,6 +82,44 @@ svg {
   scrollbar-width: none
 }
 
+/* Prevent whole-page scrolling on desktop when cart is open */
+body.cart-fixed-layout {
+  overflow: hidden !important;
+  height: 100vh !important;
+}
+
+body.cart-fixed-layout footer {
+  display: none !important;
+}
+
+/* Premium Jewellery Cart Scrollbar */
+.cart-product-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(156, 107, 48, 0.45) rgba(250, 246, 239, 0.6);
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.cart-product-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.cart-product-scrollbar::-webkit-scrollbar-track {
+  background: rgba(250, 246, 239, 0.6);
+  border-radius: 9999px;
+}
+
+.cart-product-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(156, 107, 48, 0.35);
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  transition: background 0.2s ease;
+}
+
+.cart-product-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 107, 48, 0.65);
+}
+
 .luxe-shadow {
   box-shadow: 0 20px 60px -20px rgba(156, 107, 48, .15), 0 8px 24px -12px rgba(26, 26, 26, .06);
 }
@@ -293,36 +331,4 @@ aside nav {
 
 .reviews-scroll-container::-webkit-scrollbar-thumb:hover {
   background: rgba(156, 107, 48, 0.6);
-}
-
-/* Premium luxury scrollbar for cart products list */
-.cart-products-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(156, 107, 48, 0.35) transparent;
-  overscroll-behavior-y: contain;
-  -webkit-overflow-scrolling: touch;
-}
-
-.cart-products-scroll::-webkit-scrollbar {
-  width: 5px;
-}
-
-.cart-products-scroll::-webkit-scrollbar-button {
-  display: none;
-  width: 0;
-  height: 0;
-}
-
-.cart-products-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.cart-products-scroll::-webkit-scrollbar-thumb {
-  background: rgba(156, 107, 48, 0.35);
-  border-radius: 999px;
-  transition: background 0.2s ease;
-}
-
-.cart-products-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(156, 107, 48, 0.7);
 }

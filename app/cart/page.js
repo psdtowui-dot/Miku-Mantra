@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useCart } from '@/lib/cart-store';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { formatINR } from '@/lib/products';
@@ -20,63 +20,55 @@ export default function CartPage() {
   const [applying, setApplying] = useState(false);
   const [stockStatus, setStockStatus] = useState({});
   const [validating, setValidating] = useState(true);
+  const [headerHeight, setHeaderHeight] = useState(80);
+
+  // Dynamically measure header height to support any announcement bar or responsive height
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const measureHeader = () => {
+      const navEl = document.querySelector('nav');
+      const headerContainer = navEl?.closest('.sticky') || navEl;
+      if (headerContainer) {
+        const rect = headerContainer.getBoundingClientRect();
+        if (rect.height > 0) {
+          setHeaderHeight(rect.height);
+        }
+      } else {
+        setHeaderHeight(window.innerWidth >= 640 ? 80 : 64);
+      }
+    };
+    measureHeader();
+    window.addEventListener('resize', measureHeader);
+    return () => window.removeEventListener('resize', measureHeader);
+  }, []);
+
+  // Prevent unwanted whole-page body scrolling on desktop while preserving mobile scrolling
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const updateScrollLock = () => {
+      if (window.innerWidth >= 1024 && items && items.length > 0) {
+        document.body.classList.add('cart-fixed-layout');
+        document.documentElement.style.overflow = 'hidden';
+      } else {
+        document.body.classList.remove('cart-fixed-layout');
+        document.documentElement.style.overflow = '';
+      }
+    };
+
+    updateScrollLock();
+    window.addEventListener('resize', updateScrollLock);
+    return () => {
+      document.body.classList.remove('cart-fixed-layout');
+      document.documentElement.style.overflow = '';
+      window.removeEventListener('resize', updateScrollLock);
+    };
+  }, [items?.length]);
+
   const [shippingConfig, setShippingConfig] = useState({
     freeShippingEnabled: true,
     freeShippingThreshold: 2000,
     standardShippingCharge: 500
   });
-
-  const productListRef = useRef(null);
-  const lastScrollTopRef = useRef(0);
-
-  // Scroll handler on product list container to trigger header show/hide
-  const handleProductListScroll = (e) => {
-    const scrollTop = e.currentTarget.scrollTop;
-    const delta = scrollTop - lastScrollTopRef.current;
-    const THRESHOLD = 8;
-
-    if (scrollTop <= 15) {
-      window.dispatchEvent(new CustomEvent('header-scroll', { detail: { direction: 'up', atTop: true } }));
-    } else if (delta > THRESHOLD) {
-      window.dispatchEvent(new CustomEvent('header-scroll', { detail: { direction: 'down', atTop: false } }));
-    } else if (delta < -THRESHOLD) {
-      window.dispatchEvent(new CustomEvent('header-scroll', { detail: { direction: 'up', atTop: false } }));
-    }
-
-    lastScrollTopRef.current = scrollTop;
-  };
-
-  // Prevent document/body from scrolling on desktop cart page so only the product list scrolls
-  useEffect(() => {
-    const handleResize = () => {
-      if (typeof window !== 'undefined' && window.innerWidth >= 1024 && window.innerHeight >= 600 && items.length > 0) {
-        document.documentElement.style.overflow = 'hidden';
-      } else if (typeof document !== 'undefined') {
-        document.documentElement.style.overflow = '';
-      }
-    };
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => {
-      if (typeof document !== 'undefined') {
-        document.documentElement.style.overflow = '';
-      }
-      window.removeEventListener('resize', handleResize);
-    };
-  }, [items.length]);
-
-  // Forward desktop wheel events outside the product list to the product list container
-  useEffect(() => {
-    const handleWheel = (e) => {
-      if (window.innerWidth >= 1024 && productListRef.current) {
-        if (!productListRef.current.contains(e.target)) {
-          productListRef.current.scrollTop += e.deltaY;
-        }
-      }
-    };
-    window.addEventListener('wheel', handleWheel, { passive: true });
-    return () => window.removeEventListener('wheel', handleWheel);
-  }, []);
 
   useEffect(() => {
     authFetch('/api/site-settings')
@@ -177,23 +169,28 @@ export default function CartPage() {
   const hasStockIssue = items.some(i => stockStatus[i.id]?.status === 'out_of_stock' || stockStatus[i.id]?.status === 'insufficient_stock');
 
   return (
-    <main className="bg-white min-h-screen lg:h-[calc(100vh-5rem)] lg:max-h-[calc(100vh-5rem)] lg:overflow-hidden flex flex-col">
-      <div className="max-w-[1400px] w-full mx-auto px-4 md:px-8 pt-4 sm:pt-6 pb-2 lg:pb-3 shrink-0">
-        <div className="text-center">
-          <div className="text-[10px] sm:text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-1.5">Your Selection</div>
-          <h1 className="font-display text-2xl xs:text-3xl sm:text-4xl md:text-5xl font-light text-[#1A1A1A] break-words">Shopping Bag</h1>
-          <div className="gold-line w-16 mx-auto my-3" />
+    <main
+      className="bg-white min-h-[calc(100vh-4rem)] sm:min-h-[calc(100vh-5rem)] lg:h-[calc(100dvh-5rem)] lg:max-h-[calc(100dvh-5rem)] lg:overflow-hidden flex flex-col"
+      style={{
+        height: typeof window !== 'undefined' && window.innerWidth >= 1024 ? `calc(100vh - ${headerHeight}px)` : undefined,
+        maxHeight: typeof window !== 'undefined' && window.innerWidth >= 1024 ? `calc(100vh - ${headerHeight}px)` : undefined,
+      }}
+    >
+      <div className="max-w-[1400px] w-full mx-auto px-4 md:px-8 pt-4 pb-4 sm:pt-6 sm:pb-6 lg:pt-5 lg:pb-5 flex flex-col lg:flex-1 lg:min-h-0 lg:h-full">
+        {/* Page Title Section */}
+        <div className="text-center mb-3 sm:mb-5 shrink-0">
+          <div className="text-[10px] sm:text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-1">Your Selection</div>
+          <h1 className="font-display text-2xl xs:text-3xl sm:text-4xl font-light text-[#1A1A1A] break-words">Shopping Bag</h1>
+          <div className="gold-line w-16 mx-auto my-2.5 sm:my-3" />
           <div className="text-xs sm:text-sm text-neutral-500">{items.length} {items.length === 1 ? 'item' : 'items'} · in your shopping bag</div>
         </div>
-      </div>
 
-      <div className="max-w-[1400px] w-full mx-auto px-4 md:px-8 pb-6 lg:pb-8 flex-1 min-h-0 flex flex-col">
-        <div className="grid lg:grid-cols-3 gap-6 lg:gap-10 flex-1 min-h-0 items-start">
-          {/* Left Column: Fixed Progress Bar + Dedicated Scrollable Products List */}
-          <div className="lg:col-span-2 flex flex-col lg:h-full lg:min-h-0">
-            {/* Free shipping bar fixed above the products */}
+        {/* 2-Column Responsive Layout */}
+        <div className="grid lg:grid-cols-3 gap-6 lg:gap-8 xl:gap-10 lg:flex-1 lg:min-h-0 lg:overflow-hidden items-start lg:items-stretch">
+          {/* Left Column: Fixed Free Shipping Bar + Independent Scrollable Product List */}
+          <div className="lg:col-span-2 flex flex-col lg:h-full lg:min-h-0 lg:overflow-hidden">
             {freeEnabled && subtotal > 0 && (
-              <div className="p-3.5 sm:p-4 rounded-xl border border-[#E8E8E8] bg-[#FAF6EF]/60 shadow-xs mb-4 shrink-0">
+              <div className="p-3.5 sm:p-4 rounded-xl border border-[#E8E8E8] bg-[#FAF6EF]/60 shadow-xs mb-3 sm:mb-4 shrink-0">
                 <div className="flex items-center justify-between text-xs sm:text-sm font-medium mb-2">
                   <span className="flex items-center gap-2 text-[#1A1A1A]">
                     <Truck size={16} className="text-[#9C6B30] shrink-0" />
@@ -216,12 +213,8 @@ export default function CartPage() {
               </div>
             )}
 
-            {/* Scrollable Container - ONLY section that scrolls */}
-            <div
-              ref={productListRef}
-              onScroll={handleProductListScroll}
-              className="cart-products-scroll flex-1 min-h-0 lg:overflow-y-auto pr-1.5 sm:pr-2.5 space-y-3.5 sm:space-y-4"
-            >
+            {/* Independent Scroll Container for Product Cards */}
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1.5 sm:pr-2.5 space-y-3 sm:space-y-4 cart-product-scrollbar max-h-[520px] sm:max-h-[600px] lg:max-h-none">
               <AnimatePresence>
                 {items.map(item => {
                   const info = stockStatus[item.id];
@@ -249,13 +242,13 @@ export default function CartPage() {
                               <div className="text-[11px] sm:text-xs text-neutral-500 mt-0.5 sm:mt-1">In Stock · Ships in 2-3 days</div>
                             )}
                           </div>
-                          <button onClick={() => remove(item.id)} className="text-neutral-400 hover:text-[#9C6B30] shrink-0 p-0.5 cursor-pointer"><X size={18} /></button>
+                          <button onClick={() => remove(item.id)} className="text-neutral-400 hover:text-[#9C6B30] shrink-0 p-0.5"><X size={18} /></button>
                         </div>
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sm:gap-3 mt-3 sm:mt-4">
                           <div className="flex items-center border border-[#E8E8E8] rounded-full w-fit">
-                            <button onClick={() => setQty(item.id, item.qty - 1)} className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center hover:text-[#9C6B30] cursor-pointer"><Minus size={13} /></button>
-                            <span className="w-7 sm:w-8 text-center text-xs sm:text-sm font-medium">{item.qty}</span>
-                            <button disabled={isOut || (info?.availableStock !== undefined && item.qty >= info.availableStock)} onClick={() => setQty(item.id, item.qty + 1)} className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center hover:text-[#9C6B30] disabled:opacity-40 cursor-pointer"><Plus size={13} /></button>
+                            <button onClick={() => setQty(item.id, item.qty - 1)} className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center hover:text-[#9C6B30]"><Minus size={13} /></button>
+                            <span className="w-7 sm:w-8 text-center text-xs sm:text-sm">{item.qty}</span>
+                            <button disabled={isOut || (info?.availableStock !== undefined && item.qty >= info.availableStock)} onClick={() => setQty(item.id, item.qty + 1)} className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center hover:text-[#9C6B30] disabled:opacity-40"><Plus size={13} /></button>
                           </div>
                           <div className="text-left sm:text-right"><div className="font-display text-lg sm:text-xl text-[#1A1A1A]">{formatINR(item.price * item.qty)}</div>{item.mrp > item.price && <div className="text-[11px] sm:text-xs text-neutral-400 line-through">{formatINR(item.mrp * item.qty)}</div>}</div>
                         </div>
@@ -264,9 +257,7 @@ export default function CartPage() {
                   );
                 })}
               </AnimatePresence>
-
-              {/* Continue Shopping at the bottom of the product list */}
-              <div className="pt-2 pb-6">
+              <div className="pt-2 pb-2">
                 <Link href="/shop" className="inline-flex items-center gap-2 text-[#9C6B30] text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase hover:gap-4 transition-all">
                   ← Continue Shopping
                 </Link>
@@ -274,25 +265,47 @@ export default function CartPage() {
             </div>
           </div>
 
-          {/* Right Column: Order Summary - STATIONARY */}
-          <aside className="lg:col-span-1 shrink-0">
-            <div className="border border-[#E8E8E8] rounded-xl p-4 sm:p-6 bg-[#FAF6EF]/30 shadow-xs">
+          {/* Right Column: Fixed / Sticky Order Summary */}
+          <aside className="lg:col-span-1 lg:self-start lg:sticky lg:top-0">
+            <div className="border border-[#E8E8E8] rounded-xl p-4 sm:p-5 lg:p-6 bg-[#FAF6EF]/30 shadow-xs max-h-[calc(100vh-5.5rem)] overflow-y-auto cart-product-scrollbar">
               <div className="font-display text-xl sm:text-2xl text-[#1A1A1A] mb-1">Order Summary</div>
-              <div className="gold-line w-12 mb-4 sm:mb-6" />
-              <div className="flex flex-wrap xs:flex-nowrap gap-2 mb-2"><div className="flex-1 min-w-[120px] flex items-center border border-[#E8E8E8] rounded-md bg-white"><Tag size={14} className="ml-2.5 text-[#9C6B30] shrink-0" /><input value={coupon} onChange={e => setCoupon(e.target.value)} placeholder="Enter coupon" className="flex-1 px-2.5 py-2 sm:px-3 sm:py-2.5 text-xs sm:text-sm bg-transparent focus:outline-none min-w-0" /></div><button disabled={applying} onClick={applyCoupon} className="px-3.5 sm:px-5 py-2 sm:py-2.5 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-widest uppercase rounded-md hover:bg-[#9C6B30] disabled:opacity-60 shrink-0 cursor-pointer">{applying ? '…' : 'Apply'}</button></div>
-              <div className="text-[10px] text-neutral-500 mb-4">Try <span className="text-[#9C6B30]">MIKUMANTRA10</span> or <span className="text-[#9C6B30]">WELCOME2000</span></div>
-              <label className="flex items-start gap-3 border border-dashed border-[#E8E8E8] rounded-md p-3 mb-5 cursor-pointer hover:border-[#9C6B30]"><input type="checkbox" checked={gift} onChange={e => setGift(e.target.checked)} className="mt-0.5 accent-[#9C6B30] shrink-0" /><div><div className="text-xs sm:text-sm font-medium flex items-center gap-2"><Gift size={14} className="text-[#9C6B30] shrink-0" /> Signature Gift Wrap</div><div className="text-[11px] sm:text-xs text-neutral-500">Silk pouch, handwritten note. +₹250</div></div></label>
-              <div className="space-y-2.5 sm:space-y-3 text-xs sm:text-sm">
+              <div className="gold-line w-12 mb-3.5 sm:mb-5" />
+              <div className="flex flex-wrap xs:flex-nowrap gap-2 mb-2">
+                <div className="flex-1 min-w-[120px] flex items-center border border-[#E8E8E8] rounded-md bg-white">
+                  <Tag size={14} className="ml-2.5 text-[#9C6B30] shrink-0" />
+                  <input value={coupon} onChange={e => setCoupon(e.target.value)} placeholder="Enter coupon" className="flex-1 px-2.5 py-2 sm:px-3 sm:py-2.5 text-xs sm:text-sm bg-transparent focus:outline-none min-w-0" />
+                </div>
+                <button disabled={applying} onClick={applyCoupon} className="px-3.5 sm:px-5 py-2 sm:py-2.5 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-widest uppercase rounded-md hover:bg-[#9C6B30] disabled:opacity-60 shrink-0">
+                  {applying ? '…' : 'Apply'}
+                </button>
+              </div>
+              <div className="text-[10px] text-neutral-500 mb-3.5">Try <span className="text-[#9C6B30]">MIKUMANTRA10</span> or <span className="text-[#9C6B30]">WELCOME2000</span></div>
+              <label className="flex items-start gap-3 border border-dashed border-[#E8E8E8] rounded-md p-2.5 sm:p-3 mb-4 sm:mb-5 cursor-pointer hover:border-[#9C6B30]">
+                <input type="checkbox" checked={gift} onChange={e => setGift(e.target.checked)} className="mt-0.5 accent-[#9C6B30] shrink-0" />
+                <div>
+                  <div className="text-xs sm:text-sm font-medium flex items-center gap-2"><Gift size={14} className="text-[#9C6B30] shrink-0" /> Signature Gift Wrap</div>
+                  <div className="text-[11px] sm:text-xs text-neutral-500">Silk pouch, handwritten note. +₹250</div>
+                </div>
+              </label>
+              <div className="space-y-2 sm:space-y-2.5 text-xs sm:text-sm">
                 <div className="flex justify-between"><span className="text-neutral-500">Subtotal</span><span>{formatINR(subtotal)}</span></div>
                 {discount > 0 && <div className="flex justify-between text-[#9C6B30]"><span>Discount ({couponCode})</span><span>− {formatINR(discount)}</span></div>}
                 <div className="flex justify-between"><span className="text-neutral-500">Shipping</span><span>{shipping === 0 ? <span className="text-[#9C6B30]">Free</span> : formatINR(shipping)}</span></div>
                 <div className="flex justify-between"><span className="text-neutral-500">Tax (GST)</span><span>{formatINR(tax)}</span></div>
                 {gift && <div className="flex justify-between"><span className="text-neutral-500">Gift Wrap</span><span>{formatINR(250)}</span></div>}
               </div>
-              <div className="gold-line w-full my-4 sm:my-5" />
-              <div className="flex justify-between items-baseline mb-6"><span className="text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase">Total</span><span className="font-display text-2xl sm:text-3xl text-[#1A1A1A]">{formatINR(total)}</span></div>
-              <button disabled={hasStockIssue} onClick={goCheckout} className={`w-full py-3.5 sm:py-4 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase transition rounded-md cursor-pointer ${hasStockIssue ? 'bg-neutral-400 text-white cursor-not-allowed opacity-70' : 'bg-[#1A1A1A] text-white hover:bg-[#9C6B30]'}`}>Proceed to Checkout</button>
-              <div className="mt-5 space-y-2 text-xs text-neutral-500"><div className="flex items-center gap-2"><Truck size={13} className="text-[#9C6B30] shrink-0" /> Insured, tracked delivery</div><div className="flex items-center gap-2"><ShieldCheck size={13} className="text-[#9C6B30] shrink-0" /> Secure checkout · SGL certified</div></div>
+              <div className="gold-line w-full my-3.5 sm:my-4" />
+              <div className="flex justify-between items-baseline mb-4 sm:mb-5">
+                <span className="text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase">Total</span>
+                <span className="font-display text-2xl sm:text-3xl text-[#1A1A1A]">{formatINR(total)}</span>
+              </div>
+              <button disabled={hasStockIssue} onClick={goCheckout} className={`w-full py-3 sm:py-3.5 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase transition rounded-md ${hasStockIssue ? 'bg-neutral-400 text-white cursor-not-allowed opacity-70' : 'bg-[#1A1A1A] text-white hover:bg-[#9C6B30]'}`}>
+                Proceed to Checkout
+              </button>
+              <div className="mt-4 space-y-1.5 text-xs text-neutral-500">
+                <div className="flex items-center gap-2"><Truck size={13} className="text-[#9C6B30] shrink-0" /> Insured, tracked delivery</div>
+                <div className="flex items-center gap-2"><ShieldCheck size={13} className="text-[#9C6B30] shrink-0" /> Secure checkout · SGL certified</div>
+              </div>
             </div>
           </aside>
         </div>
