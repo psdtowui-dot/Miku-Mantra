@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { authFetch } from '@/lib/use-auth';
 import { BarChart3, TrendingUp, Users, Mail, UserX, Loader2, ArrowUpRight, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -20,9 +21,9 @@ export default function AdminNewsletterAnalyticsPage() {
   const loadAnalytics = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/newsletter/analytics', { credentials: 'include', cache: 'no-store' });
-      const data = await res.json();
-      if (res.ok && data.analytics) {
+      const res = await authFetch('/api/admin/newsletter/analytics', { cache: 'no-store' });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.analytics) {
         setAnalytics(data.analytics);
       }
     } catch (err) {

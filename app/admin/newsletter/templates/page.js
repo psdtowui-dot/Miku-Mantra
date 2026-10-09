@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { authFetch } from '@/lib/use-auth';
 import { Save, Loader2, FileText, Eye, Mail, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -21,8 +22,8 @@ export default function AdminNewsletterTemplatesPage() {
   const loadTemplate = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/newsletter/templates', { credentials: 'include', cache: 'no-store' });
-      const data = await res.json();
+      const res = await authFetch('/api/admin/newsletter/templates', { cache: 'no-store' });
+      const data = await res.json().catch(() => null);
       if (res.ok && data) {
         setTemplate(prev => ({ ...prev, ...data }));
       }
@@ -41,14 +42,13 @@ export default function AdminNewsletterTemplatesPage() {
     e.preventDefault();
     setSaving(true);
     try {
-      const res = await fetch('/api/admin/newsletter/templates', {
+      const res = await authFetch('/api/admin/newsletter/templates', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify(template)
       });
-      const data = await res.json();
-      if (res.ok && data.success) {
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
         toast.success(data.message || 'Welcome email template saved!');
       } else {
         toast.error(data.message || 'Failed to save email template.');

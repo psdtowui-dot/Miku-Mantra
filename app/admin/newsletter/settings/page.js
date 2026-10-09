@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { authFetch } from '@/lib/use-auth';
 import {
   Save, Loader2, RefreshCw, CheckCircle2, Sliders, Type, MessageSquare,
   Palette, Eye, EyeOff, Sparkles, AlertCircle, Plus, Trash2, Mail
@@ -45,8 +46,8 @@ export default function AdminNewsletterSettingsPage() {
   const loadSettings = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/newsletter/settings', { credentials: 'include', cache: 'no-store' });
-      const data = await res.json();
+      const res = await authFetch('/api/admin/newsletter/settings', { cache: 'no-store' });
+      const data = await res.json().catch(() => null);
       if (res.ok && data) {
         setForm(prev => ({
           ...prev,
@@ -73,14 +74,13 @@ export default function AdminNewsletterSettingsPage() {
     e.preventDefault();
     setSaving(true);
     try {
-      const res = await fetch('/api/admin/newsletter/settings', {
+      const res = await authFetch('/api/admin/newsletter/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify(form)
       });
-      const data = await res.json();
-      if (res.ok && data.success) {
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
         toast.success(data.message || 'Newsletter settings saved successfully!');
         if (data.settings) {
           setForm(prev => ({

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { authFetch } from '@/lib/use-auth';
 import {
   Send, Plus, Search, X, Loader2, Calendar, Users, Eye, CheckCircle2,
   Clock, AlertTriangle, Trash2, Edit3, Copy, RefreshCw, AlertCircle,
@@ -51,17 +52,17 @@ export default function AdminNewsletterCampaignsPage() {
     setLoading(true);
     try {
       const [campRes, healthRes] = await Promise.all([
-        fetch('/api/admin/newsletter/campaigns', { credentials: 'include', cache: 'no-store' }),
-        fetch('/api/admin/newsletter/health', { credentials: 'include', cache: 'no-store' })
+        authFetch('/api/admin/newsletter/campaigns', { cache: 'no-store' }),
+        authFetch('/api/admin/newsletter/health', { cache: 'no-store' })
       ]);
 
-      const campData = await campRes.json();
-      const healthData = await healthRes.json();
+      const campData = await campRes.json().catch(() => null);
+      const healthData = await healthRes.json().catch(() => null);
 
-      if (campRes.ok && campData.campaigns) {
+      if (campRes.ok && campData && campData.campaigns) {
         setCampaigns(campData.campaigns);
       }
-      if (healthRes.ok) {
+      if (healthRes.ok && healthData) {
         setHealth(healthData);
         setSenderForm({
           fromName: healthData.fromName || 'MikuMantra',
@@ -128,19 +129,18 @@ export default function AdminNewsletterCampaignsPage() {
         ...(senderForm.smtpPass ? { smtpPass: senderForm.smtpPass.trim() } : {})
       };
 
-      const res = await fetch('/api/admin/newsletter/settings', {
+      const res = await authFetch('/api/admin/newsletter/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
-      if (res.ok && data.success) {
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
         toast.success('Outbound sender email address updated successfully!');
         setShowEditSenderModal(false);
         await loadData();
       } else {
-        toast.error(data.message || 'Failed to update sender email.');
+        toast.error((data && data.message) || 'Failed to update sender email.');
       }
     } catch (err) {
       toast.error('Network error updating sender email.');
@@ -173,10 +173,9 @@ export default function AdminNewsletterCampaignsPage() {
       const url = editingId ? `/api/admin/newsletter/campaigns/${editingId}` : '/api/admin/newsletter/campaigns';
       const method = editingId ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
+      const res = await authFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify(payload)
       });
 
@@ -215,22 +214,21 @@ export default function AdminNewsletterCampaignsPage() {
     setSending(true);
     try {
       const campId = activeCampaign.id || 'new';
-      const res = await fetch(`/api/admin/newsletter/campaigns/${campId}/test`, {
+      const res = await authFetch(`/api/admin/newsletter/campaigns/${campId}/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
           toEmail: testEmailInput.trim(),
           ...activeCampaign
         })
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
         toast.success(data.message || `Test email successfully sent to ${testEmailInput}`);
         setShowTestModal(false);
       } else {
-        toast.error(data.message || data.error || 'Failed to send test email.');
+        toast.error((data && (data.message || data.error)) || 'Failed to send test email.');
       }
     } catch (err) {
       toast.error('Network error sending test email.');
@@ -252,18 +250,17 @@ export default function AdminNewsletterCampaignsPage() {
     if (!activeCampaign?.id) return;
     setSending(true);
     try {
-      const res = await fetch(`/api/admin/newsletter/campaigns/${activeCampaign.id}/send`, {
-        method: 'POST',
-        credentials: 'include'
+      const res = await authFetch(`/api/admin/newsletter/campaigns/${activeCampaign.id}/send`, {
+        method: 'POST'
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
         toast.success(data.message || 'Campaign execution completed!');
         setShowSendConfirmModal(false);
         loadData();
       } else {
-        toast.error(data.message || 'Failed to send campaign.');
+        toast.error((data && data.message) || 'Failed to send campaign.');
       }
     } catch (err) {
       toast.error('Network error executing campaign broadcast.');
@@ -275,16 +272,15 @@ export default function AdminNewsletterCampaignsPage() {
   const handleCancelScheduled = async (id) => {
     if (!confirm('Are you sure you want to cancel this scheduled campaign?')) return;
     try {
-      const res = await fetch(`/api/admin/newsletter/campaigns/${id}/cancel`, {
-        method: 'POST',
-        credentials: 'include'
+      const res = await authFetch(`/api/admin/newsletter/campaigns/${id}/cancel`, {
+        method: 'POST'
       });
-      const data = await res.json();
-      if (res.ok && data.success) {
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
         toast.success('Scheduled campaign cancelled.');
         loadData();
       } else {
-        toast.error(data.message || 'Failed to cancel campaign.');
+        toast.error((data && data.message) || 'Failed to cancel campaign.');
       }
     } catch (err) {
       toast.error('Network error cancelling campaign.');
@@ -294,9 +290,8 @@ export default function AdminNewsletterCampaignsPage() {
   const handleDelete = async (id) => {
     if (!confirm('Are you sure you want to permanently delete this campaign and its recipient logs?')) return;
     try {
-      const res = await fetch(`/api/admin/newsletter/campaigns/${id}`, {
-        method: 'DELETE',
-        credentials: 'include'
+      const res = await authFetch(`/api/admin/newsletter/campaigns/${id}`, {
+        method: 'DELETE'
       });
       if (res.ok) {
         toast.success('Campaign deleted.');
@@ -312,9 +307,9 @@ export default function AdminNewsletterCampaignsPage() {
     setShowLogsModal(true);
     setLoadingLogs(true);
     try {
-      const res = await fetch(`/api/admin/newsletter/campaigns/${camp.id}/logs`, { credentials: 'include' });
-      const data = await res.json();
-      if (res.ok && data.logs) {
+      const res = await authFetch(`/api/admin/newsletter/campaigns/${camp.id}/logs`);
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.logs) {
         setLogs(data.logs);
       }
     } catch (err) {
