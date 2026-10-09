@@ -11,7 +11,8 @@ import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS a
 import { buildInvoicePDF } from '@/lib/pdf-invoice'
 import { buildShippingSlipPDF } from '@/lib/pdf-shippingslip'
 import { WAREHOUSE_PINCODE } from '@/lib/constants'
-import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification } from '@/lib/notifications'
+import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendOrderShippedNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification, sendPushNotification } from '@/lib/notifications'
+import { generateTrackingUrl } from '@/lib/courier'
 import { sendPasswordResetEmail, checkEmailProviderStatus, sendTestCampaignEmail } from '@/lib/email-service'
 import { seedRbacIfEmpty, resolveUserPermissions, hasPermission, logAdminActivity, validatePrivilegeEscalation, PERMISSIONS, DEFAULT_ROLES } from '@/lib/rbac'
 import { invalidateSiteDataCache } from '@/lib/db-site-settings'
@@ -284,6 +285,10 @@ async function ensureIndexes(database) {
       database.collection('collections').createIndex({ id: 1 }),
       database.collection('activity_logs').createIndex({ timestamp: -1 }),
       database.collection('wishlist').createIndex({ userId: 1, productId: 1 }, { unique: true }),
+      database.collection('orders').createIndex({ trackingNumber: 1 }),
+      database.collection('orders').createIndex({ 'courier.trackingNumber': 1 }),
+      database.collection('device_tokens').createIndex({ token: 1 }, { unique: true }),
+      database.collection('device_tokens').createIndex({ userId: 1 }),
       database.collection('newsletter_subscribers').createIndex({ email: 1 }, { unique: true }),
       database.collection('newsletter_subscribers').createIndex({ status: 1 }),
       database.collection('newsletter_subscribers').createIndex({ subscribedAt: -1 })
@@ -1048,6 +1053,79 @@ async function handleRoute(request, { params }) {
     const url = new URL(request.url); const q = url.searchParams
 
     if (route === '/' && method === 'GET') return ok({ ok: true, app: 'MikuMantra API' })
+
+    // ============ MOBILE APP CONFIGURATION ============
+    if (route === '/app/config' && method === 'GET') {
+      const siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+      const footerDoc = await db.collection('footer').findOne({ id: 'default' });
+      return ok({
+        name: 'MikuMantra',
+        appId: 'com.mikumantra.app',
+        version: '1.0.0',
+        minVersion: '1.0.0',
+        forceUpdate: false,
+        maintenanceMode: false,
+        maintenanceMessage: '',
+        updateUrl: 'https://play.google.com/store/apps/details?id=com.mikumantra.app',
+        supportPhone: footerDoc?.company?.phone || '+918076108369',
+        supportEmail: footerDoc?.company?.email || 'concierge@mikumantra.jewels',
+        whatsappSupport: '+918076108369',
+        shipping: siteSettings?.shipping || DEFAULT_SITE_SETTINGS.shipping,
+        paymentMethods: {
+          cod: siteSettings?.paymentSettings?.cod?.enabled !== false,
+          razorpay: siteSettings?.paymentSettings?.razorpay?.enabled !== false
+        },
+        brandColors: {
+          primary: '#FAF6EF',
+          accent: '#9C6B30',
+          dark: '#1A1A1A'
+        }
+      });
+    }
+
+    // ============ ANDROID DIGITAL ASSET LINKS ============
+    if ((route === '/.well-known/assetlinks.json' || route === '/assetlinks.json') && method === 'GET') {
+      return handleCORS(NextResponse.json([
+        {
+          relation: ["delegate_permission/common.handle_all_urls"],
+          target: {
+            namespace: "android_app",
+            package_name: "com.mikumantra.app",
+            sha256_cert_fingerprints: [
+              "14:6D:E9:7F:0F:7F:02:8F:A4:4E:95:C0:D3:2F:3A:42:01:E6:36:2C:C6:6F:A5:68:55:04:1B:54:27:0C:FB:56"
+            ]
+          }
+        }
+      ]));
+    }
+
+    // ============ DEVICE TOKEN REGISTRATION (FCM PUSH NOTIFICATIONS) ============
+    if (route === '/notifications/device-token' && method === 'POST') {
+      const b = await request.json().catch(() => ({}));
+      const token = (b.token || b.fcmToken || '').trim();
+      const platform = (b.platform || 'android').toLowerCase();
+      const deviceId = (b.deviceId || '').trim();
+      if (!token) return err('Device push token is required', 400);
+
+      const currentUser = await getCurrentUser(db, request);
+      const now = new Date();
+      await db.collection('device_tokens').updateOne(
+        { token },
+        {
+          $set: {
+            token,
+            platform,
+            deviceId: deviceId || uuidv4(),
+            userId: currentUser?.id || null,
+            userEmail: currentUser?.email || null,
+            updatedAt: now
+          },
+          $setOnInsert: { createdAt: now }
+        },
+        { upsert: true }
+      );
+      return ok({ ok: true, registered: true });
+    }
 
     if (route.startsWith('/uploads/') && method === 'GET') {
       const filename = route.split('/')[2];
@@ -2612,6 +2690,94 @@ async function handleRoute(request, { params }) {
         order: clean(updatedOrder)
       });
     }
+
+    // ============ PUBLIC ORDER TRACKING ============
+    if ((route === '/orders/track' || route === '/track') && method === 'GET') {
+      const orderNumber = (q.get('orderNumber') || q.get('order') || '').trim();
+      const contact = (q.get('contact') || q.get('phone') || q.get('email') || '').trim();
+      const awb = (q.get('awb') || q.get('trackingNumber') || '').trim();
+
+      if (!orderNumber && !awb) {
+        return err('Order Number or AWB Tracking Number is required.', 400);
+      }
+
+      let order = null;
+      if (awb) {
+        const escapedAwb = awb.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
+        order = await db.collection('orders').findOne({
+          $or: [
+            { trackingNumber: { $regex: `^${escapedAwb}$`, $options: 'i' } },
+            { 'courier.trackingNumber': { $regex: `^${escapedAwb}$`, $options: 'i' } }
+          ]
+        });
+      } else if (orderNumber) {
+        const cleanOrderNum = orderNumber.replace(/[^a-zA-Z0-9-]/g, '');
+        const orderCandidates = await db.collection('orders').find({
+          $or: [
+            { orderNumber: { $regex: cleanOrderNum, $options: 'i' } },
+            { id: orderNumber }
+          ]
+        }).toArray();
+
+        if (orderCandidates.length > 0) {
+          const currentUser = await getCurrentUser(db, request);
+          if (currentUser) {
+            order = orderCandidates.find(o => o.userId === currentUser.id) || null;
+          }
+
+          if (!order && contact) {
+            const rawDigits = contact.replace(/[^0-9]/g, '');
+            const phoneEnd = rawDigits.slice(-10);
+            const contactLower = contact.toLowerCase();
+
+            order = orderCandidates.find(o => {
+              const orderPhoneDigits = (o.address?.phone || '').replace(/[^0-9]/g, '');
+              const phoneMatches = phoneEnd && orderPhoneDigits.endsWith(phoneEnd);
+              const emailMatches = (o.guestEmail && o.guestEmail.toLowerCase() === contactLower);
+              return phoneMatches || emailMatches;
+            }) || null;
+          } else if (!order && !contact && (currentUser?.role === 'admin' || orderCandidates.length === 1)) {
+            order = orderCandidates[0];
+          }
+        }
+      }
+
+      if (!order) {
+        return err('No matching order found. Please check your order details and contact number.', 404);
+      }
+
+      // Return sanitized order details for public tracking
+      const sanitizedOrder = {
+        id: order.id,
+        orderNumber: order.orderNumber,
+        status: order.status,
+        statusHistory: order.statusHistory || [],
+        placedAt: order.placedAt,
+        estimatedDelivery: order.estimatedDelivery,
+        courier: order.courier || null,
+        carrier: order.carrier || order.courier?.carrier || null,
+        trackingNumber: order.trackingNumber || order.courier?.trackingNumber || null,
+        trackingUrl: order.trackingUrl || order.courier?.trackingUrl || null,
+        items: (order.items || []).map(i => ({
+          id: i.id,
+          name: i.name,
+          image: i.image,
+          qty: i.qty,
+          price: i.price,
+          subtotal: i.subtotal
+        })),
+        amounts: order.amounts,
+        address: {
+          fullName: order.address?.fullName,
+          city: order.address?.city,
+          state: order.address?.state,
+          pincode: order.address?.pincode
+        }
+      };
+
+      return ok({ order: sanitizedOrder });
+    }
+
     if (route.startsWith('/orders/') && method === 'GET') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const id = route.split('/')[2];
@@ -6212,17 +6378,61 @@ async function handleRoute(request, { params }) {
           return err('Cancelled orders cannot be updated. Cancelled is a terminal state.', 400);
         }
 
+        const targetStatus = b.status || existingOrder.status;
+        const isStatusChanging = b.status && b.status !== existingOrder.status;
+        const hasCourierInput = Boolean(
+          b.courier !== undefined ||
+          b.carrier !== undefined ||
+          b.trackingNumber !== undefined ||
+          b.trackingUrl !== undefined ||
+          b.notes !== undefined
+        );
+
         const notes = {
           packed: 'Order packed & ready to ship.',
           shipped: 'Shipped via courier.',
           delivered: 'Delivered successfully.',
-          cancelled: 'Cancelled by MikuMantra',
+          cancelled: 'Order cancelled.',
           confirmed: 'Order confirmed.'
         };
-        const setDoc = { status: b.status };
+        const setDoc = {};
+        if (b.status) setDoc.status = b.status;
         if (b.status === 'delivered') {
           setDoc.deliveredAt = new Date();
         }
+
+        let courierDoc = null;
+        if (hasCourierInput || targetStatus === 'shipped') {
+          const rawCarrier = b.courier?.carrier !== undefined ? b.courier.carrier : (b.carrier !== undefined ? b.carrier : (existingOrder.courier?.carrier || existingOrder.carrier || ''));
+          const rawTrackingNum = b.courier?.trackingNumber !== undefined ? b.courier.trackingNumber : (b.trackingNumber !== undefined ? b.trackingNumber : (existingOrder.courier?.trackingNumber || existingOrder.trackingNumber || ''));
+          let rawTrackingUrl = b.courier?.trackingUrl !== undefined ? b.courier.trackingUrl : (b.trackingUrl !== undefined ? b.trackingUrl : (existingOrder.courier?.trackingUrl || existingOrder.trackingUrl || ''));
+          const rawNotes = b.courier?.notes !== undefined ? b.courier.notes : (b.notes !== undefined ? b.notes : (existingOrder.courier?.notes || ''));
+
+          const carrier = (rawCarrier || '').trim();
+          const trackingNumber = (rawTrackingNum || '').trim();
+          let trackingUrl = (rawTrackingUrl || '').trim();
+          if (!trackingUrl && carrier && trackingNumber) {
+            trackingUrl = generateTrackingUrl(carrier, trackingNumber);
+          }
+          const shippedAt = b.courier?.shippedAt ? new Date(b.courier.shippedAt) : (existingOrder.shippedAt || existingOrder.courier?.shippedAt || new Date());
+
+          courierDoc = {
+            carrier,
+            trackingNumber,
+            trackingUrl,
+            shippedAt,
+            notes: (rawNotes || '').trim()
+          };
+
+          setDoc.courier = courierDoc;
+          setDoc.carrier = carrier;
+          setDoc.trackingNumber = trackingNumber;
+          setDoc.trackingUrl = trackingUrl;
+          if (!existingOrder.shippedAt) {
+            setDoc.shippedAt = shippedAt;
+          }
+        }
+
         if (b.status === 'cancelled') {
           if (!hasPermission(admin, 'orders.cancel') && !hasPermission(admin, 'orders.update')) {
             return err('Permission denied: orders.cancel required', 403);
@@ -6246,21 +6456,39 @@ async function handleRoute(request, { params }) {
           }
         }
 
+        let historyNote = b.note || (b.status ? notes[b.status] : '') || '';
+        if (targetStatus === 'shipped') {
+          const carrier = courierDoc?.carrier || existingOrder.carrier || '';
+          const trackingNum = courierDoc?.trackingNumber || existingOrder.trackingNumber || '';
+          if (carrier && trackingNum) {
+            historyNote = b.note || `Shipped via ${carrier} (AWB: ${trackingNum})`;
+          } else if (carrier) {
+            historyNote = b.note || `Shipped via ${carrier}`;
+          }
+        } else if (hasCourierInput) {
+          const carrier = courierDoc?.carrier || existingOrder.carrier || '';
+          const trackingNum = courierDoc?.trackingNumber || existingOrder.trackingNumber || '';
+          historyNote = b.note || `Courier tracking updated: ${carrier || 'Courier'}${trackingNum ? ` (AWB: ${trackingNum})` : ''}`;
+        }
+
+        const effectiveStatus = b.status || existingOrder.status;
+        const updateOps = { $set: setDoc };
+        if (historyNote || isStatusChanging) {
+          updateOps.$push = {
+            statusHistory: {
+              status: effectiveStatus,
+              at: new Date(),
+              note: historyNote
+            }
+          };
+        }
+
         const updateResult = await db.collection('orders').updateOne(
           { id, status: { $ne: 'cancelled' } },
-          {
-            $set: setDoc,
-            $push: {
-              statusHistory: {
-                status: b.status,
-                at: new Date(),
-                note: b.note || notes[b.status] || ''
-              }
-            }
-          }
+          updateOps
         );
 
-        if (updateResult.modifiedCount === 0) {
+        if (updateResult.matchedCount === 0) {
           return err('Cancelled orders cannot be updated.', 400);
         }
 
@@ -6277,6 +6505,16 @@ async function handleRoute(request, { params }) {
         }
 
         const up = await db.collection('orders').findOne({ id });
+
+        // Trigger notifications if shipped or if courier details updated on a shipped/delivered order
+        if (targetStatus === 'shipped' || (existingOrder.status === 'shipped' && hasCourierInput)) {
+          const customerUser = up.userId ? await db.collection('users').findOne({ id: up.userId }) : null;
+          try {
+            await sendOrderShippedNotification({ order: up, user: customerUser, db });
+          } catch (notifErr) {
+            console.error('[Notification error] Order shipped notification:', notifErr);
+          }
+        }
 
         if (b.status === 'cancelled') {
           try {
@@ -6304,8 +6542,29 @@ async function handleRoute(request, { params }) {
           }
         }
 
+        // Dispatch push notification to customer's mobile devices
+        if (up && up.userId && b.status) {
+          const statusMessages = {
+            packed: { title: 'Order Packed! 📦', body: `Your order #${up.orderNumber} has been packed and is ready for dispatch.` },
+            shipped: { title: 'Order Shipped! 🚚', body: `Your order #${up.orderNumber} is on its way${up.carrier ? ' via ' + up.carrier : ''}! Track your delivery.` },
+            out_for_delivery: { title: 'Out for Delivery! 🛵', body: `Your order #${up.orderNumber} is out for delivery today!` },
+            delivered: { title: 'Order Delivered! 🎉', body: `Your order #${up.orderNumber} has been delivered. Thank you for choosing MikuMantra!` }
+          };
+          const msg = statusMessages[b.status];
+          if (msg) {
+            sendPushNotification({
+              db,
+              userId: up.userId,
+              title: msg.title,
+              body: msg.body,
+              data: { orderId: up.id, orderNumber: up.orderNumber, status: b.status, type: 'order_status_update' }
+            }).catch(() => {});
+          }
+        }
+
         return ok({ order: clean(up) });
       }
+
 
       // Customers
       if (sub === 'customers' && method === 'GET') {
