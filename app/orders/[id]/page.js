@@ -1218,7 +1218,13 @@ function OrderInner() {
                     {returnRequest.items.map((it, idx) => (
                       <div key={idx} className="flex items-center justify-between text-xs p-2.5 rounded-md bg-neutral-50/80 border border-neutral-200/50">
                         <div className="flex items-center gap-2.5">
-                          {it.image && <img src={it.image} alt={it.name} className="w-10 h-10 rounded object-cover shrink-0" />}
+                          {it.image && it.image.trim() ? (
+                            <img src={it.image.trim()} alt={it.name} className="w-10 h-10 rounded object-cover shrink-0" />
+                          ) : (
+                            <div className="w-10 h-10 rounded bg-neutral-100 flex items-center justify-center shrink-0 text-[#9C6B30]/40">
+                              <Package size={16} />
+                            </div>
+                          )}
                           <div>
                             <span className="font-medium text-neutral-800 block truncate max-w-[200px] sm:max-w-xs">{it.name}</span>
                             <span className="text-neutral-500 text-[11px]">Quantity: {it.returnQty || it.qty}</span>
@@ -1528,7 +1534,13 @@ function OrderInner() {
               return (
                 <div key={i} className="border border-[#E8E8E8] rounded-lg p-3 sm:p-4 transition hover:border-neutral-300">
                   <div className="flex gap-3 sm:gap-4 items-start">
-                    <img loading="lazy" src={it.image} alt={it.name} className="w-16 h-16 sm:w-20 sm:h-20 rounded object-cover shrink-0" />
+                    {it.image && it.image.trim() ? (
+                      <img loading="lazy" src={it.image.trim()} alt={it.name} className="w-16 h-16 sm:w-20 sm:h-20 rounded object-cover shrink-0" />
+                    ) : (
+                      <div className="w-16 h-16 sm:w-20 sm:h-20 rounded bg-[#FAF6EF] flex items-center justify-center shrink-0 text-[#9C6B30]/40">
+                        <Package size={24} />
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0">
                       <Link href={`/product/${it.slug}`} className="font-serif-luxe text-base sm:text-lg hover:text-[#9C6B30] truncate block">
                         {it.name}
@@ -1786,8 +1798,12 @@ function OrderInner() {
                             onChange={() => handleItemToggle(it.id)}
                             className="w-4 h-4 accent-[#9C6B30] cursor-pointer shrink-0"
                           />
-                          {it.image && (
-                            <img src={it.image} alt={it.name} className="w-12 h-12 rounded object-cover shrink-0" />
+                          {it.image && it.image.trim() ? (
+                            <img src={it.image.trim()} alt={it.name} className="w-12 h-12 rounded object-cover shrink-0" />
+                          ) : (
+                            <div className="w-12 h-12 rounded bg-[#FAF6EF] flex items-center justify-center shrink-0 text-[#9C6B30]/40">
+                              <Package size={18} />
+                            </div>
                           )}
                           <div className="flex-1 min-w-0">
                             <div className="font-serif-luxe text-xs sm:text-sm text-neutral-900 truncate">{it.name}</div>

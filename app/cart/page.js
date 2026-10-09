@@ -166,8 +166,12 @@ export default function CartPage() {
                 const isInsufficient = info?.status === 'insufficient_stock';
                 return (
                   <motion.div key={item.id} layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -30 }} className={`flex gap-2.5 xs:gap-3 sm:gap-5 p-3 sm:p-5 border rounded-xl bg-white transition ${isOut ? 'border-red-300 bg-red-50/10' : isInsufficient ? 'border-amber-300 bg-amber-50/10' : 'border-[#E8E8E8] hover:border-[#D4AF37]'}`}>
-                    <Link href={`/product/${item.slug}`} className="w-16 h-16 xs:w-20 xs:h-20 sm:w-28 sm:h-28 md:w-32 md:h-32 rounded-lg overflow-hidden bg-[#FAF6EF] shrink-0 relative">
-                      <img src={item.image} className="w-full h-full object-cover" />
+                    <Link href={`/product/${item.slug}`} className="w-16 h-16 xs:w-20 xs:h-20 sm:w-28 sm:h-28 md:w-32 md:h-32 rounded-lg overflow-hidden bg-[#FAF6EF] shrink-0 relative flex items-center justify-center">
+                      {item.image && item.image.trim() ? (
+                        <img src={item.image.trim()} alt={item.name || 'Product'} className="w-full h-full object-cover" />
+                      ) : (
+                        <ShoppingBag size={24} className="text-[#9C6B30]/40" />
+                      )}
                       {isOut && <span className="absolute inset-0 bg-black/50 flex items-center justify-center text-white text-[9px] font-semibold uppercase px-1 text-center">Out of stock</span>}
                     </Link>
                     <div className="flex-1 min-w-0">

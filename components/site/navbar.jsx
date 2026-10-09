@@ -230,10 +230,10 @@ export default function Navbar({ initialData }) {
                           {sortedSections.length === 0 && <div className="col-span-2" />}
 
                           {/* Featured Image Card */}
-                          {nav.dropdown?.featured?.isActive && (
+                          {nav.dropdown?.featured?.isActive && nav.dropdown.featured.image?.trim() && (
                             <Link href={nav.dropdown.featured.url || "#"} className="relative rounded-md overflow-hidden group/img aspect-video">
                               <img
-                                src={nav.dropdown.featured.image}
+                                src={nav.dropdown.featured.image.trim()}
                                 alt={nav.dropdown.featured.alt || nav.dropdown.featured.title}
                                 loading="lazy"
                                 className="w-full h-32 object-cover group-hover/img:scale-105 transition-transform duration-700"
@@ -479,13 +479,13 @@ export default function Navbar({ initialData }) {
                                   );
                                 })}
 
-                                {nav.dropdown?.featured?.isActive && (
+                                {nav.dropdown?.featured?.isActive && nav.dropdown.featured.image?.trim() && (
                                   <Link
                                     href={nav.dropdown.featured.url || "#"}
                                     onClick={() => setMobile(false)}
                                     className="block mt-4 rounded overflow-hidden relative aspect-video"
                                   >
-                                    <img src={nav.dropdown.featured.image} alt={nav.dropdown.featured.alt} className="w-full h-24 object-cover" />
+                                    <img src={nav.dropdown.featured.image.trim()} alt={nav.dropdown.featured.alt || nav.dropdown.featured.title} className="w-full h-24 object-cover" />
                                     <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
                                       <span className="text-white text-xs uppercase font-semibold tracking-wider">{nav.dropdown.featured.title}</span>
                                     </div>

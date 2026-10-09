@@ -477,8 +477,12 @@ function TrackOrderInner() {
                   <div className="space-y-2">
                     {trackedOrder.items.map((it, idx) => (
                       <div key={idx} className="flex items-center gap-3 text-xs">
-                        {it.image && (
-                          <img src={it.image} alt={it.name} className="w-10 h-10 rounded-md object-cover border border-neutral-200 shrink-0" />
+                        {it.image && it.image.trim() ? (
+                          <img src={it.image.trim()} alt={it.name || 'Product'} className="w-10 h-10 rounded-md object-cover border border-neutral-200 shrink-0" />
+                        ) : (
+                          <div className="w-10 h-10 rounded-md bg-neutral-100 border border-neutral-200 flex items-center justify-center shrink-0 text-[#9C6B30]/40">
+                            <Package size={16} />
+                          </div>
                         )}
                         <div className="min-w-0 flex-1">
                           <div className="font-medium text-neutral-900 truncate">{it.name}</div>

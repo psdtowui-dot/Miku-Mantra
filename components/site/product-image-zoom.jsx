@@ -152,7 +152,7 @@ export default function ProductImageZoom({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [lightboxOpen, activeImg, images.length]);
 
-  const currentImage = images[activeImg] || images[0] || '/logo.png';
+  const currentImage = (images[activeImg] && images[activeImg].trim()) || (images[0] && images[0].trim()) || '/logo.png';
 
   // Lightbox Pan / Zoom handlers
   const handleLightboxMouseDown = (e) => {
@@ -345,9 +345,9 @@ export default function ProductImageZoom({
       </div>
 
       {/* Thumbnail Selector Grid */}
-      {images && images.length > 1 && (
+      {images && images.filter(im => im && im.trim()).length > 1 && (
         <div className="mt-4 grid grid-cols-5 gap-2 sm:gap-3">
-          {images.map((im, i) => (
+          {images.filter(im => im && im.trim()).map((im, i) => (
             <button
               key={im + i}
               type="button"
@@ -358,7 +358,7 @@ export default function ProductImageZoom({
                   : 'border-transparent hover:border-[#E8E8E8] opacity-80 hover:opacity-100'
               }`}
             >
-              <img loading="lazy" src={im} alt={`${productName} thumbnail ${i + 1}`} className="w-full h-full object-cover" />
+              <img loading="lazy" src={im.trim()} alt={`${productName} thumbnail ${i + 1}`} className="w-full h-full object-cover" />
             </button>
           ))}
         </div>
@@ -490,7 +490,7 @@ export default function ProductImageZoom({
               className="px-6 py-4 border-t border-white/10 flex justify-center gap-3 overflow-x-auto z-10"
               onClick={(e) => e.stopPropagation()}
             >
-              {images.map((im, i) => (
+              {images.filter(im => im && im.trim()).map((im, i) => (
                 <button
                   key={im + i}
                   type="button"
@@ -499,7 +499,7 @@ export default function ProductImageZoom({
                     activeImg === i ? 'border-[#9C6B30] scale-105' : 'border-white/20 opacity-60 hover:opacity-100'
                   }`}
                 >
-                  <img src={im} alt="" className="w-full h-full object-cover" />
+                  <img src={im.trim()} alt="" className="w-full h-full object-cover" />
                 </button>
               ))}
             </div>

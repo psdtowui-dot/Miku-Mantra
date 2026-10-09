@@ -113,7 +113,7 @@ export default function ProductClient({ initialProduct, slug }) {
         <div className="grid md:grid-cols-2 gap-10 lg:gap-16">
           <div>
             <div onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); setZoom({ on: true, x: ((e.clientX - r.left) / r.width) * 100, y: ((e.clientY - r.top) / r.height) * 100 }); }} onMouseLeave={() => setZoom(z => ({ ...z, on: false }))} className="relative aspect-square rounded-2xl overflow-hidden bg-[#FAF6EF] luxe-shadow group">
-              <img src={p.images[img]} alt={p.name} className="w-full h-full object-cover transition-transform duration-500" style={zoom.on ? { transformOrigin: `${zoom.x}% ${zoom.y}%`, transform: 'scale(1.8)' } : {}} />
+              <img src={(p.images && p.images[img] && p.images[img].trim()) || (p.images && p.images[0] && p.images[0].trim()) || '/logo.png'} alt={p.name} className="w-full h-full object-cover transition-transform duration-500" style={zoom.on ? { transformOrigin: `${zoom.x}% ${zoom.y}%`, transform: 'scale(1.8)' } : {}} />
               {isOutOfStock ? (
                 <span className="absolute top-3 left-3 sm:top-4 sm:left-4 bg-[#1A1A1A] text-white text-[9px] sm:text-[10px] tracking-wider sm:tracking-[0.25em] uppercase px-2 py-1 sm:px-3 sm:py-1.5 font-semibold z-10">OUT OF STOCK</span>
               ) : (
@@ -121,15 +121,15 @@ export default function ProductClient({ initialProduct, slug }) {
               )}
               {disc > 0 && <span className="absolute top-3 right-3 sm:top-4 sm:right-4 bg-[#9C6B30] text-white text-[9px] sm:text-[10px] tracking-wider uppercase px-2 py-1 sm:px-3 sm:py-1.5">-{disc}%</span>}
             </div>
-            {p.images && p.images.length > 1 && (
+            {p.images && p.images.filter(im => im && im.trim()).length > 1 && (
               <div className="mt-4 grid grid-cols-5 gap-2 sm:gap-3">
-                {p.images.map((im, i) => (
+                {p.images.filter(im => im && im.trim()).map((im, i) => (
                   <button
                     key={i}
                     onClick={() => setImg(i)}
                     className={`aspect-square rounded-lg overflow-hidden border-2 transition ${img === i ? 'border-[#9C6B30]' : 'border-transparent hover:border-[#E8E8E8]'}`}
                   >
-                    <img loading="lazy" src={im} alt="" className="w-full h-full object-cover" />
+                    <img loading="lazy" src={im.trim()} alt="" className="w-full h-full object-cover" />
                   </button>
                 ))}
               </div>

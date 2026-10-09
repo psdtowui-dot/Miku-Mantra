@@ -17,8 +17,8 @@ export default function ProductCard({ p, index=0 }){
     <motion.div initial={{opacity:0,y:20}} whileInView={{opacity:1,y:0}} viewport={{once:true}} transition={{duration:.5,delay:Math.min(index*.05,.4)}} className="group">
       <div className="relative overflow-hidden rounded-xl bg-[#FAF6EF] aspect-[4/5]">
         <Link href={`/product/${p.slug}`}>
-          <img loading="lazy" decoding="async" src={p.images[0]} alt={p.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"/>
-          {p.images[1] && <img loading="lazy" decoding="async" src={p.images[1]} alt="" className="absolute inset-0 w-full h-full object-cover opacity-0 group-hover:opacity-100 transition-opacity duration-500"/>}
+          <img loading="lazy" decoding="async" src={(p.images?.[0] && p.images[0].trim()) || '/logo.png'} alt={p.name || 'Jewellery'} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"/>
+          {p.images?.[1] && p.images[1].trim() && <img loading="lazy" decoding="async" src={p.images[1].trim()} alt="" className="absolute inset-0 w-full h-full object-cover opacity-0 group-hover:opacity-100 transition-opacity duration-500"/>}
         </Link>
         {isOutOfStock ? (
           <span className="absolute top-2 left-2 sm:top-3 sm:left-3 bg-[#1A1A1A] text-white text-[9px] sm:text-[10px] tracking-normal xs:tracking-wider sm:tracking-[0.2em] uppercase px-1.5 py-0.5 sm:px-2.5 sm:py-1 rounded-sm z-10 font-semibold shadow-xs">OUT OF STOCK</span>

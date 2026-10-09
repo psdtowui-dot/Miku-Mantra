@@ -816,8 +816,12 @@ export default function AccountPage() {
                         {/* Thumbnails preview */}
                         <div className="flex items-center gap-3 mt-4 pt-4 border-t border-[#F2ECE3] overflow-x-auto">
                           {o.items.slice(0, 5).map((it, i) => (
-                            <div key={i} className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-xl overflow-hidden border border-[#EAE3D6] shrink-0 bg-[#FAF8F5]">
-                              <img src={it.image} alt={it.name || 'Jewellery Item'} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                            <div key={i} className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-xl overflow-hidden border border-[#EAE3D6] shrink-0 bg-[#FAF8F5] flex items-center justify-center">
+                              {it.image && it.image.trim() ? (
+                                <img src={it.image.trim()} alt={it.name || 'Jewellery Item'} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                              ) : (
+                                <Package size={18} className="text-[#9C6B30]/40" />
+                              )}
                             </div>
                           ))}
                           {o.items.length > 5 && (
