@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
-import { useAuth } from '@/lib/use-auth';
+import { useAuth, isAdminUser } from '@/lib/use-auth';
 import {
   LayoutDashboard, Package, FolderTree, Sparkles, ShoppingCart, Users,
   Ticket, MessageSquare, Image as ImageIcon, LogOut, Loader2, Menu, X,
@@ -97,7 +97,7 @@ export default function AdminLayout({ children }) {
     if (!loading) {
       if (!user) {
         router.replace('/admin/login?redirect=' + encodeURIComponent(pathname));
-      } else if (user.role !== 'admin') {
+      } else if (!isAdminUser(user)) {
         router.replace('/admin/login?error=forbidden&redirect=' + encodeURIComponent(pathname));
       }
     }
@@ -166,7 +166,7 @@ export default function AdminLayout({ children }) {
     return <>{children}</>;
   }
 
-  if (!mounted || loading || !user || user.role !== 'admin') {
+  if (!mounted || loading || !user || !isAdminUser(user)) {
     return (
       <div className="h-screen flex items-center justify-center bg-[#0F0F10]">
         <Loader2 className="animate-spin text-[#D4AF37]" />

@@ -876,7 +876,14 @@ async function isAuthorizedAdminEmail(db, email) {
   const envAdmins = getEnvAdminEmails();
   if (envAdmins.includes(em)) return true;
   if (!db) return false;
-  const existingAdmin = await db.collection('users').findOne({ email: em, role: 'admin' });
+  const adminRoleKeys = ['SUPER_ADMIN', 'ADMIN', 'PRODUCT_MANAGER', 'ORDER_MANAGER', 'CUSTOMER_SUPPORT', 'FINANCE_MANAGER', 'MARKETING_MANAGER'];
+  const existingAdmin = await db.collection('users').findOne({
+    email: em,
+    $or: [
+      { role: 'admin' },
+      { roleKey: { $in: adminRoleKeys } }
+    ]
+  });
   return !!existingAdmin;
 }
 
@@ -943,13 +950,22 @@ async function getCurrentUser(db, request) {
     u.role = 'user';
   }
 
+  // Ensure any user holding an admin roleKey has role: 'admin'
+  const adminRoleKeys = ['SUPER_ADMIN', 'ADMIN', 'PRODUCT_MANAGER', 'ORDER_MANAGER', 'CUSTOMER_SUPPORT', 'FINANCE_MANAGER', 'MARKETING_MANAGER'];
+  if (u.roleKey && adminRoleKeys.includes(u.roleKey) && u.role !== 'admin') {
+    u.role = 'admin';
+    await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'admin' } });
+  }
+
   const { passwordHash, passwordSalt, _id, ...safe } = u;
   const roleKey = u.roleKey || (u.role === 'admin' ? 'SUPER_ADMIN' : 'USER');
   const status = u.status || 'active';
-  const permissions = u.role === 'admin' ? await resolveUserPermissions(db, { ...u, roleKey }) : [];
+  const isAdmin = u.role === 'admin' || (u.roleKey && adminRoleKeys.includes(u.roleKey));
+  const permissions = isAdmin ? await resolveUserPermissions(db, { ...u, role: 'admin', roleKey }) : [];
 
   const finalUser = {
     ...safe,
+    role: isAdmin ? 'admin' : (u.role || 'user'),
     roleKey,
     status,
     permissions,
@@ -961,7 +977,10 @@ async function getCurrentUser(db, request) {
 
 async function requireAdmin(db, request) {
   const u = await getCurrentUser(db, request);
-  if (!u || u.role !== 'admin') return null;
+  if (!u) return null;
+  const adminRoleKeys = ['SUPER_ADMIN', 'ADMIN', 'PRODUCT_MANAGER', 'ORDER_MANAGER', 'CUSTOMER_SUPPORT', 'FINANCE_MANAGER', 'MARKETING_MANAGER'];
+  const isAdmin = u.role === 'admin' || (u.roleKey && adminRoleKeys.includes(u.roleKey));
+  if (!isAdmin) return null;
   if (u.status === 'disabled') return null;
   return u;
 }
@@ -1044,15 +1063,20 @@ async function createAuditLog(db, { returnId, orderId, action, performedBy, oldS
 }
 
 
-async function handleRoute(request, { params }) {
-  const { path = [] } = await params
-  const route = `/${path.join('/')}`
-  const method = request.method
+async function handleRoute(request, context) {
   try {
-    const db = await connectToMongo()
-    const url = new URL(request.url); const q = url.searchParams
+    let path = [];
+    if (context && context.params) {
+      const resolved = await context.params;
+      path = resolved?.path || [];
+    }
+    const pathArr = Array.isArray(path) ? path : [path].filter(Boolean);
+    const route = `/${pathArr.join('/')}`;
+    const method = request.method;
+    const db = await connectToMongo();
+    const url = new URL(request.url); const q = url.searchParams;
 
-    if (route === '/' && method === 'GET') return ok({ ok: true, app: 'MikuMantra API' })
+    if (route === '/' && method === 'GET') return ok({ ok: true, app: 'MikuMantra API' });
 
     // ============ MOBILE APP CONFIGURATION ============
     if (route === '/app/config' && method === 'GET') {
@@ -1499,7 +1523,9 @@ async function handleRoute(request, { params }) {
 
     // ============ AUTH ============
     if (route === '/auth/login' && method === 'POST') {
-      const { email, password, requireAdmin } = await request.json()
+      let body;
+      try { body = await request.json(); } catch { return err('Invalid JSON request body.', 400); }
+      const { email, password, requireAdmin } = body || {};
       if (!email || !password) return err('Email and password are required.')
       const em = email.trim().toLowerCase()
       const envAdmins = getEnvAdminEmails()

@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Script from 'next/script';
-import { useAuth } from '@/lib/use-auth';
+import { useAuth, isAdminUser } from '@/lib/use-auth';
 import { toast } from 'sonner';
 import { Loader2, Mail, Lock, ShieldCheck, AlertCircle, ArrowLeft, KeyRound, CheckCircle2, Eye, EyeOff, X } from 'lucide-react';
 
@@ -22,7 +22,8 @@ function AdminLoginInner() {
   const { user, loading, login, loginWithGoogle, forgotPassword, resetPassword } = useAuth();
   const router = useRouter();
   const sp = useSearchParams();
-  const redirect = sp.get('redirect') || '/admin';
+  const rawRedirect = sp.get('redirect') || '/admin';
+  const redirect = (!rawRedirect || rawRedirect === '/admin/login' || rawRedirect.startsWith('/admin/login')) ? '/admin' : rawRedirect;
   const urlError = sp.get('error');
 
   const [form, setForm] = useState({ email: '', password: '' });
@@ -58,10 +59,10 @@ function AdminLoginInner() {
   }, []);
 
   useEffect(() => {
-    if (!loading && user && user.role === 'admin') {
+    if (!loading && user && isAdminUser(user) && !urlError) {
       router.replace(redirect);
     }
-  }, [loading, user, router, redirect]);
+  }, [loading, user, router, redirect, urlError]);
 
   useEffect(() => {
     if (urlError === 'forbidden') {
@@ -76,7 +77,7 @@ function AdminLoginInner() {
     try {
       // Strictly enforce requireAdmin verification against DB and .env
       const u = await loginWithGoogle(response.credential, { requireAdmin: true });
-      if (u && u.role === 'admin') {
+      if (u && isAdminUser(u)) {
         toast.success(`Welcome back, Administrator ${u.name || ''}!`);
         router.push(redirect);
       } else {
@@ -187,7 +188,7 @@ function AdminLoginInner() {
             if (resp?.access_token) {
               try {
                 const u = await loginWithGoogle({ accessToken: resp.access_token }, { requireAdmin: true });
-                if (u && u.role === 'admin') {
+                if (u && isAdminUser(u)) {
                   toast.success(`Welcome back, Administrator ${u.name || ''}!`);
                   router.push(redirect);
                 } else {
@@ -248,7 +249,7 @@ function AdminLoginInner() {
     setBusy(true);
     try {
       const u = await login(em, form.password, { requireAdmin: true });
-      if (u && u.role === 'admin') {
+      if (u && isAdminUser(u)) {
         toast.success(`Welcome back, ${u.name || 'Admin'}!`);
         router.push(redirect);
       } else {
