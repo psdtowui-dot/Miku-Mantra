@@ -4,8 +4,9 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { useWishlist } from '@/lib/cart-store';
-import { PRODUCTS } from '@/lib/products';
+import { PRODUCTS, formatINR } from '@/lib/products';
 import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound, RotateCcw, Clock, Star, Sparkles, CheckCircle2, Pencil, Truck } from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function AccountPage() {
   const { user, loading, logout, refresh, changePassword } = useAuth();
