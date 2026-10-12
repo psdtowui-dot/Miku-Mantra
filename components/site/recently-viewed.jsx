@@ -19,9 +19,9 @@ export default function RecentlyViewed({ exclude }){
   },[ids, exclude]);
   if(items.length===0) return null;
   return (
-    <section className="max-w-[1400px] mx-auto px-4 sm:px-6 md:px-8 pb-24">
+    <section className="max-w-[1400px] mx-auto px-4 sm:px-6 md:px-8 pb-18">
       <div className="text-center mb-10">
-        <div className="text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-2">From your history</div>
+        <div className="text-[20px] tracking-[0.35em] uppercase text-[#9C6B30] mb-2 pt-16">From your history</div>
         <h2 className="font-display text-3xl md:text-4xl font-light">Recently Viewed</h2>
         <div className="gold-line w-16 mx-auto my-4"/>
       </div>

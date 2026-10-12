@@ -65,7 +65,7 @@ export default function CategoryShowcaseSection({ initialCategories, initialSett
         {/* Section Header */}
         <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-12">
           {settings.eyebrow && (
-            <div className="text-[10px] sm:text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-2 sm:mb-3 font-medium">
+            <div className="text-[10px] sm:text-[20px] tracking-[0.35em] uppercase text-[#9C6B30] mb-2 sm:mb-3 font-medium">
               {settings.eyebrow}
             </div>
           )}
