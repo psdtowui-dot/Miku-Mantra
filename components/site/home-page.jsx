@@ -207,14 +207,31 @@ function SectionTitle({ eyebrow, title, sub }) {
 
 
 
-function CollectionsTabs({ collections, allProducts }) {
-  const [active, setActive] = useState(collections[0]?.slug || 'trending');
-  const list = allProducts.filter(p => p.collection === active).slice(0, 8);
+function CollectionsTabs({ collections = [], allProducts = [] }) {
+  const uniqueCollections = (collections || []).reduce((acc, c) => {
+    if (c && c.slug && !acc.some(existing => existing.slug === c.slug)) {
+      acc.push(c);
+    }
+    return acc;
+  }, []);
+
+  const [active, setActive] = useState(uniqueCollections[0]?.slug || 'trending');
+  const list = (allProducts || []).filter(p => p.collection === active).slice(0, 8);
   return (
     <section className="bg-[#FAF6EF]/40 py-12 sm:py-20">
       <div className="max-w-[1400px] mx-auto px-4 sm:px-6 md:px-8">
         <SectionTitle eyebrow="The MikuMantra Edit" title="Featured Collections" sub="Handpicked by our design house — refreshed every season." />
-        <div className="flex justify-center flex-wrap gap-1.5 sm:gap-2 mb-8 sm:mb-10">{collections.map(c => (<button key={c.slug} onClick={() => setActive(c.slug)} className={`px-3.5 py-2 sm:px-5 sm:py-2.5 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase rounded-full transition-all ${active === c.slug ? 'bg-[#1A1A1A] text-white' : 'bg-white text-[#1A1A1A] border border-[#E8E8E8] hover:border-[#9C6B30]'}`}>{c.name}</button>))}</div>
+        <div className="flex justify-center flex-wrap gap-1.5 sm:gap-2 mb-8 sm:mb-10">
+          {uniqueCollections.map((c, i) => (
+            <button
+              key={c.id || `${c.slug}-${i}`}
+              onClick={() => setActive(c.slug)}
+              className={`px-3.5 py-2 sm:px-5 sm:py-2.5 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase rounded-full transition-all ${active === c.slug ? 'bg-[#1A1A1A] text-white' : 'bg-white text-[#1A1A1A] border border-[#E8E8E8] hover:border-[#9C6B30]'}`}
+            >
+              {c.name}
+            </button>
+          ))}
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-6 md:gap-8">{list.map((p, i) => <ProductCard key={p.id} p={p} index={i} />)}</div>
         <div className="text-center mt-8 sm:mt-12"><Link href="/shop" className="inline-flex items-center gap-2 border-b border-[#9C6B30] text-[#9C6B30] pb-1 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase hover:gap-4 transition-all">View Entire Collection <ArrowRight size={14} /></Link></div>
       </div>
