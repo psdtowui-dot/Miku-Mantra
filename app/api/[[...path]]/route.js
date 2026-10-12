@@ -24,6 +24,7 @@ import {
   cancelCampaign, executeCampaignSend, getCampaignLogs, processUnsubscribeToken,
   getAnalytics
 } from '@/lib/newsletter-service'
+import { calculateCartPricing, validateCouponRules } from '@/lib/cart-pricing'
 
 
 
