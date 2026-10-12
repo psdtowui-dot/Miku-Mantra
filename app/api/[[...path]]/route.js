@@ -1305,7 +1305,7 @@ async function handleRoute(request, { params }) {
         settings
       });
     }
-    if (route === '/collections' && method === 'GET') { const c = cacheGet('cols'); if (c) return ok(c); const list = await db.collection('collections').find({}).toArray(); const r = { collections: list.map(clean) }; cacheSet('cols', r, 3000); return ok(r) }
+    if (route === '/collections' && method === 'GET') { const c = cacheGet('cols'); if (c) return ok(c); const list = await db.collection('collections').find({}).toArray(); const seen = new Set(); const uniqueCols = list.map(clean).filter(item => { if (!item?.slug || seen.has(item.slug)) return false; seen.add(item.slug); return true; }); const r = { collections: uniqueCols }; cacheSet('cols', r, 3000); return ok(r) }
     if (route === '/banners' && method === 'GET') {
       const c = cacheGet('bans');
       if (c) return ok(c);
