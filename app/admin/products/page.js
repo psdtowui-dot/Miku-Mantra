@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { formatINR, formatRating, getNormalizedSpecs, getNormalizedBenefits } from '@/lib/products';
+import { formatINR, formatRating, getNormalizedSpecs, getNormalizedBenefits, slugify } from '@/lib/products';
 import {
   Plus, Pencil, Trash2, X, Loader2, Search, Upload,
   Link as LinkIcon, Trash, Check, ArrowLeft, ArrowRight,
@@ -32,6 +32,7 @@ export default function AdminProducts() {
   const [activeTab, setActiveTab] = useState('basic');
   const [urlInput, setUrlInput] = useState('');
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [isSlugCustomized, setIsSlugCustomized] = useState(false);
 
   const [categories, setCategories] = useState([]);
   const [collections, setCollections] = useState([]);
@@ -81,6 +82,7 @@ export default function AdminProducts() {
 
   const openNew = () => {
     setEditing('new');
+    setIsSlugCustomized(false);
     setForm({
       ...EMPTY,
       category: categories[0]?.slug || 'gold',
@@ -92,6 +94,7 @@ export default function AdminProducts() {
 
   const openEdit = (p) => {
     setEditing(p.id);
+    setIsSlugCustomized(true);
     setForm({
       ...EMPTY,
       ...p,
@@ -105,15 +108,26 @@ export default function AdminProducts() {
   const handleNameChange = (nameVal) => {
     setForm(f => {
       const updates = { ...f, name: nameVal };
-      if (editing === 'new') {
-        updates.slug = nameVal
-          .toLowerCase()
-          .replace(/[^a-z0-9\s-]/g, '') // remove invalid chars
-          .replace(/\s+/g, '-')         // collapse whitespace and replace by -
-          .replace(/-+/g, '-');         // collapse dashes
+      // Only auto-suggest initial slug if creating a new product and the user has not manually customized/entered the slug
+      if (editing === 'new' && !isSlugCustomized) {
+        updates.slug = slugify(nameVal);
       }
       return updates;
     });
+  };
+
+  const handleSlugChange = (slugVal) => {
+    setIsSlugCustomized(true);
+    // Real-time URL-friendly input: lowercase, spaces to hyphens, only allowed characters
+    const formatted = slugVal.toLowerCase().replace(/[\s_]+/g, '-').replace(/[^a-z0-9-]/g, '');
+    setForm(f => ({ ...f, slug: formatted }));
+  };
+
+  const handleSlugBlur = () => {
+    setForm(f => ({
+      ...f,
+      slug: slugify(f.slug)
+    }));
   };
 
   const handleImageUpload = async (e) => {
@@ -199,7 +213,21 @@ export default function AdminProducts() {
   };
 
   const save = async () => {
-    if (!form.name || !form.slug || !form.price) return toast.error('Name, slug and price are required');
+    const trimmedName = (form.name || '').trim();
+    const cleanedSlug = slugify(form.slug);
+
+    if (!trimmedName) return toast.error('Product name is required');
+    if (!cleanedSlug) return toast.error('Product slug is required and must contain valid characters');
+    if (form.price === '' || form.price === undefined || form.price === null || isNaN(Number(form.price))) {
+      return toast.error('Valid product price is required');
+    }
+
+    // Check duplicate slug on client before sending
+    const duplicate = list.find(p => p.slug === cleanedSlug && p.id !== editing);
+    if (duplicate) {
+      return toast.error(`A product with slug "${cleanedSlug}" already exists (${duplicate.name}). Please use a unique slug.`);
+    }
+
     setSaving(true);
 
     // Clean specifications: ignore completely empty rows (both label and value are empty)
@@ -239,6 +267,8 @@ export default function AdminProducts() {
 
     const body = {
       ...form,
+      name: trimmedName,
+      slug: cleanedSlug,
       specifications: cleanedSpecs,
       productBenefits: cleanedBenefits,
       metal: metalVal || form.metal || '',
@@ -337,7 +367,11 @@ export default function AdminProducts() {
                         )}
                         <div className="min-w-0">
                           <div className="font-medium text-neutral-800 truncate max-w-[160px] sm:max-w-[220px]" title={p.name}>{p.name}</div>
-                          <div className="text-[11px] text-neutral-400 font-mono mt-0.5">{p.sku || 'No SKU'}</div>
+                          <div className="text-[11px] text-neutral-400 font-mono mt-0.5 flex items-center gap-1.5 flex-wrap">
+                            <span>{p.sku || 'No SKU'}</span>
+                            {p.slug && <span className="text-neutral-300">·</span>}
+                            {p.slug && <span className="text-[#9C6B30] truncate max-w-[140px]" title={`/${p.slug}`}>/{p.slug}</span>}
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -461,35 +495,61 @@ export default function AdminProducts() {
                     <div className="bg-white p-4 xs:p-6 rounded-xl border border-neutral-100 shadow-xs space-y-4">
                       <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-widest mb-2">General Details</h4>
 
-                      <div>
-                        <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold">Product Name</label>
-                        <input
-                          value={form.name}
-                          onChange={e => handleNameChange(e.target.value)}
-                          placeholder="E.g., MikuMantra Solitaire Studs"
-                          className="w-full mt-1.5 px-3 py-2.5 border border-neutral-200 rounded-lg text-sm bg-white focus:outline-none focus:border-[#9C6B30] focus:ring-1 focus:ring-[#9C6B30] transition-all"
-                        />
-                      </div>
-
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                          <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold">Slug (URL Route)</label>
+                          <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold block">
+                            Product Name *
+                          </label>
                           <input
-                            value={form.slug}
-                            onChange={e => setForm({ ...form, slug: e.target.value })}
-                            placeholder="mikumantra-solitaire-studs"
-                            className="w-full mt-1.5 px-3 py-2.5 border border-neutral-200 rounded-lg text-sm bg-white focus:outline-none focus:border-[#9C6B30] focus:ring-1 focus:ring-[#9C6B30] transition-all font-mono"
+                            required
+                            value={form.name}
+                            onChange={e => handleNameChange(e.target.value)}
+                            placeholder="E.g., Mayur Veda Chandbali Earrings"
+                            className="w-full mt-1.5 px-3 py-2.5 border border-neutral-200 rounded-lg text-sm bg-white focus:outline-none focus:border-[#9C6B30] focus:ring-1 focus:ring-[#9C6B30] transition-all"
                           />
                         </div>
+
                         <div>
-                          <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold">SKU Code</label>
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold block">
+                              Product Slug (URL Route) *
+                            </label>
+                            {form.name && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const gen = slugify(form.name);
+                                  setForm(f => ({ ...f, slug: gen }));
+                                  setIsSlugCustomized(true);
+                                }}
+                                className="text-[10px] text-[#9C6B30] hover:underline font-medium cursor-pointer"
+                              >
+                                Generate from name
+                              </button>
+                            )}
+                          </div>
                           <input
-                            value={form.sku}
-                            onChange={e => setForm({ ...form, sku: e.target.value })}
-                            placeholder="E.g., GLD-ER-009"
-                            className="w-full mt-1.5 px-3 py-2.5 border border-neutral-200 rounded-lg text-sm bg-white focus:outline-none focus:border-[#9C6B30] focus:ring-1 focus:ring-[#9C6B30] transition-all font-mono"
+                            required
+                            value={form.slug}
+                            onChange={e => handleSlugChange(e.target.value)}
+                            onBlur={handleSlugBlur}
+                            placeholder="e.g., mayur-veda-chandbali-earrings"
+                            className="w-full mt-1.5 px-3 py-2.5 border border-neutral-200 rounded-lg text-sm bg-white focus:outline-none focus:border-[#9C6B30] focus:ring-1 focus:ring-[#9C6B30] transition-all font-mono text-xs"
                           />
+                          <div className="mt-1 text-[11px] text-neutral-400 font-mono truncate">
+                            URL: /product/{form.slug || 'product-slug'}
+                          </div>
                         </div>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold">SKU Code</label>
+                        <input
+                          value={form.sku}
+                          onChange={e => setForm({ ...form, sku: e.target.value })}
+                          placeholder="E.g., GLD-ER-009"
+                          className="w-full mt-1.5 px-3 py-2.5 border border-neutral-200 rounded-lg text-sm bg-white focus:outline-none focus:border-[#9C6B30] focus:ring-1 focus:ring-[#9C6B30] transition-all font-mono"
+                        />
                       </div>
 
                       <div>
