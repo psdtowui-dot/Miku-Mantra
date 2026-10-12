@@ -2400,8 +2400,64 @@ async function handleRoute(request, { params }) {
 
       await db.collection('orders').insertOne(order);
 
-      // Invalidate / clear the user's cart in database
-      await db.collection('cart').deleteOne({ userId: u.id });
+      // Remove successfully ordered items from DB cart or delete cart if empty
+      const existingCart = await db.collection('cart').findOne({ userId: u.id });
+      if (existingCart && Array.isArray(existingCart.items) && existingCart.items.length > 0) {
+        const orderedMap = new Map();
+        for (const oi of validatedItems) {
+          const id = String(oi.id || oi.productId || oi.slug || '');
+          if (id) {
+            orderedMap.set(id, (orderedMap.get(id) || 0) + (parseInt(oi.qty) || 1));
+          }
+        }
+
+        const remainingCartItems = [];
+        for (const ci of existingCart.items) {
+          const id = String(ci.id || ci.productId || ci.slug || '');
+          const ordQty = orderedMap.get(id) || 0;
+          if (ordQty > 0) {
+            const curQty = parseInt(ci.qty) || 1;
+            if (curQty > ordQty) {
+              remainingCartItems.push({ ...ci, qty: curQty - ordQty });
+              orderedMap.set(id, 0);
+            } else {
+              orderedMap.set(id, ordQty - curQty);
+            }
+          } else {
+            remainingCartItems.push(ci);
+          }
+        }
+
+        if (remainingCartItems.length === 0) {
+          await db.collection('cart').deleteMany({ userId: u.id });
+        } else {
+          // Re-calculate cart pricing for remaining items in MongoDB
+          const remainingPricing = await calculateCartPricing({
+            db,
+            items: remainingCartItems,
+            couponCode: existingCart.coupon || existingCart.couponCode || null,
+            giftWrap: !!existingCart.giftWrap,
+            shippingConfig,
+            user: u
+          });
+          await db.collection('cart').updateOne(
+            { userId: u.id },
+            {
+              $set: {
+                items: remainingPricing.items,
+                subtotal: remainingPricing.subtotal,
+                discount: remainingPricing.discount,
+                total: remainingPricing.total,
+                coupon: remainingPricing.couponCode,
+                couponCode: remainingPricing.couponCode,
+                updatedAt: new Date()
+              }
+            }
+          );
+        }
+      } else {
+        await db.collection('cart').deleteMany({ userId: u.id });
+      }
 
       // Increment coupon usage count if applied
       if (validCouponDoc) {
