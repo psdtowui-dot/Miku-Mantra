@@ -2,7 +2,7 @@
 import { useEffect, useState, Suspense, useRef } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { useAuth } from '@/lib/use-auth';
+import { useAuth, authFetch } from '@/lib/use-auth';
 import { formatINR, formatRating } from '@/lib/products';
 import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft, Star, Edit3, Trash2, Upload, Camera, Image as ImageIcon, Building2, Smartphone, ShieldCheck } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -220,10 +220,9 @@ function OrderInner() {
     setModalErr('');
 
     try {
-      const r = await fetch(`/api/orders/${order.id}/cancel`, {
+      const r = await authFetch(`/api/orders/${order.id}/cancel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
           reason: selectedReason,
           note: customNote.trim()
@@ -237,6 +236,18 @@ function OrderInner() {
       } else {
         setModalErr(d.error || 'Unable to cancel the order right now. Please try again.');
         toast.error(d.error || 'Cancellation failed');
+        try {
+          const rRefresh = await authFetch(`/api/orders/${order.id}`);
+          if (rRefresh.ok) {
+            const dRefresh = await rRefresh.json();
+            if (dRefresh?.order) {
+              setOrder(dRefresh.order);
+              if (dRefresh.order.status === 'cancelled') {
+                setShowCancelModal(false);
+              }
+            }
+          }
+        } catch (_) {}
       }
     } catch (err) {
       console.error(err);
@@ -400,10 +411,9 @@ function OrderInner() {
     setReturnModalErr('');
 
     try {
-      const r = await fetch('/api/returns', {
+      const r = await authFetch('/api/returns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
           orderId: order.id,
           items: selectedList,
@@ -417,7 +427,7 @@ function OrderInner() {
         setReturnRequest(d.return);
         closeReturnModal();
         toast.success('Return request submitted successfully. We will review it shortly.');
-        const rOrder = await fetch(`/api/orders/${order.id}`, { credentials: 'include' });
+        const rOrder = await authFetch(`/api/orders/${order.id}`);
         const dOrder = await rOrder.json();
         if (rOrder.ok && dOrder.order) {
           setOrder(dOrder.order);
@@ -501,17 +511,16 @@ function OrderInner() {
             bankName: refundBankForm.bankName.trim()
           };
 
-      const r = await fetch(`/api/returns/${returnId}/refund-details`, {
+      const r = await authFetch(`/api/returns/${returnId}/refund-details`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify(payload)
       });
       const d = await r.json();
       if (r.ok && d.return) {
         setReturnRequest(d.return);
         toast.success(d.message || 'Refund details submitted successfully. Your return will now proceed.');
-        const rOrder = await fetch(`/api/orders/${order.id}`, { credentials: 'include' });
+        const rOrder = await authFetch(`/api/orders/${order.id}`);
         const dOrder = await rOrder.json();
         if (rOrder.ok && dOrder.order) {
           setOrder(dOrder.order);
@@ -622,10 +631,9 @@ function OrderInner() {
     try {
       if (existingReview) {
         // Update existing review
-        const r = await fetch(`/api/reviews/${existingReview.id}`, {
+        const r = await authFetch(`/api/reviews/${existingReview.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
           body: JSON.stringify({
             rating: reviewForm.rating,
             title: reviewForm.title.trim(),
@@ -644,10 +652,9 @@ function OrderInner() {
         }
       } else {
         // Create new review
-        const r = await fetch('/api/reviews', {
+        const r = await authFetch('/api/reviews', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
           body: JSON.stringify({
             productId: reviewTargetItem.id || reviewTargetItem.slug,
             productSlug: reviewTargetItem.slug,
@@ -683,9 +690,8 @@ function OrderInner() {
     if (!confirm('Are you sure you want to delete your review?')) return;
     setDeletingReview(true);
     try {
-      const r = await fetch(`/api/reviews/${existingReview.id}`, {
-        method: 'DELETE',
-        credentials: 'include'
+      const r = await authFetch(`/api/reviews/${existingReview.id}`, {
+        method: 'DELETE'
       });
       if (r.ok) {
         toast.success('Review deleted successfully');
@@ -715,7 +721,7 @@ function OrderInner() {
     if (!user) return;
     const load = async () => {
       try {
-        const r = await fetch(`/api/orders/${id}`, { credentials: 'include' });
+        const r = await authFetch(`/api/orders/${id}`);
         const d = await r.json();
         if (r.ok) {
           setOrder(d.order);

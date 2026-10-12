@@ -2489,13 +2489,26 @@ async function handleRoute(request, { params }) {
 
       return ok({ order: clean(order) });
     }
-    if (route === '/orders' && method === 'GET') { const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401); const list = await db.collection('orders').find({ userId: u.id }).sort({ placedAt: -1 }).toArray(); return ok({ orders: list.map(clean) }) }
+    if (route === '/orders' && method === 'GET') {
+      const u = await getCurrentUser(db, request);
+      if (!u) return err('Not authenticated', 401);
+      const list = await db.collection('orders').find({
+        $or: [
+          { userId: u.id },
+          ...(u.email ? [{ customerEmail: u.email }] : [])
+        ]
+      }).sort({ placedAt: -1 }).toArray();
+      return ok({ orders: list.map(clean) });
+    }
     if (route.startsWith('/orders/') && route.endsWith('/invoice') && method === 'GET') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const id = route.split('/')[2];
-      const order = await db.collection('orders').findOne({ id });
+      const order = await db.collection('orders').findOne({
+        $or: [{ id }, { orderNumber: id }]
+      });
       if (!order) return err('Order not found', 404);
-      if (order.userId !== u.id && u.role !== 'admin') return err('Unauthorized', 403);
+      const isOwner = order.userId === u.id || (u.email && order.customerEmail && order.customerEmail.toLowerCase() === u.email.toLowerCase());
+      if (!isOwner && u.role !== 'admin') return err('Unauthorized', 403);
 
       const footerDoc = await db.collection('footer').findOne({ id: 'default' });
       const siteSettingsDoc = await db.collection('site_settings').findOne({ id: 'default' });
@@ -2563,9 +2576,12 @@ async function handleRoute(request, { params }) {
     if (route.startsWith('/orders/') && route.endsWith('/shippingslip') && method === 'GET') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const id = route.split('/')[2];
-      const order = await db.collection('orders').findOne({ id });
+      const order = await db.collection('orders').findOne({
+        $or: [{ id }, { orderNumber: id }]
+      });
       if (!order) return err('Order not found', 404);
-      if (order.userId !== u.id && u.role !== 'admin') return err('Unauthorized', 403);
+      const isOwner = order.userId === u.id || (u.email && order.customerEmail && order.customerEmail.toLowerCase() === u.email.toLowerCase());
+      if (!isOwner && u.role !== 'admin') return err('Unauthorized', 403);
       if (order.status === 'cancelled') return err('Order is cancelled. Shipping slip cannot be generated for cancelled orders.', 400);
       const pdf = await buildShippingSlipPDF(order);
       return handleCORS(new NextResponse(pdf, { status: 200, headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="MikuMantra-ShippingSlip-${order.orderNumber}.pdf"` } }));
@@ -2595,10 +2611,17 @@ async function handleRoute(request, { params }) {
         return err('Please enter your reason for cancellation.', 400);
       }
 
-      const order = await db.collection('orders').findOne({ id });
+      const order = await db.collection('orders').findOne({
+        $or: [{ id }, { orderNumber: id }]
+      });
       if (!order) return err('Order not found', 404);
 
-      if (order.userId !== u.id) {
+      const isOwner = order.userId === u.id ||
+        (u.email && order.customerEmail && order.customerEmail.toLowerCase() === u.email.toLowerCase()) ||
+        (u.email && order.customer?.email && order.customer.email.toLowerCase() === u.email.toLowerCase()) ||
+        (u.email && order.address?.email && order.address.email.toLowerCase() === u.email.toLowerCase());
+
+      if (!isOwner && u.role !== 'admin') {
         return err('Unauthorized access: You can only cancel your own orders.', 403);
       }
 
@@ -2617,6 +2640,8 @@ async function handleRoute(request, { params }) {
 
       const now = new Date();
       const cancellationReasonStr = reason === 'Other' ? (note ? `Other: ${note}` : 'Other') : reason;
+      const isActorAdmin = u.role === 'admin';
+      const actor = isActorAdmin ? 'admin' : 'customer';
 
       const isPaid = order.paymentStatus === 'paid' || (order.payment !== 'cod' && order.paymentStatus !== 'pending');
       const refundDoc = isPaid ? {
@@ -2630,16 +2655,16 @@ async function handleRoute(request, { params }) {
 
       const updateResult = await db.collection('orders').updateOne(
         {
-          id,
+          _id: order._id,
           status: { $in: CANCELLABLE_STATUSES }
         },
         {
           $set: {
             status: 'cancelled',
             cancelledAt: now,
-            cancelledBy: 'customer',
+            cancelledBy: actor,
             cancelledByUserId: u.id,
-            cancelledByRole: 'customer',
+            cancelledByRole: actor,
             cancellationReason: reason,
             cancellationNote: note,
             ...refundDoc
@@ -2648,7 +2673,7 @@ async function handleRoute(request, { params }) {
             statusHistory: {
               status: 'cancelled',
               at: now,
-              note: `Cancelled by customer: ${cancellationReasonStr}`
+              note: `Cancelled by ${isActorAdmin ? 'MikuMantra' : 'customer'}: ${cancellationReasonStr}`
             }
           }
         }
@@ -2670,10 +2695,34 @@ async function handleRoute(request, { params }) {
         cacheBust('products:');
       }
 
-      const updatedOrder = await db.collection('orders').findOne({ id });
+      if (isActorAdmin) {
+        try {
+          await logAdminActivity(db, {
+            admin: u,
+            action: 'ORDER_CANCELLED',
+            module: 'Orders',
+            targetId: order.id,
+            targetName: `Order #${order.orderNumber}`,
+            metadata: {
+              cancelledBy: 'admin',
+              reason,
+              note: note || null
+            },
+            request
+          });
+        } catch (logErr) {
+          console.error('Failed to log admin cancellation activity:', logErr);
+        }
+      }
 
-      // Trigger WhatsApp & SMS notification for order cancellation
-      await sendOrderCancelledNotification({ order: updatedOrder, user: u, db });
+      const updatedOrder = await db.collection('orders').findOne({ _id: order._id });
+
+      // Trigger WhatsApp & SMS notification for order cancellation safely
+      try {
+        await sendOrderCancelledNotification({ order: updatedOrder, user: u, db });
+      } catch (notifErr) {
+        console.warn('Failed to send order cancellation notification:', notifErr.message);
+      }
 
       return ok({
         message: 'Order cancelled successfully.',
@@ -2683,11 +2732,17 @@ async function handleRoute(request, { params }) {
     if (route.startsWith('/orders/') && method === 'GET') {
       const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
       const id = route.split('/')[2];
-      const o = await db.collection('orders').findOne({ id });
+      const o = await db.collection('orders').findOne({
+        $or: [{ id }, { orderNumber: id }]
+      });
       if (!o) return err('Order not found', 404);
-      if (o.userId !== u.id && u.role !== 'admin') return err('Unauthorized', 403);
+      const isOwner = o.userId === u.id ||
+        (u.email && o.customerEmail && o.customerEmail.toLowerCase() === u.email.toLowerCase()) ||
+        (u.email && o.customer?.email && o.customer.email.toLowerCase() === u.email.toLowerCase()) ||
+        (u.email && o.address?.email && o.address.email.toLowerCase() === u.email.toLowerCase());
+      if (!isOwner && u.role !== 'admin') return err('Unauthorized', 403);
       const returnDoc = await db.collection('returns').findOne({
-        orderId: id,
+        orderId: o.id,
         returnStatus: { $in: ['REQUESTED', 'RETURN_REQUESTED', 'APPROVED', 'RETURN_APPROVED', 'REFUND_DETAILS_SUBMITTED', 'PROCESSING', 'REFUND_INITIATED', 'REFUNDED', 'REJECTED'] }
       });
       let clientReturnDoc = returnDoc ? clean(returnDoc) : null;
@@ -2695,7 +2750,7 @@ async function handleRoute(request, { params }) {
         const { accountNumber, ...safeRefundDetails } = clientReturnDoc.refundDetails;
         clientReturnDoc.refundDetails = safeRefundDetails;
       }
-      const orderReviews = await db.collection('reviews').find({ orderId: id }).toArray();
+      const orderReviews = await db.collection('reviews').find({ orderId: o.id }).toArray();
       const siteDoc = await db.collection('site_settings').findOne({ id: 'default' });
       const customerReviewsEnabled = siteDoc?.customerReviewsEnabled ?? true;
       return ok({
