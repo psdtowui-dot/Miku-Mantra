@@ -1,0 +1,816 @@
+'use client';
+import { Suspense, useMemo, useState, useEffect } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { motion, AnimatePresence } from 'framer-motion';
+import ProductCard from '@/components/site/product-card';
+import CompareBar from '@/components/site/compare-bar';
+import { PRODUCTS as SEED, getNormalizedSpecs } from '@/lib/products';
+import { SlidersHorizontal, X, Loader2, ChevronDown } from 'lucide-react';
+
+function normalizeAlphaNum(str) {
+  if (!str) return '';
+  return String(str).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function normalizeTokens(str) {
+  if (!str) return [];
+  return String(str)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+function isOptionSelected(selectedValue, optValue, optName) {
+  if (!selectedValue || (!optValue && !optName)) return false;
+  const s1 = String(selectedValue).trim().toLowerCase();
+  const norm1 = s1.replace(/[^a-z0-9]/g, '');
+  if (!norm1) return false;
+
+  const targets = [optValue, optName].filter(Boolean);
+  for (const t of targets) {
+    const s2 = String(t).trim().toLowerCase();
+    if (s1 === s2) return true;
+    const norm2 = s2.replace(/[^a-z0-9]/g, '');
+    if (norm1 === norm2) return true;
+    // Singular / plural equality (e.g. bestseller / bestsellers, arrival / arrivals)
+    if (norm1 + 's' === norm2 || norm2 + 's' === norm1) return true;
+  }
+
+  return false;
+}
+
+function matchesFilterValue(product, key, selectedVal, group) {
+  if (!selectedVal) return true;
+  const selValLower = String(selectedVal).trim().toLowerCase();
+  const normSel = normalizeAlphaNum(selectedVal);
+  if (!normSel) return true;
+
+  // Search query matching across all product metadata
+  if (key === 'search' || key === 'q') {
+    const textPool = [
+      product.name,
+      product.category,
+      product.subcategory,
+      product.collection,
+      product.metal,
+      product.stone,
+      product.sku,
+      product.brand,
+      product.badge,
+      product.description,
+      ...(Array.isArray(product.tags) ? product.tags : [])
+    ].filter(Boolean).map(v => String(v).toLowerCase()).join(' ');
+
+    const textPoolNorm = normalizeAlphaNum(textPool);
+    if (textPoolNorm.includes(normSel) || textPool.includes(selValLower)) return true;
+
+    const selTokens = normalizeTokens(selValLower);
+    if (selTokens.length > 0 && selTokens.every(st => textPool.includes(st))) return true;
+
+    return false;
+  }
+
+  // 1. None / Empty query matching
+  const isNoneQuery = normSel === 'none' || normSel === 'na' || normSel === 'no';
+
+  // 2. Gather candidate values from product for this key
+  const candidateValues = [];
+
+  if (product[key] !== undefined && product[key] !== null) {
+    candidateValues.push(product[key]);
+  }
+
+  // Related / alternate product properties
+  if (key === 'collection' && product.badge) candidateValues.push(product.badge);
+  if (key === 'category' && product.subcategory) candidateValues.push(product.subcategory);
+  if (key === 'metal' && product.metalComposition) candidateValues.push(product.metalComposition);
+  if (key === 'stone' && product.stoneDetails) candidateValues.push(product.stoneDetails);
+  if (key === 'purity' && product.goldPurity) candidateValues.push(product.goldPurity);
+  if (key === 'size' && product.productSize) candidateValues.push(product.productSize);
+  if (key === 'gender' && !product.gender && product.category) candidateValues.push(product.category);
+
+  // Dynamic specifications array
+  const specs = getNormalizedSpecs(product);
+  const keyNorm = normalizeAlphaNum(key);
+  const groupNameNorm = normalizeAlphaNum(group?.name || '');
+  for (const s of specs) {
+    const specKey = normalizeAlphaNum(s.id || '');
+    const specLabel = normalizeAlphaNum(s.label || '');
+    if (
+      (keyNorm && (specKey === keyNorm || specLabel === keyNorm)) ||
+      (groupNameNorm && (specKey === groupNameNorm || specLabel === groupNameNorm))
+    ) {
+      if (s.value !== undefined && s.value !== null) {
+        candidateValues.push(s.value);
+      }
+    }
+  }
+
+  // Handle 'None' check
+  if (isNoneQuery) {
+    const combinedStr = candidateValues
+      .flat()
+      .map(v => String(v || '').trim().toLowerCase())
+      .filter(Boolean)
+      .join(' ');
+    return !combinedStr || combinedStr === '—' || combinedStr === '-' || combinedStr === 'none' || combinedStr === 'n/a' || combinedStr === 'na';
+  }
+
+  // Gender strict equality (prevents 'women' matching 'men')
+  if (key === 'gender') {
+    for (const val of candidateValues.flat()) {
+      if (!val) continue;
+      const valNorm = normalizeAlphaNum(val);
+      if (valNorm === normSel) return true;
+      if (valNorm === 'unisex' || valNorm === 'both' || valNorm === 'all') return true;
+    }
+    return false;
+  }
+
+  // All other attributes: check candidate values
+  const flattened = candidateValues.flat().filter(v => v !== undefined && v !== null && v !== '');
+
+  for (const rawVal of flattened) {
+    const candStr = String(rawVal).trim().toLowerCase();
+    const candNorm = normalizeAlphaNum(candStr);
+    if (!candNorm) continue;
+
+    // Direct equality
+    if (candNorm === normSel || candStr === selValLower) return true;
+
+    // Singular / plural equality
+    if (candNorm + 's' === normSel || normSel + 's' === candNorm) return true;
+
+    // Substring containment for multi-word attributes
+    if (candNorm.includes(normSel) || (normSel.length >= 4 && normSel.includes(candNorm))) return true;
+
+    // Word token matching
+    const candTokens = normalizeTokens(candStr);
+    const selTokens = normalizeTokens(selValLower);
+    if (selTokens.length > 0 && selTokens.every(st => candTokens.includes(st))) return true;
+    if (candTokens.includes(normSel)) return true;
+  }
+
+  // Fallback check against product tags
+  if (product.tags && Array.isArray(product.tags)) {
+    if (product.tags.some(t => {
+      const tNorm = normalizeAlphaNum(t);
+      return tNorm === normSel || String(t).trim().toLowerCase() === selValLower;
+    })) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function ShopInner() {
+  const sp = useSearchParams();
+  const router = useRouter();
+
+  const [all, setAll] = useState(SEED);
+  const [loading, setLoading] = useState(false);
+
+  // Dynamic Product Filter Groups fetched from Backend API
+  const [filterGroups, setFilterGroups] = useState([]);
+  const [filterLoading, setFilterLoading] = useState(true);
+  const [hasLoadedFilters, setHasLoadedFilters] = useState(false);
+
+  // Price Range & Sort state
+  const [range, setRange] = useState([0, 1000000]);
+  const [sort, setSort] = useState('newest');
+  const [sortOpen, setSortOpen] = useState(false);
+  const [openFilters, setOpenFilters] = useState(false);
+
+  useEffect(() => {
+    if (openFilters) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [openFilters]);
+
+  // Load products and dynamic filter config from backend
+  useEffect(() => {
+    (async () => {
+      try {
+        const [pRes, filtersRes] = await Promise.all([
+          fetch('/api/products', { cache: 'no-store' }),
+          fetch('/api/product-filters', { cache: 'no-store' })
+        ]);
+        if (pRes.ok) {
+          const d = await pRes.json();
+          if (d.products?.length) setAll(d.products);
+        }
+        if (filtersRes.ok) {
+          const d = await filtersRes.json();
+          if (d.groups?.length) {
+            setFilterGroups(d.groups);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load shop data:', err);
+      } finally {
+        setLoading(false);
+        setFilterLoading(false);
+        setHasLoadedFilters(true);
+      }
+    })();
+  }, []);
+
+  // Derive dynamic filter groups from products if backend filter groups are empty
+  const activeFilterGroups = useMemo(() => {
+    if (filterGroups && filterGroups.length > 0) {
+      return filterGroups;
+    }
+    if (!hasLoadedFilters || all.length === 0) {
+      return [];
+    }
+    const derived = [];
+
+    // Category
+    const cats = [...new Set(all.map(p => p.category).filter(Boolean))];
+    if (cats.length > 0) {
+      derived.push({
+        id: 'derived-category',
+        name: 'Category',
+        key: 'category',
+        type: 'options',
+        enabled: true,
+        order: 0,
+        options: cats.map((c, i) => ({
+          id: `opt-cat-${c}`,
+          name: c.replace(/[-_]/g, ' '),
+          value: c,
+          enabled: true,
+          order: i
+        }))
+      });
+    }
+
+    // Gender
+    const genders = [...new Set(all.map(p => p.gender).filter(Boolean).filter(g => g !== 'unisex'))];
+    if (genders.length > 0) {
+      derived.push({
+        id: 'derived-gender',
+        name: 'Gender',
+        key: 'gender',
+        type: 'options',
+        enabled: true,
+        order: 1,
+        options: genders.map((g, i) => ({
+          id: `opt-gen-${g}`,
+          name: g.replace(/[-_]/g, ' '),
+          value: g,
+          enabled: true,
+          order: i
+        }))
+      });
+    }
+
+    // Collection
+    const cols = [...new Set(all.map(p => p.collection).filter(Boolean))];
+    if (cols.length > 0) {
+      derived.push({
+        id: 'derived-collection',
+        name: 'Collection',
+        key: 'collection',
+        type: 'options',
+        enabled: true,
+        order: 2,
+        options: cols.map((c, i) => ({
+          id: `opt-col-${c}`,
+          name: c.replace(/[-_]/g, ' '),
+          value: c,
+          enabled: true,
+          order: i
+        }))
+      });
+    }
+
+    // Price
+    const prices = all.map(p => p.price || 0).filter(p => p > 0);
+    const maxP = prices.length ? Math.max(...prices) : 1000000;
+    derived.push({
+      id: 'derived-price',
+      name: 'Price',
+      key: 'price',
+      type: 'price',
+      enabled: true,
+      order: 3,
+      priceConfig: { min: 0, max: Math.ceil(maxP / 10000) * 10000, step: 5000 },
+      options: []
+    });
+
+    return derived;
+  }, [filterGroups, hasLoadedFilters, all]);
+
+  // Sync URL search params with dynamic Range and Sort states
+  useEffect(() => {
+    const sortParam = sp.get('sort');
+    if (sortParam && ['newest', 'rating', 'price-asc', 'price-desc', 'discount'].includes(sortParam)) {
+      setSort(sortParam);
+    }
+
+    const minParam = sp.get('min');
+    const maxParam = sp.get('max');
+    const priceParam = sp.get('price');
+
+    const pg = (activeFilterGroups || []).find(g => (g.type === 'price' || g.type === 'range' || g.key === 'price') && g.enabled !== false);
+    const minBound = pg?.priceConfig?.min != null ? Number(pg.priceConfig.min) : (pg?.min != null ? Number(pg.min) : 0);
+    const maxBound = pg?.priceConfig?.max != null ? Number(pg.priceConfig.max) : (pg?.max != null ? Number(pg.max) : (all.length ? Math.max(...all.map(p => p.price || 0)) : 1000000));
+
+    if (minParam != null || maxParam != null) {
+      const minVal = minParam != null ? Number(minParam) : minBound;
+      const maxVal = maxParam != null ? Number(maxParam) : maxBound;
+      if (!isNaN(minVal) && !isNaN(maxVal)) {
+        setRange([minVal, maxVal]);
+        return;
+      }
+    }
+
+    if (priceParam) {
+      if (priceParam.includes('-')) {
+        const parts = priceParam.split('-').map(Number);
+        if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+          setRange([parts[0], parts[1]]);
+          return;
+        }
+      } else {
+        const num = Number(priceParam);
+        if (!isNaN(num)) {
+          setRange([minBound, num]);
+          return;
+        }
+      }
+    }
+
+    // Default range when no price query param is present
+    setRange([minBound, maxBound]);
+  }, [sp, activeFilterGroups, all]);
+
+  // Set URL query parameters helper
+  const setParam = (key, val) => {
+    const q = new URLSearchParams(sp.toString());
+    if (val) {
+      q.set(key, val);
+    } else {
+      q.delete(key);
+      if (key === 'price') {
+        q.delete('min');
+        q.delete('max');
+      }
+    }
+    router.push(`/shop?${q.toString()}`, { scroll: false });
+  };
+
+  // Clear All Filters helper
+  const clearAll = () => {
+    router.push('/shop', { scroll: false });
+    const pg = (activeFilterGroups || []).find(g => (g.type === 'price' || g.type === 'range' || g.key === 'price') && g.enabled !== false);
+    const minB = pg?.priceConfig?.min != null ? Number(pg.priceConfig.min) : (pg?.min != null ? Number(pg.min) : 0);
+    const maxB = pg?.priceConfig?.max != null ? Number(pg.priceConfig.max) : (pg?.max != null ? Number(pg.max) : (all.length ? Math.max(...all.map(p => p.price || 0)) : 1000000));
+    setRange([minB, maxB]);
+  };
+
+  // Fully dynamic product filtering engine
+  const list = useMemo(() => {
+    let result = [...all];
+
+    const enabledGroups = (activeFilterGroups || []).filter(g => g.enabled !== false);
+    const disabledKeys = new Set(
+      (activeFilterGroups || [])
+        .filter(g => g.enabled === false)
+        .map(g => g.key)
+    );
+    const handledKeys = new Set();
+
+    // 1. Apply configured filter groups
+    if (enabledGroups.length > 0) {
+      for (const group of enabledGroups) {
+        const key = group.key;
+        handledKeys.add(key);
+
+        // Price Filter Handling
+        if (group.type === 'price' || group.type === 'range' || key === 'price') {
+          result = result.filter(p => p.price >= range[0] && p.price <= range[1]);
+          continue;
+        }
+
+        // Standard Options Filter Handling
+        const selectedVal = sp.get(key);
+        if (selectedVal) {
+          result = result.filter(p => matchesFilterValue(p, key, selectedVal, group));
+        }
+      }
+    }
+
+    // 2. Generic fallback for any other query param in the URL (e.g. from links or external URLs)
+    const reservedParams = new Set(['sort', 'page', 'min', 'max', 'price']);
+    for (const [paramKey, paramVal] of sp.entries()) {
+      if (reservedParams.has(paramKey) || handledKeys.has(paramKey) || disabledKeys.has(paramKey)) {
+        continue;
+      }
+      if (paramVal) {
+        result = result.filter(p => matchesFilterValue(p, paramKey, paramVal));
+      }
+    }
+
+    // Sort order
+    if (sort === 'price-asc') result.sort((a, b) => a.price - b.price);
+    else if (sort === 'price-desc') result.sort((a, b) => b.price - a.price);
+    else if (sort === 'rating') {
+      result.sort((a, b) => {
+        const rDiff = (b.rating || 0) - (a.rating || 0);
+        if (rDiff !== 0) return rDiff;
+        return (b.reviews || 0) - (a.reviews || 0);
+      });
+    } else if (sort === 'discount') {
+      result.sort((a, b) => {
+        const discA = a.mrp > a.price && a.mrp > 0 ? ((a.mrp - a.price) / a.mrp) * 100 : 0;
+        const discB = b.mrp > b.price && b.mrp > 0 ? ((b.mrp - b.price) / b.mrp) * 100 : 0;
+        if (discB !== discA) return discB - discA;
+        const saveA = a.mrp > a.price ? a.mrp - a.price : 0;
+        const saveB = b.mrp > b.price ? b.mrp - b.price : 0;
+        return saveB - saveA;
+      });
+    } else {
+      // Default: newest
+      result.sort((a, b) => {
+        const aNew = (a.collection === 'new-arrival' || (a.badge || '').toLowerCase().includes('new')) ? 1 : 0;
+        const bNew = (b.collection === 'new-arrival' || (b.badge || '').toLowerCase().includes('new')) ? 1 : 0;
+        return bNew - aNew;
+      });
+    }
+
+    return result;
+  }, [all, activeFilterGroups, sp, range, sort]);
+
+  // Dynamic Page Title computation
+  const title = useMemo(() => {
+    const sQuery = sp.get('search') || sp.get('q');
+    if (sQuery) {
+      return `Search: "${sQuery}"`;
+    }
+
+    for (const g of activeFilterGroups || []) {
+      if (g.enabled === false) continue;
+      const val = sp.get(g.key);
+      if (val) {
+        const matchedOpt = (g.options || []).find(o => isOptionSelected(val, o.value, o.name));
+        const displayName = matchedOpt?.name || val.replace(/[-_]/g, ' ');
+
+        if (g.key === 'collection') {
+          return displayName;
+        }
+        if (g.key === 'gender') {
+          return `${displayName}'s Jewellery`;
+        }
+        if (g.key === 'category') {
+          return `${displayName} Jewellery`;
+        }
+        return `${displayName} ${g.name || 'Jewellery'}`;
+      }
+    }
+
+    for (const [key, val] of sp.entries()) {
+      if (['sort', 'page', 'min', 'max', 'price'].includes(key)) continue;
+      if (val) {
+        return `${val.replace(/[-_]/g, ' ')} Jewellery`;
+      }
+    }
+
+    return 'All Jewellery';
+  }, [activeFilterGroups, sp]);
+
+  // Filters UI Component - 100% Dynamic rendering based on backend state
+  const Filters = ({ animate = false }) => {
+    const listVariants = {
+      hidden: { opacity: 0 },
+      show: {
+        opacity: 1,
+        transition: { staggerChildren: 0.05, delayChildren: 0.15 }
+      }
+    };
+
+    const itemVariants = {
+      hidden: { opacity: 0, x: -16 },
+      show: { opacity: 1, x: 0, transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] } }
+    };
+
+    // Filter groups to render (sorted by order, enabled === true)
+    const renderGroups = (activeFilterGroups || [])
+      .filter(g => g.enabled !== false)
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+    const content = (
+      <>
+        <div className="flex items-center justify-between mb-6">
+          <div className="font-display text-2xl text-[#1A1A1A]">Filter</div>
+          <button onClick={clearAll} className="text-[11px] tracking-widest uppercase text-[#9C6B30] hover:underline cursor-pointer font-medium">
+            Clear all
+          </button>
+        </div>
+
+        {filterLoading || (!hasLoadedFilters && renderGroups.length === 0) ? (
+          <div className="py-8 space-y-4">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="border-t border-[#E8E8E8] py-4 space-y-2 animate-pulse">
+                <div className="h-3 bg-neutral-200 rounded w-20" />
+                <div className="h-4 bg-neutral-100 rounded w-32" />
+                <div className="h-4 bg-neutral-100 rounded w-24" />
+              </div>
+            ))}
+          </div>
+        ) : renderGroups.length === 0 ? (
+          <div className="text-xs text-neutral-400 py-6">No filter groups available</div>
+        ) : (
+          renderGroups.map(group => {
+            // Price / Range Filter Section
+            if (group.type === 'price' || group.type === 'range' || group.key === 'price') {
+              const minVal = group.priceConfig?.min != null ? Number(group.priceConfig.min) : (group.min != null ? Number(group.min) : 0);
+              const maxVal = group.priceConfig?.max != null ? Number(group.priceConfig.max) : (group.max != null ? Number(group.max) : (all.length ? Math.max(...all.map(p => p.price || 0)) : 1000000));
+              const stepVal = group.priceConfig?.step != null ? Number(group.priceConfig.step) : (group.step != null ? Number(group.step) : 5000);
+              const priceOptions = (group.options || []).filter(o => o.enabled !== false);
+              const Element = animate ? motion.div : 'div';
+              const props = animate ? { variants: itemVariants } : {};
+
+              const currentMax = Math.min(Math.max(range[1], minVal), maxVal);
+
+              return (
+                <Element key={group.id || group.key} {...props} className="border-t border-[#E8E8E8] py-5">
+                  <div className="text-[11px] tracking-[0.3em] uppercase text-[#1A1A1A] mb-3 font-semibold">
+                    {group.name}
+                  </div>
+                  <div className="text-xs text-neutral-500 font-mono flex justify-between items-center mb-1">
+                    <span>₹{range[0].toLocaleString('en-IN')}</span>
+                    <span>₹{currentMax.toLocaleString('en-IN')}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={minVal}
+                    max={maxVal}
+                    step={stepVal}
+                    value={currentMax}
+                    onChange={e => {
+                      const newMax = +e.target.value;
+                      setRange([range[0], newMax]);
+                    }}
+                    className="w-full mt-2 accent-[#9C6B30] cursor-pointer"
+                  />
+                  {priceOptions.length > 0 && (
+                    <ul className="mt-3 space-y-1.5 pt-2 border-t border-neutral-100">
+                      {priceOptions.map(opt => {
+                        const selectedVal = sp.get(group.key);
+                        const isSelected = isOptionSelected(selectedVal, opt.value, opt.name);
+                        return (
+                          <li key={opt.id || opt.value}>
+                            <button
+                              onClick={() => {
+                                const newSel = isSelected ? '' : opt.value;
+                                setParam(group.key, newSel);
+                                if (newSel && newSel.includes('-')) {
+                                  const parts = newSel.split('-').map(Number);
+                                  if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+                                    setRange([parts[0], parts[1]]);
+                                  }
+                                }
+                              }}
+                              className={`text-xs capitalize transition-colors text-left flex items-center justify-between w-full ${isSelected ? 'text-[#9C6B30] font-semibold' : 'text-neutral-600 hover:text-[#9C6B30]'
+                                }`}
+                            >
+                              <span>{opt.name || opt.value}</span>
+                              {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-[#9C6B30]" />}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </Element>
+              );
+            }
+
+            // Standard Options Filter Section
+            const activeOptions = (group.options || [])
+              .filter(o => o.enabled !== false)
+              .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+            if (activeOptions.length === 0) return null;
+
+            const selectedValue = sp.get(group.key);
+            const Element = animate ? motion.div : 'div';
+            const props = animate ? { variants: itemVariants } : {};
+
+            return (
+              <Element key={group.id || group.key} {...props} className="border-t border-[#E8E8E8] py-5">
+                <div className="text-[11px] tracking-[0.3em] uppercase text-[#1A1A1A] mb-3 font-semibold">
+                  {group.name}
+                </div>
+                <ul className="space-y-2">
+                  {activeOptions.map(opt => {
+                    const isSelected = isOptionSelected(selectedValue, opt.value, opt.name);
+                    return (
+                      <li key={opt.id || opt.value}>
+                        <button
+                          onClick={() => setParam(group.key, isSelected ? '' : opt.value)}
+                          className={`text-sm capitalize transition-colors text-left flex items-center justify-between w-full group ${isSelected ? 'text-[#9C6B30] font-semibold' : 'text-neutral-600 hover:text-[#9C6B30]'
+                            }`}
+                        >
+                          <span>{opt.name || opt.value.replace(/[-_]/g, ' ')}</span>
+                          {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-[#9C6B30]" />}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </Element>
+            );
+          })
+        )}
+      </>
+    );
+
+    if (animate) {
+      return (
+        <motion.div variants={listVariants} initial="hidden" animate="show" className="w-full pb-20">
+          {content}
+        </motion.div>
+      );
+    }
+
+    return (
+      <aside className="w-full md:w-64 shrink-0 pb-20">
+        {content}
+      </aside>
+    );
+  };
+
+  return (
+    <main className="bg-white min-h-screen">
+      {/* Header Banner */}
+      <div className="bg-[#FAF6EF]/60 py-8 sm:py-12 border-b border-[#E8E8E8]">
+        <div className="max-w-[1400px] mx-auto px-4 md:px-8 text-center">
+          <div className="text-[10px] sm:text-[11px] tracking-[0.35em] uppercase text-[#9C6B30] mb-2">MikuMantra Collections</div>
+          <h1 className="font-display text-2xl xs:text-3xl sm:text-4xl md:text-5xl capitalize font-light text-[#1A1A1A] break-words">{title}</h1>
+          <div className="gold-line w-16 mx-auto my-4" />
+          <div className="text-xs sm:text-sm text-neutral-500">{loading ? 'Loading…' : `${list.length} pieces`}</div>
+        </div>
+      </div>
+
+      {/* Main Listing Layout */}
+      <div className="max-w-[1400px] mx-auto px-4 md:px-8 py-6 sm:py-10">
+        <div className="flex flex-col lg:flex-row gap-6 lg:gap-10 items-start">
+          {/* Desktop Filters Sidebar */}
+          <div className="hidden lg:block sticky top-28 overflow-y-auto refine-scroll-container shrink-0 pr-2">
+            <Filters />
+          </div>
+
+          {/* Mobile Filters Drawer */}
+          <AnimatePresence>
+            {openFilters && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                className="fixed inset-0 bg-black/25 backdrop-blur-xs z-50 lg:hidden"
+                onClick={() => setOpenFilters(false)}
+              >
+                <motion.div
+                  initial={{ x: '-100%' }}
+                  animate={{ x: 0 }}
+                  exit={{ x: '-100%' }}
+                  transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                  className="absolute left-0 top-0 bottom-0 w-[85vw] max-w-[320px] bg-white p-4 xs:p-6 overflow-y-auto z-50 shadow-2xl"
+                  onClick={e => e.stopPropagation()}
+                >
+                  <div className="flex justify-end mb-2">
+                    <button
+                      onClick={() => setOpenFilters(false)}
+                      className="p-1 hover:text-[#9C6B30] transition-colors"
+                      aria-label="Close filters"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+                  <Filters animate={true} />
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Main Grid Area */}
+          <div className="flex-1 w-full">
+            {/* Toolbar: Mobile Filters Button & Sort By Dropdown */}
+            <div className="flex items-center justify-between lg:justify-end gap-2 sm:gap-4 mb-6 pb-4 border-b border-[#E8E8E8]">
+              <button
+                onClick={() => setOpenFilters(true)}
+                className="lg:hidden flex items-center gap-1.5 xs:gap-2 text-xs xs:text-sm border border-[#E8E8E8] rounded-full px-3 xs:px-4 py-2 hover:border-[#9C6B30] transition-colors cursor-pointer shrink-0"
+              >
+                <SlidersHorizontal size={14} /> Filters
+              </button>
+              <div className="flex items-center gap-2 sm:gap-3">
+                <span className="text-[11px] tracking-[0.25em] uppercase text-neutral-500 hidden sm:block">Sort by</span>
+                <div className="relative inline-block text-left z-30">
+                  <button
+                    onClick={() => setSortOpen(!sortOpen)}
+                    className="flex items-center justify-between gap-2 xs:gap-3 border border-[#E8E8E8] hover:border-[#9C6B30] rounded-md px-3 xs:px-4 py-2 text-xs xs:text-sm bg-white min-w-[130px] sm:min-w-[170px] text-left transition-colors focus:outline-none focus:ring-1 focus:ring-[#9C6B30] focus:border-[#9C6B30] cursor-pointer"
+                  >
+                    <span className="text-neutral-700 font-light truncate">
+                      {sort === 'newest' && 'Newest'}
+                      {sort === 'rating' && 'Highest Rated'}
+                      {sort === 'price-asc' && 'Price: Low to High'}
+                      {sort === 'price-desc' && 'Price: High to Low'}
+                      {sort === 'discount' && 'High Discount'}
+                    </span>
+                    <ChevronDown size={14} className={`text-neutral-400 shrink-0 transition-transform duration-300 ${sortOpen ? 'rotate-180 text-[#9C6B30]' : ''}`} />
+                  </button>
+
+                  <AnimatePresence>
+                    {sortOpen && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setSortOpen(false)} />
+                        <motion.div
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 8 }}
+                          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                          className="absolute right-0 mt-2 w-[190px] rounded-lg bg-white border border-[#E8E8E8] shadow-lg py-1.5 z-20 focus:outline-none overflow-hidden"
+                        >
+                          {[
+                            { val: 'newest', lab: 'Newest' },
+                            { val: 'rating', lab: 'Highest Rated' },
+                            { val: 'price-asc', lab: 'Price: Low to High' },
+                            { val: 'price-desc', lab: 'Price: High to Low' },
+                            { val: 'discount', lab: 'High Discount' }
+                          ].map(opt => (
+                            <button
+                              key={opt.val}
+                              onClick={() => {
+                                setSort(opt.val);
+                                setSortOpen(false);
+                              }}
+                              className={`w-full text-left px-4 py-2.5 text-[11px] tracking-wider uppercase transition-colors flex items-center justify-between cursor-pointer ${sort === opt.val
+                                ? 'bg-[#FAF6EF] text-[#9C6B30] font-semibold'
+                                : 'text-neutral-600 hover:bg-neutral-50 hover:text-[#9C6B30]'
+                                }`}
+                            >
+                              <span>{opt.lab}</span>
+                              {sort === opt.val && <div className="w-1.5 h-1.5 rounded-full bg-[#9C6B30]" />}
+                            </button>
+                          ))}
+                        </motion.div>
+                      </>
+                    )}
+                  </AnimatePresence>
+                </div>
+              </div>
+            </div>
+
+            {/* Product Cards Grid */}
+            {loading ? (
+              <div className="py-24 text-center">
+                <Loader2 className="animate-spin inline text-[#9C6B30]" size={24} />
+              </div>
+            ) : list.length === 0 ? (
+              <div className="text-center py-20 px-4">
+                <div className="font-serif-luxe text-2xl sm:text-3xl text-neutral-800 font-medium">Product not found</div>
+                <p className="text-sm text-neutral-500 mt-2 max-w-md mx-auto">
+                  {sp.get('search') || sp.get('q')
+                    ? `We couldn't find any products matching "${sp.get('search') || sp.get('q')}". Try checking for spelling errors or searching with other keywords.`
+                    : 'We could not find any products matching your selected criteria.'}
+                </p>
+                <button
+                  onClick={clearAll}
+                  className="mt-6 inline-flex items-center justify-center px-6 py-2.5 text-xs uppercase tracking-widest font-semibold border border-[#9C6B30] text-[#9C6B30] hover:bg-[#9C6B30] hover:text-white transition-colors cursor-pointer"
+                >
+                  {sp.get('search') || sp.get('q') ? 'Clear Search & Filters' : 'Clear Filters'}
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 sm:gap-6 md:gap-8">
+                {list.map((p, i) => (
+                  <ProductCard key={p.id} p={p} index={i} />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <CompareBar />
+    </main>
+  );
+}
+
+export default function ShopClient() {
+  return (
+    <Suspense fallback={<div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-[#9C6B30]" /></div>}>
+      <ShopInner />
+    </Suspense>
+  );
+}

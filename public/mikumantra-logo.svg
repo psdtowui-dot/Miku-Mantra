@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 50" width="320" height="50">
+  <defs>
+    <linearGradient id="gold-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#9C6B30" />
+      <stop offset="50%" stop-color="#D4AF37" />
+      <stop offset="100%" stop-color="#C79B3B" />
+    </linearGradient>
+  </defs>
+  <!-- Circular M Badge -->
+  <circle cx="25" cy="25" r="18" fill="url(#gold-grad)" />
+  <text x="25" y="31" font-family="'Cinzel', 'Playfair Display', 'Didot', serif" font-size="18" font-weight="bold" fill="white" text-anchor="middle">M</text>
+  
+  <!-- Text Elements -->
+  <text x="55" y="27" font-family="'Cinzel', 'Playfair Display', 'Didot', serif" font-size="24" font-weight="normal" fill="#1A1A1A">MikuMantra</text>
+  <text x="55" y="42" font-family="'Montserrat', 'Inter', sans-serif" font-size="8.5" font-weight="600" fill="#9C6B30" letter-spacing="3.5">FINE JEWELLERY</text>
+</svg>
