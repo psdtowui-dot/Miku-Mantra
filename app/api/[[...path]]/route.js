@@ -12,7 +12,16 @@ import { buildInvoicePDF } from '@/lib/pdf-invoice'
 import { buildShippingSlipPDF } from '@/lib/pdf-shippingslip'
 import { WAREHOUSE_PINCODE } from '@/lib/constants'
 import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification } from '@/lib/notifications'
-import { sendPasswordResetEmail, checkEmailProviderStatus, sendTestCampaignEmail } from '@/lib/email-service'
+import {
+  sendPasswordResetEmail,
+  checkEmailProviderStatus,
+  sendTestCampaignEmail,
+  getAllEmailTemplates,
+  getEmailTemplate,
+  updateEmailTemplate,
+  resetEmailTemplate,
+  sendTestEmailTemplate
+} from '@/lib/email-service'
 import { seedRbacIfEmpty, resolveUserPermissions, hasPermission, logAdminActivity, validatePrivilegeEscalation, PERMISSIONS, DEFAULT_ROLES } from '@/lib/rbac'
 import { invalidateSiteDataCache } from '@/lib/db-site-settings'
 import { DEFAULT_SOCIAL_MEDIA_SETTINGS, DEFAULT_SOCIAL_MEDIA_ITEMS, DEFAULT_CATEGORY_SHOWCASE_SETTINGS } from '@/lib/site-defaults'
@@ -1792,7 +1801,8 @@ async function handleRoute(request, { params }) {
         toEmail: em,
         code,
         name: u.name,
-        isAdmin: Boolean(requireAdmin)
+        isAdmin: Boolean(requireAdmin),
+        db
       });
 
       let message = `A 6-digit verification code has been sent to ${em}. Please check your Gmail or email inbox (and spam folder).`;
@@ -2340,7 +2350,8 @@ async function handleRoute(request, { params }) {
         orderNumber,
         invoiceNumber,
         userId: u.id,
-        guestEmail: null,
+        customerEmail: u.email || body.email || null,
+        guestEmail: body.email || null,
         items: validatedItems,
         address: cleanAddress,
         payment: body.payment || 'cod',
@@ -4017,6 +4028,88 @@ async function handleRoute(request, { params }) {
           } catch (e) {
             return err(e.message || 'Failed to update newsletter settings', 400);
           }
+        }
+      }
+
+      // ============ ADMIN EMAIL TEMPLATES (ALL SYSTEM EMAILS) ============
+      if (sub === 'email-templates') {
+        if (method === 'GET') {
+          if (!hasPermission(admin, 'settings.view') && !hasPermission(admin, 'customers.view')) {
+            return err('Permission denied', 403);
+          }
+          const templates = await getAllEmailTemplates(db);
+          return ok(templates);
+        }
+      }
+
+      if (sub.startsWith('email-templates/')) {
+        const parts = sub.replace('email-templates/', '').split('/');
+        const templateId = parts[0];
+        const action = parts[1]; // 'test' | 'reset' | undefined
+
+        if (method === 'GET' && !action) {
+          if (!hasPermission(admin, 'settings.view') && !hasPermission(admin, 'customers.view')) {
+            return err('Permission denied', 403);
+          }
+          const template = await getEmailTemplate(db, templateId);
+          if (!template) return err('Template not found', 404);
+          return ok(template);
+        }
+
+        if (action === 'reset' && (method === 'POST' || method === 'PUT')) {
+          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied', 403);
+          const reset = await resetEmailTemplate(db, templateId);
+          await logAdminActivity(db, {
+            admin,
+            action: 'EMAIL_TEMPLATE_RESET',
+            module: 'SETTINGS',
+            targetId: templateId,
+            targetName: reset.name || templateId,
+            request
+          });
+          return ok({ success: true, message: `${reset.name || 'Template'} reset to defaults successfully.`, template: reset });
+        }
+
+        if (action === 'test' && (method === 'POST' || method === 'PUT')) {
+          if (!hasPermission(admin, 'settings.view') && !hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied', 403);
+          }
+          const body = await request.json().catch(() => ({}));
+          const toEmail = (body.toEmail || admin.email || '').trim();
+          if (!toEmail) return err('Recipient email address is required for test email.', 400);
+
+          const testResult = await sendTestEmailTemplate({
+            toEmail,
+            templateId,
+            customTemplate: body.template || null,
+            db
+          });
+
+          if (!testResult.success) {
+            return err(testResult.error || testResult.message || 'Failed to send test email.', 400);
+          }
+
+          return ok({
+            success: true,
+            message: `Test email successfully delivered to ${toEmail}.`,
+            messageId: testResult.messageId
+          });
+        }
+
+        if ((method === 'PUT' || method === 'POST') && !action) {
+          if (!hasPermission(admin, 'settings.edit')) return err('Permission denied', 403);
+          const body = await request.json().catch(() => ({}));
+          const updated = await updateEmailTemplate(db, templateId, body);
+          await logAdminActivity(db, {
+            admin,
+            action: 'EMAIL_TEMPLATE_UPDATED',
+            module: 'SETTINGS',
+            targetId: templateId,
+            targetName: updated.name || templateId,
+            metadata: { isEnabled: updated.isEnabled },
+            request
+          });
+          return ok({ success: true, message: `${updated.name || 'Template'} saved successfully.`, template: updated });
         }
       }
 

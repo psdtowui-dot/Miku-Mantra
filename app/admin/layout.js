@@ -29,7 +29,7 @@ const MARKETING_NAV = [
   { href: '/admin/newsletter', label: 'Newsletter Subscribers', icon: Mail, permission: 'customers.view' },
   { href: '/admin/newsletter/settings', label: 'Newsletter Settings', icon: Settings, permission: 'settings.view' },
   { href: '/admin/newsletter/campaigns', label: 'Campaigns', icon: Send, permission: 'settings.view' },
-  { href: '/admin/newsletter/templates', label: 'Templates', icon: FileText, permission: 'settings.view' },
+  { href: '/admin/email-templates', label: 'Email Templates', icon: FileText, permission: 'settings.view' },
   { href: '/admin/newsletter/analytics', label: 'Analytics', icon: BarChart3, permission: 'settings.view' }
 ];
 
@@ -110,7 +110,7 @@ export default function AdminLayout({ children }) {
     if (pathname && (pathname.startsWith('/admin/admins') || pathname.startsWith('/admin/roles') || pathname.startsWith('/admin/permissions') || pathname.startsWith('/admin/activity-logs'))) {
       setAdminExpanded(true);
     }
-    if (pathname && pathname.startsWith('/admin/newsletter')) {
+    if (pathname && (pathname.startsWith('/admin/newsletter') || pathname.startsWith('/admin/email-templates'))) {
       setMarketingExpanded(true);
     }
   }, [pathname]);
