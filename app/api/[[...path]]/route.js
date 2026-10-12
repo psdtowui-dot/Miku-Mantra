@@ -7,7 +7,7 @@ import fs from 'fs'
 import pathModule from 'path'
 import { cookies } from 'next/headers'
 import crypto from 'crypto'
-import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS as SEED_COLLECTIONS, DEFAULT_PRODUCT_BENEFITS, DEFAULT_PRODUCT_FILTERS } from '@/lib/products'
+import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS as SEED_COLLECTIONS, DEFAULT_PRODUCT_BENEFITS, DEFAULT_PRODUCT_FILTERS, slugify } from '@/lib/products'
 import { buildInvoicePDF } from '@/lib/pdf-invoice'
 import { buildShippingSlipPDF } from '@/lib/pdf-shippingslip'
 import { WAREHOUSE_PINCODE } from '@/lib/constants'
@@ -1248,7 +1248,7 @@ async function handleRoute(request, { params }) {
     }
     if (route.startsWith('/products/') && method === 'GET') {
       const slug = route.split('/')[2]
-      const p = await db.collection('products').findOne({ slug })
+      const p = await db.collection('products').findOne({ $or: [{ slug }, { id: slug }] })
       if (!p) return err('Not found', 404)
       const related = await db.collection('products').find({ category: p.category, id: { $ne: p.id } }).limit(4).toArray()
       return ok({ product: clean(p), related: related.map(clean) })
@@ -2400,8 +2400,64 @@ async function handleRoute(request, { params }) {
 
       await db.collection('orders').insertOne(order);
 
-      // Invalidate / clear the user's cart in database
-      await db.collection('cart').deleteOne({ userId: u.id });
+      // Remove successfully ordered items from DB cart or delete cart if empty
+      const existingCart = await db.collection('cart').findOne({ userId: u.id });
+      if (existingCart && Array.isArray(existingCart.items) && existingCart.items.length > 0) {
+        const orderedMap = new Map();
+        for (const oi of validatedItems) {
+          const id = String(oi.id || oi.productId || oi.slug || '');
+          if (id) {
+            orderedMap.set(id, (orderedMap.get(id) || 0) + (parseInt(oi.qty) || 1));
+          }
+        }
+
+        const remainingCartItems = [];
+        for (const ci of existingCart.items) {
+          const id = String(ci.id || ci.productId || ci.slug || '');
+          const ordQty = orderedMap.get(id) || 0;
+          if (ordQty > 0) {
+            const curQty = parseInt(ci.qty) || 1;
+            if (curQty > ordQty) {
+              remainingCartItems.push({ ...ci, qty: curQty - ordQty });
+              orderedMap.set(id, 0);
+            } else {
+              orderedMap.set(id, ordQty - curQty);
+            }
+          } else {
+            remainingCartItems.push(ci);
+          }
+        }
+
+        if (remainingCartItems.length === 0) {
+          await db.collection('cart').deleteMany({ userId: u.id });
+        } else {
+          // Re-calculate cart pricing for remaining items in MongoDB
+          const remainingPricing = await calculateCartPricing({
+            db,
+            items: remainingCartItems,
+            couponCode: existingCart.coupon || existingCart.couponCode || null,
+            giftWrap: !!existingCart.giftWrap,
+            shippingConfig,
+            user: u
+          });
+          await db.collection('cart').updateOne(
+            { userId: u.id },
+            {
+              $set: {
+                items: remainingPricing.items,
+                subtotal: remainingPricing.subtotal,
+                discount: remainingPricing.discount,
+                total: remainingPricing.total,
+                coupon: remainingPricing.couponCode,
+                couponCode: remainingPricing.couponCode,
+                updatedAt: new Date()
+              }
+            }
+          );
+        }
+      } else {
+        await db.collection('cart').deleteMany({ userId: u.id });
+      }
 
       // Increment coupon usage count if applied
       if (validCouponDoc) {
@@ -5519,26 +5575,28 @@ async function handleRoute(request, { params }) {
         if (isNaN(mrp) || mrp < price) return err('MRP cannot be less than selling price', 400);
         if (isNaN(stock) || stock < 0) return err('Stock quantity cannot be negative', 400);
 
-        const slug = b.slug ? b.slug.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-') : name.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+        const rawSlug = (b.slug || '').trim();
+        const slug = rawSlug ? slugify(rawSlug) : slugify(name);
+        if (!slug) return err('Product slug is required and must contain valid characters', 400);
+
+        const existingSlug = await db.collection('products').findOne({ slug });
+        if (existingSlug) {
+          return err(`Product slug "${slug}" already exists (used by "${existingSlug.name}"). Please enter a unique slug.`, 400);
+        }
+
         const images = Array.isArray(b.images) ? b.images : (b.images || '').split('\n').map(s => s.trim()).filter(Boolean);
 
         const p = {
           id: uuidv4(),
-          slug,
+          ...b,
           name,
+          slug,
           category,
           price,
           mrp,
           stock,
           images,
-          createdAt: new Date(),
-          ...b,
-          name,
-          category,
-          price,
-          mrp,
-          stock,
-          images
+          createdAt: new Date()
         };
         await db.collection('products').insertOne(p);
         cacheBust('products:');
@@ -5552,7 +5610,24 @@ async function handleRoute(request, { params }) {
         const b = await request.json();
         const updateData = { ...b, updatedAt: new Date() };
 
-        if (b.name !== undefined && !b.name.trim()) return err('Product name cannot be empty', 400);
+        if (b.name !== undefined) {
+          const name = b.name.trim();
+          if (!name) return err('Product name cannot be empty', 400);
+          updateData.name = name;
+        }
+
+        if (b.slug !== undefined) {
+          const rawSlug = String(b.slug).trim();
+          const cleanSlug = slugify(rawSlug);
+          if (!cleanSlug) return err('Product slug cannot be empty and must contain valid characters', 400);
+
+          const existingSlug = await db.collection('products').findOne({ slug: cleanSlug, id: { $ne: id } });
+          if (existingSlug) {
+            return err(`Product slug "${cleanSlug}" already exists (used by "${existingSlug.name}"). Please enter a unique slug.`, 400);
+          }
+          updateData.slug = cleanSlug;
+        }
+
         if (b.category !== undefined && !b.category.trim()) return err('Product category cannot be empty', 400);
         if (b.price !== undefined) {
           const price = Number(b.price);
@@ -5823,7 +5898,15 @@ async function handleRoute(request, { params }) {
           if (!b.name || !b.name.trim()) return err('Category name is required', 400);
 
           const name = b.name.trim();
-          const slug = (b.slug || name.toLowerCase().replace(/[^a-z0-9_-]/g, '-')).trim();
+          const rawCatSlug = (b.slug || '').trim();
+          const slug = rawCatSlug ? slugify(rawCatSlug) : slugify(name);
+          if (!slug) return err('Category slug is required', 400);
+
+          const existingCat = await db.collection('categories').findOne({ slug });
+          if (existingCat) {
+            return err(`Category slug "${slug}" already exists (used by "${existingCat.name}"). Please enter a unique slug.`, 400);
+          }
+
           const imgUrl = (b.img || b.imageUrl || '').trim();
           const link = (b.link || `/shop?category=${slug}`).trim();
           const count = await db.collection('categories').countDocuments();
@@ -5885,7 +5968,15 @@ async function handleRoute(request, { params }) {
 
           const updateDoc = {};
           if (b.name !== undefined) updateDoc.name = b.name.trim();
-          if (b.slug !== undefined) updateDoc.slug = b.slug.trim();
+          if (b.slug !== undefined) {
+            const cleanCatSlug = slugify(b.slug);
+            if (!cleanCatSlug) return err('Category slug cannot be empty', 400);
+            const existingCat = await db.collection('categories').findOne({ slug: cleanCatSlug, id: { $ne: id } });
+            if (existingCat) {
+              return err(`Category slug "${cleanCatSlug}" already exists (used by "${existingCat.name}"). Please enter a unique slug.`, 400);
+            }
+            updateDoc.slug = cleanCatSlug;
+          }
           if (b.img !== undefined || b.imageUrl !== undefined) {
             updateDoc.img = (b.img || b.imageUrl || '').trim();
             updateDoc.imageUrl = updateDoc.img;

@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 import { Loader2, ShieldCheck, Truck, Lock, MapPin, Wallet, ChevronRight, CreditCard, BookmarkCheck, Plus, Check } from 'lucide-react';
 
 export default function CheckoutPage() {
-  const { items, subtotal, clear, coupon: storeCoupon, discount: storeDiscount, removeCoupon, hydrated } = useCart();
+  const { items, subtotal, clear, coupon: storeCoupon, discount: storeDiscount, removeCoupon, hydrated, removeOrderedItems } = useCart();
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const [step, setStep] = useState('address');
@@ -456,8 +456,10 @@ export default function CheckoutPage() {
       
       const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';
       const giftKey = user?.id ? `mikumantra_gift_${user.id}` : 'mikumantra_gift_guest';
-      clear(); 
-      removeCoupon();
+      
+      // Successfully confirmed order: remove ordered items and synchronize state
+      await removeOrderedItems(body.items);
+
       sessionStorage.removeItem(couponKey); 
       sessionStorage.removeItem(giftKey);
       sessionStorage.removeItem('mikumantra_coupon');

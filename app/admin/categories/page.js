@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DEFAULT_CATEGORY_SHOWCASE_SETTINGS } from '@/lib/site-defaults';
+import { slugify } from '@/lib/products';
 
 const INITIAL_FORM = {
   name: '',
@@ -25,6 +26,7 @@ export default function CategoriesPage() {
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(INITIAL_FORM);
   const [selectedId, setSelectedId] = useState(null);
+  const [isSlugCustomized, setIsSlugCustomized] = useState(false);
   const [showFormModal, setShowFormModal] = useState(false);
 
   const [imageFile, setImageFile] = useState(null);
@@ -126,9 +128,30 @@ export default function CategoriesPage() {
         return;
       }
 
-      const derivedSlug = (form.slug || form.name.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '-')).trim();
+      const trimmedName = (form.name || '').trim();
+      const derivedSlug = slugify(form.slug || form.name);
+
+      if (!trimmedName) {
+        toast.error('Category name is required.');
+        setSaving(false);
+        return;
+      }
+      if (!derivedSlug) {
+        toast.error('Category slug is required.');
+        setSaving(false);
+        return;
+      }
+
+      const duplicate = list.find(c => c.slug === derivedSlug && c.id !== selectedId);
+      if (duplicate) {
+        toast.error(`A category with slug "${derivedSlug}" already exists (${duplicate.name}). Please use a unique slug.`);
+        setSaving(false);
+        return;
+      }
+
       const bodyData = {
         ...form,
+        name: trimmedName,
         slug: derivedSlug,
         link: form.link ? form.link.trim() : `/shop?category=${derivedSlug}`,
         img: finalImgUrl,
@@ -208,6 +231,7 @@ export default function CategoriesPage() {
 
   const handleEdit = (category) => {
     setSelectedId(category.id);
+    setIsSlugCustomized(true);
     setForm({
       name: category.name || '',
       slug: category.slug || '',
@@ -287,6 +311,7 @@ export default function CategoriesPage() {
   const resetForm = () => {
     setForm(INITIAL_FORM);
     setSelectedId(null);
+    setIsSlugCustomized(false);
     setImageFile(null);
     setImagePreview('');
     setShowFormModal(false);
@@ -429,10 +454,12 @@ export default function CategoriesPage() {
                       value={form.name}
                       onChange={(e) => {
                         const name = e.target.value;
-                        setForm({
-                          ...form,
-                          name,
-                          slug: selectedId ? form.slug : name.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '-')
+                        setForm(f => {
+                          const updates = { ...f, name };
+                          if (!selectedId && !isSlugCustomized) {
+                            updates.slug = slugify(name);
+                          }
+                          return updates;
                         });
                       }}
                       className="w-full px-3.5 py-2.5 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:border-[#9C6B30] transition"
@@ -441,14 +468,36 @@ export default function CategoriesPage() {
                   </div>
 
                   <div>
-                    <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold block mb-1">
-                      Slug *
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] tracking-widest uppercase text-neutral-500 font-semibold block">
+                        Slug *
+                      </label>
+                      {form.name && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const gen = slugify(form.name);
+                            setForm(f => ({ ...f, slug: gen }));
+                            setIsSlugCustomized(true);
+                          }}
+                          className="text-[10px] text-[#9C6B30] hover:underline font-medium cursor-pointer"
+                        >
+                          Generate from name
+                        </button>
+                      )}
+                    </div>
                     <input
                       required
                       type="text"
                       value={form.slug}
-                      onChange={(e) => setForm({ ...form, slug: e.target.value })}
+                      onChange={(e) => {
+                        setIsSlugCustomized(true);
+                        const formatted = e.target.value.toLowerCase().replace(/[\s_]+/g, '-').replace(/[^a-z0-9-]/g, '');
+                        setForm(f => ({ ...f, slug: formatted }));
+                      }}
+                      onBlur={() => {
+                        setForm(f => ({ ...f, slug: slugify(f.slug) }));
+                      }}
                       className="w-full px-3.5 py-2.5 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:border-[#9C6B30] transition font-mono text-xs"
                       placeholder="e.g. gold"
                     />
