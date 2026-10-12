@@ -11,6 +11,30 @@ export default function AdminNewsletterSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('content');
+  const [errors, setErrors] = useState({});
+
+  const isValidEmail = (email) => {
+    if (!email || typeof email !== 'string') return false;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[a-zA-Z0-9-]{2,}$/;
+    return emailRegex.test(email.trim());
+  };
+
+  const validateForm = () => {
+    const errs = {};
+    const trimmedFromEmail = (form.fromEmail || '').trim();
+    if (!trimmedFromEmail) {
+      errs.fromEmail = 'Sender email address is required.';
+    } else if (!isValidEmail(trimmedFromEmail)) {
+      errs.fromEmail = 'Please enter a valid sender email address (e.g. sender@example.com).';
+    }
+
+    const trimmedReplyTo = (form.replyTo || '').trim();
+    if (trimmedReplyTo && !isValidEmail(trimmedReplyTo)) {
+      errs.replyTo = 'Please enter a valid reply-to email address (e.g. support@example.com).';
+    }
+
+    return errs;
+  };
 
   const [form, setForm] = useState({
     isEnabled: true,
@@ -70,7 +94,18 @@ export default function AdminNewsletterSettingsPage() {
   }, []);
 
   const handleSave = async (e) => {
-    e.preventDefault();
+    if (e?.preventDefault) e.preventDefault();
+
+    const validationErrors = validateForm();
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors);
+      setActiveTab('sender');
+      const firstError = validationErrors.fromEmail || validationErrors.replyTo;
+      toast.error(firstError);
+      return;
+    }
+
+    setErrors({});
     setSaving(true);
     try {
       const res = await fetch('/api/admin/newsletter/settings', {
@@ -177,11 +212,15 @@ export default function AdminNewsletterSettingsPage() {
             </button>
             <button
               onClick={() => setActiveTab('sender')}
-              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-medium transition ${
+              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-medium transition relative ${
                 activeTab === 'sender' ? 'bg-[#9C6B30] text-white shadow-xs' : 'text-neutral-600 hover:text-neutral-900'
               }`}
             >
-              <Mail size={14} /> Sender Email
+              <Mail size={14} />
+              <span>Sender Email</span>
+              {(errors.fromEmail || errors.replyTo) && (
+                <span className={`w-2 h-2 rounded-full ${activeTab === 'sender' ? 'bg-amber-200' : 'bg-red-500 animate-pulse'}`} />
+              )}
             </button>
             <button
               onClick={() => setActiveTab('design')}
@@ -427,31 +466,100 @@ export default function AdminNewsletterSettingsPage() {
 
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 mb-1">
-                  Sender Email Address (Outbound "From" Address)
+                  Sender Email Address (Outbound "From" Address) <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="email"
                   value={form.fromEmail || ''}
-                  onChange={(e) => setForm(f => ({ ...f, fromEmail: e.target.value }))}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setForm(f => ({ ...f, fromEmail: val }));
+                    if (errors.fromEmail && val.trim() && isValidEmail(val)) {
+                      setErrors(prev => {
+                        const next = { ...prev };
+                        delete next.fromEmail;
+                        return next;
+                      });
+                    }
+                  }}
+                  onBlur={() => {
+                    const val = (form.fromEmail || '').trim();
+                    if (!val) {
+                      setErrors(prev => ({ ...prev, fromEmail: 'Sender email address is required.' }));
+                    } else if (!isValidEmail(val)) {
+                      setErrors(prev => ({ ...prev, fromEmail: 'Please enter a valid sender email address (e.g. sender@example.com).' }));
+                    } else {
+                      setErrors(prev => {
+                        const next = { ...prev };
+                        delete next.fromEmail;
+                        return next;
+                      });
+                    }
+                  }}
                   placeholder="kk1414497@gmail.com"
-                  className="w-full px-3.5 py-2.5 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:border-[#9C6B30]"
+                  className={`w-full px-3.5 py-2.5 border rounded-lg text-sm focus:outline-none transition ${
+                    errors.fromEmail
+                      ? 'border-red-500 bg-red-50/20 text-neutral-900 focus:border-red-500 focus:ring-1 focus:ring-red-500'
+                      : 'border-neutral-200 focus:border-[#9C6B30]'
+                  }`}
                 />
-                <p className="text-[11px] text-neutral-500 mt-1 font-mono bg-neutral-50 p-2 rounded border border-neutral-200">
+                {errors.fromEmail && (
+                  <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1.5 font-medium">
+                    <AlertCircle size={13} className="shrink-0 text-red-500" />
+                    <span>{errors.fromEmail}</span>
+                  </p>
+                )}
+                <p className="text-[11px] text-neutral-500 mt-2 font-mono bg-neutral-50 p-2 rounded border border-neutral-200">
                   Active Dispatch Header: "{form.fromName || 'MikuMantra'}" &lt;{form.fromEmail || 'kk1414497@gmail.com'}&gt;
                 </p>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 mb-1">
-                  Reply-To Email Address
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600">
+                    Reply-To Email Address
+                  </label>
+                  <span className="text-[10px] text-neutral-400 font-normal uppercase">Optional</span>
+                </div>
                 <input
                   type="email"
                   value={form.replyTo || ''}
-                  onChange={(e) => setForm(f => ({ ...f, replyTo: e.target.value }))}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setForm(f => ({ ...f, replyTo: val }));
+                    if (errors.replyTo && (!val.trim() || isValidEmail(val))) {
+                      setErrors(prev => {
+                        const next = { ...prev };
+                        delete next.replyTo;
+                        return next;
+                      });
+                    }
+                  }}
+                  onBlur={() => {
+                    const val = (form.replyTo || '').trim();
+                    if (val && !isValidEmail(val)) {
+                      setErrors(prev => ({ ...prev, replyTo: 'Please enter a valid reply-to email address (e.g. support@example.com).' }));
+                    } else {
+                      setErrors(prev => {
+                        const next = { ...prev };
+                        delete next.replyTo;
+                        return next;
+                      });
+                    }
+                  }}
                   placeholder="support@mikumantra.com"
-                  className="w-full px-3.5 py-2.5 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:border-[#9C6B30]"
+                  className={`w-full px-3.5 py-2.5 border rounded-lg text-sm focus:outline-none transition ${
+                    errors.replyTo
+                      ? 'border-red-500 bg-red-50/20 text-neutral-900 focus:border-red-500 focus:ring-1 focus:ring-red-500'
+                      : 'border-neutral-200 focus:border-[#9C6B30]'
+                  }`}
                 />
+                {errors.replyTo && (
+                  <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1.5 font-medium">
+                    <AlertCircle size={13} className="shrink-0 text-red-500" />
+                    <span>{errors.replyTo}</span>
+                  </p>
+                )}
               </div>
             </div>
           )}

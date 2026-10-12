@@ -22,7 +22,7 @@ import {
   getWelcomeTemplate, updateWelcomeTemplate, handleBulkSubscriberAction,
   getCampaigns, getCampaignById, createCampaign, updateCampaign, deleteCampaign,
   cancelCampaign, executeCampaignSend, getCampaignLogs, processUnsubscribeToken,
-  getAnalytics
+  getAnalytics, validateEmail
 } from '@/lib/newsletter-service'
 import { calculateCartPricing, validateCouponRules } from '@/lib/cart-pricing'
 
@@ -3983,21 +3983,40 @@ async function handleRoute(request, { params }) {
             return err('Permission denied: settings.edit required', 403);
           }
           const body = await request.json().catch(() => ({}));
-          const updated = await updateNewsletterSettings(db, body);
-          _cache.delete('newsletter_settings_public');
-          try { revalidatePath('/', 'layout'); } catch (e) {}
 
-          await logAdminActivity(db, {
-            admin,
-            action: 'NEWSLETTER_SETTINGS_UPDATED',
-            module: 'MARKETING',
-            targetId: 'default',
-            targetName: 'Newsletter Settings',
-            metadata: { isEnabled: updated.isEnabled },
-            request
-          });
+          if (body && body.fromEmail !== undefined) {
+            const val = validateEmail(body.fromEmail);
+            if (!val.valid) {
+              return err(val.message === 'Email address is required.' ? 'Sender email address is required.' : 'Please enter a valid sender email address (e.g. sender@example.com).', 400);
+            }
+          }
 
-          return ok({ success: true, message: 'Newsletter settings saved successfully.', settings: updated });
+          if (body && body.replyTo !== undefined && body.replyTo !== null && String(body.replyTo).trim() !== '') {
+            const val = validateEmail(body.replyTo);
+            if (!val.valid) {
+              return err('Please enter a valid reply-to email address (e.g. support@example.com).', 400);
+            }
+          }
+
+          try {
+            const updated = await updateNewsletterSettings(db, body);
+            _cache.delete('newsletter_settings_public');
+            try { revalidatePath('/', 'layout'); } catch (e) {}
+
+            await logAdminActivity(db, {
+              admin,
+              action: 'NEWSLETTER_SETTINGS_UPDATED',
+              module: 'MARKETING',
+              targetId: 'default',
+              targetName: 'Newsletter Settings',
+              metadata: { isEnabled: updated.isEnabled },
+              request
+            });
+
+            return ok({ success: true, message: 'Newsletter settings saved successfully.', settings: updated });
+          } catch (e) {
+            return err(e.message || 'Failed to update newsletter settings', 400);
+          }
         }
       }
 
