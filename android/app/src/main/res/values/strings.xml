@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<resources>
-    <string name="app_name">MikuMantra</string>
-    <string name="title_activity_main">MikuMantra</string>
-    <string name="package_name">com.mikumantra.app</string>
-    <string name="custom_url_scheme">com.mikumantra.app</string>
-</resources>
