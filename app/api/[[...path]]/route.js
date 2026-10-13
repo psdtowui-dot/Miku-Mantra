@@ -4243,7 +4243,25 @@ async function handleRoute(request, { params }) {
       if (sub === 'newsletter/campaigns') {
         if (method === 'GET') {
           const campaigns = await getCampaigns(db);
-          return ok({ success: true, campaigns });
+          const startOfMonth = new Date();
+          startOfMonth.setDate(1);
+          startOfMonth.setHours(0, 0, 0, 0);
+
+          const [activeSubscribers, newThisMonth, totalSubscribers] = await Promise.all([
+            db.collection('newsletter_subscribers').countDocuments({ status: 'subscribed', marketingConsent: { $ne: false } }),
+            db.collection('newsletter_subscribers').countDocuments({ status: 'subscribed', marketingConsent: { $ne: false }, subscribedAt: { $gte: startOfMonth } }),
+            db.collection('newsletter_subscribers').countDocuments({})
+          ]);
+
+          return ok({
+            success: true,
+            campaigns,
+            audienceStats: {
+              all: activeSubscribers,
+              new: newThisMonth,
+              total: totalSubscribers
+            }
+          });
         }
         if (method === 'POST') {
           if (!hasPermission(admin, 'settings.edit')) return err('Permission denied', 403);
