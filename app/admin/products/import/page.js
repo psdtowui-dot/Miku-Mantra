@@ -32,6 +32,7 @@ export default function ProductImportPage() {
   const [duplicateStrategy, setDuplicateStrategy] = useState('skip'); // 'skip' | 'update'
   const [filterView, setFilterView] = useState('all'); // 'all' | 'duplicates' | 'needs_review' | 'ready'
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedIndices, setSelectedIndices] = useState(new Set());
 
   // Image Modal state
   const [selectedProductIdx, setSelectedProductIdx] = useState(null);
@@ -103,6 +104,7 @@ export default function ProductImportPage() {
       setProducts(data.products || []);
       setInvalidProducts(data.invalidProducts || []);
       setSummary(data.summary || null);
+      setSelectedIndices(new Set());
       setStep('preview');
       toast.success(`Successfully parsed ${data.summary?.totalParsed || 0} product(s)!`);
     } catch (err) {
@@ -184,9 +186,15 @@ export default function ProductImportPage() {
     });
   };
 
-  // Execute Save
-  const handleExecuteImport = async () => {
-    if (!products.length) return toast.error('No valid products to import.');
+  // Execute Save (optionally import only selected items)
+  const handleExecuteImport = async (onlySelected = false) => {
+    const targetProducts = onlySelected
+      ? products.filter((_, idx) => selectedIndices.has(idx))
+      : products;
+
+    if (!targetProducts.length) {
+      return toast.error(onlySelected ? 'No selected products to import.' : 'No valid products to import.');
+    }
 
     setSaving(true);
     try {
@@ -195,7 +203,7 @@ export default function ProductImportPage() {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          products,
+          products: targetProducts,
           duplicateStrategy
         })
       });
@@ -212,6 +220,32 @@ export default function ProductImportPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  // Delete / Remove selected products from import preview
+  const handleDeleteSelected = () => {
+    if (selectedIndices.size === 0) return toast.error('No products selected.');
+    const count = selectedIndices.size;
+    if (!confirm(`Are you sure you want to remove ${count} selected product(s) from this import list?`)) return;
+
+    setProducts(prev => prev.filter((_, idx) => !selectedIndices.has(idx)));
+    setSelectedIndices(new Set());
+    toast.success(`Removed ${count} product(s) from preview.`);
+  };
+
+  // Delete / Remove single product from import preview
+  const handleDeleteSingle = (targetIdx) => {
+    const name = products[targetIdx]?.name || 'product';
+    setProducts(prev => prev.filter((_, idx) => idx !== targetIdx));
+    setSelectedIndices(prev => {
+      const next = new Set();
+      prev.forEach(i => {
+        if (i < targetIdx) next.add(i);
+        else if (i > targetIdx) next.add(i - 1);
+      });
+      return next;
+    });
+    toast.success(`Removed "${name}" from preview.`);
   };
 
   // Sample file loaders for testing & reference
@@ -582,7 +616,7 @@ export default function ProductImportPage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+            <div className="flex items-center gap-2 w-full md:w-auto justify-end flex-wrap">
               <button
                 type="button"
                 onClick={() => setStep('upload')}
@@ -590,9 +624,36 @@ export default function ProductImportPage() {
               >
                 Change File
               </button>
+
+              {selectedIndices.size > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleDeleteSelected}
+                    disabled={saving}
+                    className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow-sm"
+                    title="Remove selected products from import list"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Selected ({selectedIndices.size})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleExecuteImport(true)}
+                    disabled={saving}
+                    className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow-sm"
+                    title="Import only the selected products into catalog"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Import Selected ({selectedIndices.size})</span>
+                  </button>
+                </>
+              )}
+
               <button
                 type="button"
-                onClick={handleExecuteImport}
+                onClick={() => handleExecuteImport(false)}
                 disabled={saving || !products.length}
                 className="px-5 py-2 bg-[#A27B5C] hover:bg-[#8C6B4F] text-white rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow-sm disabled:opacity-50"
               >
@@ -611,13 +672,65 @@ export default function ProductImportPage() {
             </div>
           </div>
 
+          {/* Selection indicator & quick toggles */}
+          {selectedIndices.size > 0 && (
+            <div className="bg-amber-50/80 border border-amber-200/90 rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-900 shadow-sm animate-in fade-in duration-150">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold">{selectedIndices.size} of {products.length} product(s) selected</span>
+                <span className="text-amber-700/60 hidden sm:inline">•</span>
+                <span className="text-amber-800/80 hidden sm:inline">Use the buttons above to delete or import only the selected records</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const all = new Set();
+                    filteredProducts.forEach(p => all.add(products.indexOf(p)));
+                    setSelectedIndices(all);
+                  }}
+                  className="px-2.5 py-1 text-[11px] font-medium text-amber-800 hover:bg-amber-100/70 border border-amber-200 rounded transition"
+                >
+                  Select All Filtered ({filteredProducts.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedIndices(new Set())}
+                  className="px-2.5 py-1 text-[11px] font-medium text-amber-800 hover:bg-amber-100/70 border border-amber-200 rounded transition"
+                >
+                  Clear Selection
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Products List Table */}
           <div className="bg-white border border-stone-200 rounded-xl overflow-hidden shadow-sm">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="bg-stone-50 border-b border-stone-200 text-stone-600 font-semibold uppercase tracking-wider">
                   <tr>
-                    <th className="py-3 px-4">#</th>
+                    <th className="py-3 px-4 w-12">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={filteredProducts.length > 0 && filteredProducts.every(p => selectedIndices.has(products.indexOf(p)))}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              const next = new Set(selectedIndices);
+                              filteredProducts.forEach(p => next.add(products.indexOf(p)));
+                              setSelectedIndices(next);
+                            } else {
+                              const next = new Set(selectedIndices);
+                              filteredProducts.forEach(p => next.delete(products.indexOf(p)));
+                              setSelectedIndices(next);
+                            }
+                          }}
+                          className="w-4 h-4 rounded text-[#A27B5C] focus:ring-[#A27B5C] border-stone-300 cursor-pointer"
+                          title="Select / Deselect all visible products"
+                        />
+                        <span>#</span>
+                      </div>
+                    </th>
                     <th className="py-3 px-4">Matched Images</th>
                     <th className="py-3 px-4">Product Details</th>
                     <th className="py-3 px-4">Category</th>
@@ -635,9 +748,22 @@ export default function ProductImportPage() {
                     const imagesList = p.images || [];
 
                     return (
-                      <tr key={idx} className="hover:bg-stone-50/70 transition">
-                        <td className="py-3 px-4 text-stone-400 font-mono text-[11px]">
-                          {originalIdx + 1}
+                      <tr key={idx} className={`hover:bg-stone-50/70 transition ${selectedIndices.has(originalIdx) ? 'bg-[#A27B5C]/10 hover:bg-[#A27B5C]/15' : ''}`}>
+                        <td className="py-3 px-4 text-stone-500 font-mono text-[11px] w-12">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedIndices.has(originalIdx)}
+                              onChange={(e) => {
+                                const next = new Set(selectedIndices);
+                                if (e.target.checked) next.add(originalIdx);
+                                else next.delete(originalIdx);
+                                setSelectedIndices(next);
+                              }}
+                              className="w-4 h-4 rounded text-[#A27B5C] focus:ring-[#A27B5C] border-stone-300 cursor-pointer"
+                            />
+                            <span>{originalIdx + 1}</span>
+                          </div>
                         </td>
 
                         {/* Images preview & match score */}
@@ -764,17 +890,27 @@ export default function ProductImportPage() {
 
                         {/* Actions */}
                         <td className="py-3 px-4 text-right">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedProductIdx(originalIdx);
-                              setShowImageModal(true);
-                            }}
-                            className="p-1.5 text-stone-500 hover:text-[#A27B5C] hover:bg-stone-100 rounded transition"
-                            title="Manage images"
-                          >
-                            <ImageIcon className="w-4 h-4" />
-                          </button>
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedProductIdx(originalIdx);
+                                setShowImageModal(true);
+                              }}
+                              className="p-1.5 text-stone-500 hover:text-[#A27B5C] hover:bg-stone-100 rounded transition"
+                              title="Manage images"
+                            >
+                              <ImageIcon className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSingle(originalIdx)}
+                              className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded transition"
+                              title="Remove from import"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
