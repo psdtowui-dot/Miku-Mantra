@@ -44,8 +44,8 @@ export default function AdminNewsletterSettingsPage() {
     inputPlaceholder: 'Enter your email',
     buttonText: 'SUBSCRIBE',
     fromName: 'MikuMantra',
-    fromEmail: 'akash@unictechnology.com',
-    replyTo: 'akashsriv1984@gmail.com',
+    fromEmail: 'kk1414497@gmail.com',
+    replyTo: 'support@mikumantra.com',
     privileges: [
       '₹2,000 Off First Order',
       'Private Previews & Access',
@@ -496,7 +496,7 @@ export default function AdminNewsletterSettingsPage() {
                       });
                     }
                   }}
-                  placeholder="akash@unictechnology.com"
+                  placeholder="kk1414497@gmail.com"
                   className={`w-full px-3.5 py-2.5 border rounded-lg text-sm focus:outline-none transition ${
                     errors.fromEmail
                       ? 'border-red-500 bg-red-50/20 text-neutral-900 focus:border-red-500 focus:ring-1 focus:ring-red-500'
@@ -510,7 +510,7 @@ export default function AdminNewsletterSettingsPage() {
                   </p>
                 )}
                 <p className="text-[11px] text-neutral-500 mt-2 font-mono bg-neutral-50 p-2 rounded border border-neutral-200">
-                  Active Dispatch Header: "{form.fromName || 'MikuMantra'}" &lt;{form.fromEmail || 'akash@unictechnology.com'}&gt;
+                  Active Dispatch Header: "{form.fromName || 'MikuMantra'}" &lt;{form.fromEmail || 'kk1414497@gmail.com'}&gt;
                 </p>
               </div>
 
@@ -547,7 +547,7 @@ export default function AdminNewsletterSettingsPage() {
                       });
                     }
                   }}
-                  placeholder="akashsriv1984@gmail.com"
+                  placeholder="support@mikumantra.com"
                   className={`w-full px-3.5 py-2.5 border rounded-lg text-sm focus:outline-none transition ${
                     errors.replyTo
                       ? 'border-red-500 bg-red-50/20 text-neutral-900 focus:border-red-500 focus:ring-1 focus:ring-red-500'
