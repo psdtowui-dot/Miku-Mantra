@@ -43,6 +43,9 @@ import {
   getAnalytics, validateEmail
 } from '@/lib/newsletter-service'
 import { calculateCartPricing, validateCouponRules } from '@/lib/cart-pricing'
+import { parseProductFileContent, normalizeAndValidateProducts } from '@/lib/product-import/parser'
+import { scanAvailableImages, matchImagesForProduct, batchMatchProductImages } from '@/lib/product-import/matcher'
+
 
 
 
@@ -1068,20 +1071,57 @@ async function handleRoute(request, { params }) {
 
     if (route === '/' && method === 'GET') return ok({ ok: true, app: 'MikuMantra API' })
 
-    if (route.startsWith('/uploads/') && method === 'GET') {
-      const filename = route.split('/')[2];
+    if ((route.startsWith('/uploads/') || route.startsWith('/images/')) && method === 'GET') {
+      const parts = route.split('/').filter(Boolean);
+      const folder = parts[0];
+      const filename = parts.slice(1).join('/');
       if (!filename) return err('File name required', 400);
-      const fileDoc = await db.collection('uploads').findOne({ filename });
-      if (!fileDoc) return err('File not found', 404);
-      let buffer = fileDoc.data;
-      if (buffer && buffer.buffer) {
-        buffer = Buffer.from(buffer.buffer);
-      } else if (!Buffer.isBuffer(buffer)) {
-        buffer = Buffer.from(buffer);
+
+      let fileDoc = await db.collection('uploads').findOne({ filename });
+      let buffer = null;
+      let contentType = fileDoc?.contentType;
+
+      if (fileDoc && fileDoc.data) {
+        buffer = fileDoc.data;
+        if (buffer && buffer.buffer) buffer = Buffer.from(buffer.buffer);
+        else if (!Buffer.isBuffer(buffer)) buffer = Buffer.from(buffer);
       }
+
+      if (!buffer) {
+        const candidatePaths = [
+          pathModule.join(process.cwd(), 'public', folder, filename),
+          pathModule.join(process.cwd(), folder, filename),
+          pathModule.join(process.cwd(), 'public', 'images', filename),
+          pathModule.join(process.cwd(), 'images', filename),
+          pathModule.join(process.cwd(), 'public', 'uploads', filename)
+        ];
+        for (const p of candidatePaths) {
+          if (fs.existsSync(p)) {
+            try {
+              buffer = fs.readFileSync(p);
+              const ext = pathModule.extname(p).toLowerCase().replace('.', '');
+              const mimeMap = {
+                jpg: 'image/jpeg',
+                jpeg: 'image/jpeg',
+                png: 'image/png',
+                webp: 'image/webp',
+                svg: 'image/svg+xml',
+                gif: 'image/gif',
+                avif: 'image/avif',
+                ico: 'image/x-icon'
+              };
+              contentType = mimeMap[ext] || 'image/jpeg';
+              break;
+            } catch (e) {}
+          }
+        }
+      }
+
+      if (!buffer) return err('File not found', 404);
+
       return new NextResponse(buffer, {
         headers: {
-          'Content-Type': fileDoc.contentType || 'image/jpeg',
+          'Content-Type': contentType || 'image/jpeg',
           'Cache-Control': 'public, max-age=31536000, immutable',
           'Access-Control-Allow-Origin': '*'
         }
@@ -5960,6 +6000,437 @@ async function handleRoute(request, { params }) {
         _cache.delete('admin_dashboard');
         return ok({ ok: true });
       }
+
+      // ============ PRODUCT FILE IMPORT & IMAGE MATCHING ============
+      // 1. Scan available local project assets & uploads
+      if (sub === 'product-import/scan-images' && method === 'GET') {
+        if (!hasPermission(admin, 'products.view')) return err('Permission denied: products.view required', 403);
+        try {
+          const images = await scanAvailableImages(db);
+          return ok({ images, count: images.length });
+        } catch (e) {
+          console.error('Scan images error:', e);
+          return err('Failed to scan images: ' + e.message, 500);
+        }
+      }
+
+      // 2. Upload local image directly from import interface
+      if (sub === 'product-import/upload-local-image' && method === 'POST') {
+        if (!hasPermission(admin, 'products.create') && !hasPermission(admin, 'products.edit')) {
+          return err('Permission denied: products.create or products.edit required', 403);
+        }
+        try {
+          const formData = await request.formData();
+          const files = formData.getAll('files').length > 0 ? formData.getAll('files') : [formData.get('file')].filter(Boolean);
+          if (!files.length) return err('No file(s) provided for upload', 400);
+
+          const uploadedResults = [];
+          const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif', 'image/avif', 'image/x-icon'];
+
+          for (const file of files) {
+            const fileType = file.type || 'image/jpeg';
+            if (!allowedTypes.includes(fileType)) {
+              return err(`Invalid file type "${fileType}" for ${file.name}. Allowed: JPG, PNG, WEBP, SVG, GIF, AVIF`, 400);
+            }
+
+            const rawName = file.name || 'product-image.jpg';
+            const cleanName = rawName.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const filename = `${uuidv4()}-${cleanName}`;
+            const bytes = await file.arrayBuffer();
+            const buffer = Buffer.from(bytes);
+
+            // Save to DB uploads
+            let savedToDb = false;
+            try {
+              await db.collection('uploads').insertOne({
+                filename,
+                contentType: fileType,
+                data: buffer,
+                createdAt: new Date()
+              });
+              savedToDb = true;
+            } catch (dbErr) {
+              console.warn('MongoDB upload insert warning:', dbErr.message);
+            }
+
+            // Save to filesystem public/uploads and public/images
+            try {
+              const uploadsDir = pathModule.join(process.cwd(), 'public', 'uploads');
+              if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+              fs.writeFileSync(pathModule.join(uploadsDir, filename), buffer);
+
+              const imagesDir = pathModule.join(process.cwd(), 'public', 'images');
+              if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir, { recursive: true });
+              fs.writeFileSync(pathModule.join(imagesDir, cleanName), buffer);
+            } catch (fsErr) {
+              console.warn('Filesystem upload write warning:', fsErr.message);
+            }
+
+            uploadedResults.push({
+              filename,
+              originalName: rawName,
+              cleanName,
+              url: savedToDb ? `/api/uploads/${filename}` : `/uploads/${filename}`,
+              staticUrl: `/uploads/${filename}`,
+              imageUrl: `/images/${cleanName}`
+            });
+          }
+
+          return ok({
+            success: true,
+            uploaded: uploadedResults,
+            count: uploadedResults.length
+          });
+        } catch (upErr) {
+          console.error('Local image upload error:', upErr);
+          return err('Image upload failed: ' + upErr.message, 500);
+        }
+      }
+
+      // 3. Download external discovered image and save locally/DB
+      if (sub === 'product-import/download-image' && method === 'POST') {
+        if (!hasPermission(admin, 'products.create') && !hasPermission(admin, 'products.edit')) {
+          return err('Permission denied', 403);
+        }
+        try {
+          const body = await request.json();
+          const { imageUrl, preferredName } = body;
+          if (!imageUrl || (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://'))) {
+            return err('Valid image URL starting with http:// or https:// is required', 400);
+          }
+
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 12000);
+          const response = await fetch(imageUrl, {
+            signal: controller.signal,
+            headers: { 'User-Agent': 'MikuMantra-Product-Importer/1.0' }
+          });
+          clearTimeout(timeoutId);
+
+          if (!response.ok) return err(`Failed to download image (HTTP ${response.status})`, 400);
+
+          const contentType = response.headers.get('content-type') || 'image/jpeg';
+          const buffer = Buffer.from(await response.arrayBuffer());
+
+          // Max 10MB limit
+          if (buffer.length > 10 * 1024 * 1024) return err('Image exceeds maximum allowed size of 10MB', 400);
+
+          let ext = 'jpg';
+          if (contentType.includes('png')) ext = 'png';
+          else if (contentType.includes('webp')) ext = 'webp';
+          else if (contentType.includes('svg')) ext = 'svg';
+
+          const baseClean = slugify(preferredName || 'external-asset') || 'downloaded-image';
+          const filename = `${uuidv4()}-${baseClean}.${ext}`;
+
+          await db.collection('uploads').insertOne({
+            filename,
+            contentType,
+            data: buffer,
+            createdAt: new Date()
+          });
+
+          try {
+            const uploadsDir = pathModule.join(process.cwd(), 'public', 'uploads');
+            if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+            fs.writeFileSync(pathModule.join(uploadsDir, filename), buffer);
+          } catch (e) {}
+
+          const url = `/api/uploads/${filename}`;
+          return ok({
+            success: true,
+            url,
+            filename
+          });
+        } catch (dlErr) {
+          console.error('Download image error:', dlErr);
+          return err('Failed to download image: ' + dlErr.message, 500);
+        }
+      }
+
+      // 4. Preview and validate product file (.js or .json) with automatic image matching
+      if (sub === 'product-import/preview' && method === 'POST') {
+        if (!hasPermission(admin, 'products.view')) return err('Permission denied', 403);
+        try {
+          const body = await request.json();
+          const { fileContent, filename, products: directProducts, duplicateStrategy = 'skip' } = body;
+
+          let normalizedResult;
+          if (fileContent !== undefined && fileContent !== null) {
+            const parsed = parseProductFileContent(fileContent, filename || '');
+            normalizedResult = normalizeAndValidateProducts(parsed.rawData);
+          } else if (Array.isArray(directProducts)) {
+            normalizedResult = normalizeAndValidateProducts(directProducts);
+          } else {
+            return err('Provide either "fileContent" string or "products" array.', 400);
+          }
+
+          const { validProducts, invalidProducts, errors: parseErrors } = normalizedResult;
+
+          // Fetch all existing products from database
+          const existingList = await db.collection('products').find({}).toArray();
+
+          const existingIdMap = new Map();
+          const existingSlugMap = new Map();
+          const existingSkuMap = new Map();
+          for (const ep of existingList) {
+            if (ep.id) existingIdMap.set(String(ep.id).toLowerCase(), ep);
+            if (ep.slug) existingSlugMap.set(String(ep.slug).toLowerCase(), ep);
+            if (ep.sku) existingSkuMap.set(String(ep.sku).toLowerCase(), ep);
+          }
+
+          // Scan available project image assets
+          const availableImages = await scanAvailableImages(db);
+
+          // Run automatic image matching
+          const productsWithImages = await batchMatchProductImages(validProducts, {
+            db,
+            availableImages,
+            existingProducts: existingList
+          });
+
+          // Check duplicates and annotate
+          let duplicateCount = 0;
+          let matchedImagesCount = 0;
+          let needsImageReviewCount = 0;
+          let missingImagesCount = 0;
+
+          const previewList = productsWithImages.map(p => {
+            const normId = p.id ? String(p.id).toLowerCase() : '';
+            const normSlug = p.slug ? String(p.slug).toLowerCase() : '';
+            const normSku = p.sku ? String(p.sku).toLowerCase() : '';
+
+            let isDuplicate = false;
+            let duplicateField = '';
+            let existingProduct = null;
+
+            if (normId && existingIdMap.has(normId)) {
+              isDuplicate = true;
+              duplicateField = 'id';
+              existingProduct = existingIdMap.get(normId);
+            } else if (normSlug && existingSlugMap.has(normSlug)) {
+              isDuplicate = true;
+              duplicateField = 'slug';
+              existingProduct = existingSlugMap.get(normSlug);
+            } else if (normSku && existingSkuMap.has(normSku)) {
+              isDuplicate = true;
+              duplicateField = 'sku';
+              existingProduct = existingSkuMap.get(normSku);
+            }
+
+            if (isDuplicate) duplicateCount++;
+
+            const imgStatus = p._imageMatch?.status;
+            if (imgStatus === 'matched') matchedImagesCount++;
+            else if (imgStatus === 'missing_images') missingImagesCount++;
+            else needsImageReviewCount++;
+
+            return {
+              ...p,
+              _duplicate: {
+                isDuplicate,
+                duplicateField,
+                existingProduct: existingProduct ? {
+                  id: existingProduct.id,
+                  name: existingProduct.name,
+                  slug: existingProduct.slug,
+                  price: existingProduct.price,
+                  stock: existingProduct.stock,
+                  images: existingProduct.images
+                } : null
+              }
+            };
+          });
+
+          const summary = {
+            totalParsed: normalizedResult.totalCount,
+            validCount: validProducts.length,
+            invalidCount: invalidProducts.length,
+            duplicateCount,
+            readyToImportCount: validProducts.length - (duplicateStrategy === 'skip' ? duplicateCount : 0),
+            matchedImagesCount,
+            needsImageReviewCount,
+            missingImagesCount,
+            availableImagesCount: availableImages.length
+          };
+
+          return ok({
+            success: true,
+            products: previewList,
+            invalidProducts,
+            summary,
+            errors: parseErrors
+          });
+        } catch (prevErr) {
+          console.error('Import preview error:', prevErr);
+          return err('Import preview failed: ' + prevErr.message, 400);
+        }
+      }
+
+      // 5. Save imported products in batches
+      if (sub === 'product-import/save' && method === 'POST') {
+        if (!hasPermission(admin, 'products.create')) return err('Permission denied: products.create required', 403);
+        try {
+          const body = await request.json();
+          const { products: itemsToSave, duplicateStrategy = 'skip' } = body;
+
+          if (!Array.isArray(itemsToSave) || itemsToSave.length === 0) {
+            return err('No products provided for import.', 400);
+          }
+
+          const imported = [];
+          const updated = [];
+          const skipped = [];
+          const failed = [];
+
+          for (const item of itemsToSave) {
+            try {
+              const name = String(item.name || '').trim();
+              if (!name) {
+                failed.push({ product: item, error: 'Product name is required.' });
+                continue;
+              }
+
+              const rawSlug = String(item.slug || '').trim();
+              const baseSlug = rawSlug ? slugify(rawSlug) : slugify(name);
+              if (!baseSlug) {
+                failed.push({ product: item, error: 'Valid product slug could not be derived.' });
+                continue;
+              }
+
+              // Check if duplicate exists
+              const queryOr = [{ slug: baseSlug }];
+              if (item.id) queryOr.push({ id: item.id });
+              if (item.sku) queryOr.push({ sku: item.sku });
+
+              const existing = await db.collection('products').findOne({ $or: queryOr });
+
+              if (existing) {
+                if (duplicateStrategy === 'skip') {
+                  skipped.push({
+                    id: existing.id,
+                    name: item.name,
+                    slug: existing.slug,
+                    reason: `Existing product with matching ${existing.slug === baseSlug ? 'slug' : 'ID/SKU'} found.`
+                  });
+                  continue;
+                } else if (duplicateStrategy === 'update') {
+                  const updateData = {
+                    ...item,
+                    name,
+                    slug: existing.slug, // keep existing slug to preserve links
+                    category: item.category || existing.category,
+                    price: Number(item.price) >= 0 ? Number(item.price) : existing.price,
+                    mrp: Number(item.mrp) >= Number(item.price) ? Number(item.mrp) : (item.mrp ? Number(item.mrp) : existing.mrp),
+                    images: Array.isArray(item.images) && item.images.length > 0 ? item.images : existing.images,
+                    specifications: Array.isArray(item.specifications) && item.specifications.length > 0 ? item.specifications : existing.specifications,
+                    productBenefits: Array.isArray(item.productBenefits) && item.productBenefits.length > 0 ? item.productBenefits : existing.productBenefits,
+                    updatedAt: new Date()
+                  };
+
+                  // Protect stock if stock is unspecified
+                  if (item.stock === undefined || item.stock === null || isNaN(Number(item.stock))) {
+                    updateData.stock = existing.stock;
+                  } else {
+                    updateData.stock = Number(item.stock);
+                  }
+
+                  // Protect dynamic ratings/reviews & internal preview tags
+                  delete updateData._id;
+                  delete updateData.id;
+                  delete updateData.rating;
+                  delete updateData.reviews;
+                  delete updateData.breakdown;
+                  delete updateData._duplicate;
+                  delete updateData._imageMatch;
+                  delete updateData._originalIndex;
+                  delete updateData._hasProvidedImages;
+
+                  await db.collection('products').updateOne({ id: existing.id }, { $set: updateData });
+                  updated.push({ id: existing.id, name, slug: existing.slug });
+                  continue;
+                }
+              }
+
+              // Create New Product
+              const prodId = item.id || uuidv4();
+
+              // Ensure slug uniqueness
+              let uniqueSlug = baseSlug;
+              let suffixCounter = 1;
+              while (await db.collection('products').findOne({ slug: uniqueSlug, id: { $ne: prodId } })) {
+                suffixCounter++;
+                uniqueSlug = `${baseSlug}-${suffixCounter}`;
+              }
+
+              const newProduct = {
+                ...item,
+                id: prodId,
+                name,
+                slug: uniqueSlug,
+                category: String(item.category || 'gold').trim(),
+                price: Number(item.price) || 0,
+                mrp: Number(item.mrp) || Number(item.price) || 0,
+                stock: item.stock !== undefined && !isNaN(Number(item.stock)) ? Number(item.stock) : 10,
+                images: Array.isArray(item.images) ? item.images : [],
+                specifications: Array.isArray(item.specifications) ? item.specifications : [],
+                productBenefits: Array.isArray(item.productBenefits) ? item.productBenefits : [],
+                rating: 0,
+                reviews: 0,
+                createdAt: new Date(),
+                updatedAt: new Date()
+              };
+
+              delete newProduct._id;
+              delete newProduct._duplicate;
+              delete newProduct._imageMatch;
+              delete newProduct._originalIndex;
+              delete newProduct._hasProvidedImages;
+
+              await db.collection('products').insertOne(newProduct);
+              imported.push({ id: prodId, name, slug: uniqueSlug });
+            } catch (saveItemErr) {
+              failed.push({ product: item, error: saveItemErr.message });
+            }
+          }
+
+          // Bust caches
+          cacheBust('products:');
+          _cache.delete('admin_products');
+          _cache.delete('admin_dashboard');
+          _cache.delete('homepage_data');
+          invalidateSiteDataCache('homepage_data');
+          invalidateSiteDataCache('site_settings');
+
+          if (imported.length > 0 || updated.length > 0) {
+            try {
+              await logAdminActivity(db, admin, 'products.import', {
+                importedCount: imported.length,
+                updatedCount: updated.length,
+                skippedCount: skipped.length,
+                failedCount: failed.length
+              });
+            } catch (logErr) {}
+          }
+
+          return ok({
+            success: true,
+            total: itemsToSave.length,
+            importedCount: imported.length,
+            updatedCount: updated.length,
+            skippedCount: skipped.length,
+            failedCount: failed.length,
+            imported,
+            updated,
+            skipped,
+            failed
+          });
+        } catch (saveErr) {
+          console.error('Import save error:', saveErr);
+          return err('Failed to save imported products: ' + saveErr.message, 500);
+        }
+      }
+
 
       // Admin Coupon Display / Helper Text Settings
       if (sub === 'coupons/settings') {
