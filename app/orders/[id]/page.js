@@ -827,7 +827,7 @@ function OrderInner() {
             </div>
             <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
               <span className={`inline-block px-3 sm:px-4 py-1.5 text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full capitalize font-semibold ${order.status === 'cancelled' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-[#FAF6EF] text-[#9C6B30]'}`}>{order.status === 'cancelled' ? cancellationDisplayText : order.status}</span>
-              <a href={`/api/orders/${order.id}/invoice`} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 border border-[#1A1A1A] text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full hover:bg-[#1A1A1A] hover:text-white transition"><Download size={12} /> Invoice</a>
+              <a href={`/orders/${order.id}/invoice`} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 border border-[#1A1A1A] text-[9px] sm:text-[10px] tracking-widest uppercase rounded-full hover:bg-[#1A1A1A] hover:text-white transition"><FileText size={12} /> Invoice</a>
             </div>
           </div>
 
@@ -1473,7 +1473,8 @@ function OrderInner() {
           </div>
 
           <div className="mt-8 flex flex-wrap gap-2.5 sm:gap-3 justify-center">
-            <a href={`/api/orders/${order.id}/invoice`} target="_blank" rel="noreferrer" className="px-4 sm:px-8 py-2.5 sm:py-3 border border-[#1A1A1A] text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#1A1A1A] hover:text-white transition flex items-center gap-2"><Download size={14} /> Download Invoice</a>
+            <a href={`/orders/${order.id}/invoice`} target="_blank" rel="noreferrer" className="px-4 sm:px-8 py-2.5 sm:py-3 border border-[#1A1A1A] text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#1A1A1A] hover:text-white transition flex items-center gap-2"><FileText size={14} /> View Invoice</a>
+            <a href={`/api/orders/${order.id}/invoice`} target="_blank" rel="noreferrer" className="px-4 sm:px-8 py-2.5 sm:py-3 bg-[#FAF6EF] text-[#9C6B30] border border-[#9C6B30]/40 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] hover:text-white transition flex items-center gap-2"><Download size={14} /> Download PDF</a>
             <Link href="/shop" className="px-4 sm:px-8 py-2.5 sm:py-3 border border-[#1A1A1A] text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#1A1A1A] hover:text-white transition">Continue Shopping</Link>
             <Link href="/account" className="px-4 sm:px-8 py-2.5 sm:py-3 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30]">View All Orders</Link>
             {canRequestReturn && (

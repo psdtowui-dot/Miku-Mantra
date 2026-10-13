@@ -334,12 +334,20 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
           <div className="flex flex-col md:flex-row gap-6 justify-between items-start">
             <div className="w-full md:w-auto flex flex-col sm:flex-row gap-3">
               <a
+                href={`/orders/${order.id}/invoice`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center justify-center gap-2 px-4 py-3 border border-neutral-800 text-xs font-semibold tracking-widest uppercase rounded-lg hover:bg-neutral-800 hover:text-white transition-all shadow-xs w-full sm:w-auto text-center"
+              >
+                <FileText size={14} /> View Invoice
+              </a>
+              <a
                 href={`/api/orders/${order.id}/invoice`}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center justify-center gap-2 px-5 py-3 border border-neutral-800 text-xs font-semibold tracking-widest uppercase rounded-lg hover:bg-neutral-800 hover:text-white transition-all shadow-xs w-full sm:w-auto text-center"
+                className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-[#FAF6EF] text-[#9C6B30] border border-[#9C6B30]/40 text-xs font-semibold tracking-widest uppercase rounded-lg hover:bg-[#9C6B30] hover:text-white transition-all shadow-xs w-full sm:w-auto text-center"
               >
-                <Download size={14} /> Open/Download PDF Invoice
+                <Download size={14} /> Download PDF
               </a>
               <button
                 onClick={() => setShowShippingSlip(true)}

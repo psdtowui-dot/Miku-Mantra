@@ -2555,10 +2555,50 @@ async function handleRoute(request, { params }) {
         console.warn('Invoice: Failed to resolve logoBuffer:', err.message);
       }
 
+      let faviconBuffer = null;
+      const faviconUrl = siteSettingsDoc?.favicon;
+      if (faviconUrl && faviconUrl !== '/favicon.ico') {
+        try {
+          if (faviconUrl.includes('/uploads/')) {
+            const filename = faviconUrl.split('/uploads/')[1];
+            const fileDoc = await db.collection('uploads').findOne({ filename });
+            if (fileDoc && fileDoc.data) {
+              let buf = fileDoc.data;
+              if (buf.buffer) buf = Buffer.from(buf.buffer);
+              else if (!Buffer.isBuffer(buf)) buf = Buffer.from(buf);
+              faviconBuffer = buf;
+            } else {
+              const fsPath = pathModule.join(process.cwd(), 'public', 'uploads', filename);
+              if (fs.existsSync(fsPath)) {
+                faviconBuffer = fs.readFileSync(fsPath);
+              }
+            }
+          } else if (faviconUrl.startsWith('data:')) {
+            const b64 = faviconUrl.split(',')[1];
+            if (b64) faviconBuffer = Buffer.from(b64, 'base64');
+          } else if (faviconUrl.startsWith('http://') || faviconUrl.startsWith('https://')) {
+            const res = await fetch(faviconUrl);
+            if (res.ok) {
+              faviconBuffer = Buffer.from(await res.arrayBuffer());
+            }
+          }
+        } catch (favErr) {
+          console.warn('Invoice: Failed to resolve faviconBuffer:', favErr.message);
+        }
+      }
+      if (!faviconBuffer) {
+        const appIconPath = pathModule.join(process.cwd(), 'app', 'icon.png');
+        if (fs.existsSync(appIconPath)) {
+          try { faviconBuffer = fs.readFileSync(appIconPath); } catch (e) {}
+        }
+      }
+
       const companyConfig = {
         name: footerDoc?.company?.name || siteSettingsDoc?.siteName || 'MikuMantra Fine Jewellery',
         logo: logoUrl,
         logoBuffer,
+        favicon: faviconUrl,
+        faviconBuffer,
         address: footerDoc?.company?.address || '',
         email: footerDoc?.company?.email || '',
         phone: footerDoc?.company?.phone || '',
@@ -5325,6 +5365,61 @@ async function handleRoute(request, { params }) {
             invalidateSiteDataCache();
           }
 
+          // Synchronize favicon to public/favicon.ico and app/icon.png so direct documents like invoices display the brand favicon
+          if (updates.favicon) {
+            try {
+              let favBuf = null;
+              if (updates.favicon.includes('/uploads/')) {
+                const fname = updates.favicon.split('/uploads/')[1];
+                const fDoc = await db.collection('uploads').findOne({ filename: fname });
+                if (fDoc && fDoc.data) {
+                  let b = fDoc.data;
+                  if (b.buffer) b = Buffer.from(b.buffer);
+                  else if (!Buffer.isBuffer(b)) b = Buffer.from(b);
+                  favBuf = b;
+                } else {
+                  const p = pathModule.join(process.cwd(), 'public', 'uploads', fname);
+                  if (fs.existsSync(p)) favBuf = fs.readFileSync(p);
+                }
+              } else if (updates.favicon.startsWith('data:')) {
+                const b64 = updates.favicon.split(',')[1];
+                if (b64) favBuf = Buffer.from(b64, 'base64');
+              } else if (updates.favicon.startsWith('http://') || updates.favicon.startsWith('https://')) {
+                const r = await fetch(updates.favicon);
+                if (r.ok) favBuf = Buffer.from(await r.arrayBuffer());
+              }
+
+              if (favBuf && favBuf.length > 0) {
+                let icoData = favBuf;
+                // If it's a PNG image, wrap in a standard ICO container
+                if (favBuf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))) {
+                  const pngLen = favBuf.length;
+                  const header = Buffer.alloc(6);
+                  header.writeUInt16LE(0, 0); // reserved
+                  header.writeUInt16LE(1, 2); // type 1 (ICO)
+                  header.writeUInt16LE(1, 4); // 1 image
+                  const entry = Buffer.alloc(16);
+                  entry.writeUInt8(0, 0); // width
+                  entry.writeUInt8(0, 1); // height
+                  entry.writeUInt8(0, 2); // color count
+                  entry.writeUInt8(0, 3); // reserved
+                  entry.writeUInt16LE(1, 4); // planes
+                  entry.writeUInt16LE(32, 6); // bpp
+                  entry.writeUInt32LE(pngLen, 8); // size
+                  entry.writeUInt32LE(22, 12); // offset (6 + 16 = 22)
+                  icoData = Buffer.concat([header, entry, favBuf]);
+
+                  try {
+                    fs.writeFileSync(pathModule.join(process.cwd(), 'app', 'icon.png'), favBuf);
+                  } catch (e) {}
+                }
+                fs.writeFileSync(pathModule.join(process.cwd(), 'public', 'favicon.ico'), icoData);
+              }
+            } catch (syncFavErr) {
+              console.warn('Failed to sync favicon.ico:', syncFavErr.message);
+            }
+          }
+
           _cache.delete('site_settings');
           try {
             revalidatePath('/', 'layout');
@@ -5657,17 +5752,17 @@ async function handleRoute(request, { params }) {
           const file = formData.get('file');
           if (!file) return err('No file provided');
 
-          // Image/SVG upload validations
+          // Image/SVG/Favicon upload validations
           const fileType = file.type || 'image/jpeg';
-          const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+          const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon', 'image/ico'];
           if (!allowedTypes.includes(fileType)) {
-            return err('Invalid MIME type. Only image/jpeg, image/png, image/webp, and image/svg+xml are allowed.', 400);
+            return err('Invalid MIME type. Only image/jpeg, image/png, image/webp, image/svg+xml, and .ico images are allowed.', 400);
           }
 
           const originalName = file.name || 'image.jpg';
           const ext = pathModule.extname(originalName).toLowerCase();
-          if (!['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext)) {
-            return err('Invalid file extension. Only .jpg, .jpeg, .png, .webp, and .svg are allowed.', 400);
+          if (!['.jpg', '.jpeg', '.png', '.webp', '.svg', '.ico'].includes(ext)) {
+            return err('Invalid file extension. Only .jpg, .jpeg, .png, .webp, .svg, and .ico are allowed.', 400);
           }
 
           if (file.size > 5 * 1024 * 1024) {
