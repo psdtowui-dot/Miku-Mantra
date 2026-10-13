@@ -304,9 +304,9 @@ function WhyUs({ assuranceSection, assuranceCards = [] }) {
 
 
 
-function Newsletter() {
-  const [settings, setSettings] = useState(null);
-  const [settingsLoading, setSettingsLoading] = useState(true);
+function Newsletter({ initialSettings }) {
+  const [settings, setSettings] = useState(initialSettings || null);
+  const [settingsLoading, setSettingsLoading] = useState(!initialSettings);
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [submittedSuccess, setSubmittedSuccess] = useState(false);
@@ -366,6 +366,13 @@ function Newsletter() {
   };
 
   const design = settings.design || {};
+  const privileges = Array.isArray(settings.privileges)
+    ? settings.privileges.filter(p => typeof p === 'string' && p.trim().length > 0)
+    : [
+        '₹2,000 Off First Order',
+        'Private Previews & Access',
+        'Zero Spam • Unsubscribe Anytime'
+      ];
 
   return (
     <section
@@ -463,17 +470,16 @@ function Newsletter() {
         )}
 
         {/* Privilege Highlights */}
-        <div className="mt-10 pt-6 border-t border-black/5 flex flex-wrap items-center justify-center gap-6 text-[11px] font-light text-neutral-500">
-          <div className="flex items-center gap-1.5">
-            <span className="text-[#9C6B30]">✦</span> ₹2,000 Off First Order
+        {privileges && privileges.length > 0 && (
+          <div className="mt-10 pt-6 border-t border-black/5 flex flex-wrap items-center justify-center gap-6 text-[11px] font-light text-neutral-500">
+            {privileges.map((item, idx) => (
+              <div key={idx} className="flex items-center gap-1.5">
+                <span className="text-[#9C6B30]" style={{ color: design.accentColor || '#9C6B30' }}>✦</span>
+                <span>{item}</span>
+              </div>
+            ))}
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[#9C6B30]">✦</span> Private Previews & Access
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[#9C6B30]">✦</span> Zero Spam • Unsubscribe Anytime
-          </div>
-        </div>
+        )}
       </div>
     </section>
   );
@@ -546,7 +552,7 @@ export default function HomePage({ initialData }) {
       <OfferBanner promotions={homepageCMS.homepagePromotions} />
       <WhyUs assuranceSection={homepageCMS.assuranceSection} assuranceCards={homepageCMS.assuranceCards} />
       <SocialMediaSection initialItems={initialData?.socialMedia} initialSettings={initialData?.socialMediaSettings} />
-      <Newsletter />
+      <Newsletter initialSettings={initialData?.newsletterSettings} />
       <RecentlyViewed />
       <CompareBar />
     </main>
