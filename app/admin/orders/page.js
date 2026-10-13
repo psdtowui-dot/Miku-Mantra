@@ -61,7 +61,18 @@ export default function AdminOrders() {
     });
     if (r.ok) {
       const data = await r.json();
-      toast.success(courier && (!status || status === activeOrder?.status) ? 'Courier tracking updated' : 'Order status updated');
+      const emailRes = data.emailNotification;
+      const orderNum = data.order?.orderNumber || id;
+
+      if (emailRes?.sent) {
+        toast.success(`Order #${orderNum} updated · Email sent to customer`);
+      } else if (emailRes?.skipped && emailRes?.reason === 'NO_CUSTOMER_EMAIL') {
+        toast.warning(`Order #${orderNum} updated, but customer email is not on file`);
+      } else if (emailRes?.sent === false && emailRes?.error) {
+        toast.warning(`Order #${orderNum} updated, but email delivery failed: ${emailRes.error}`);
+      } else {
+        toast.success(courier && (!status || status === activeOrder?.status) ? 'Courier tracking updated' : `Order #${orderNum} status updated`);
+      }
 
       // If we are currently viewing this order in the modal, update its details
       if (activeOrder && activeOrder.id === id && data.order) {
@@ -159,8 +170,10 @@ export default function AdminOrders() {
                             className="border border-neutral-200 rounded px-2 py-1 text-xs uppercase cursor-pointer bg-white focus:outline-none focus:border-[#9C6B30]"
                           >
                             <option value="confirmed">Confirmed</option>
+                            <option value="processing">Processing</option>
                             <option value="packed">Packed</option>
                             <option value="shipped">Shipped</option>
+                            <option value="out_for_delivery">Out for Delivery</option>
                             <option value="delivered">Delivered</option>
                             <option value="cancelled">Cancelled</option>
                           </select>

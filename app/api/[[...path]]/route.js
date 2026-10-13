@@ -10,8 +10,17 @@ import crypto from 'crypto'
 import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS as SEED_COLLECTIONS, DEFAULT_PRODUCT_BENEFITS, DEFAULT_PRODUCT_FILTERS, slugify } from '@/lib/products'
 import { buildInvoicePDF } from '@/lib/pdf-invoice'
 import { buildShippingSlipPDF } from '@/lib/pdf-shippingslip'
-import { WAREHOUSE_PINCODE } from '@/lib/constants'
-import { sendOrderPlacedNotification, sendOrderCancelledNotification, sendReturnRequestedNotification, sendReturnApprovedNotification, sendReturnRejectedNotification, sendRefundCompletedNotification } from '@/lib/notifications'
+import {
+  sendOrderPlacedNotification,
+  sendOrderCancelledNotification,
+  sendReturnRequestedNotification,
+  sendReturnApprovedNotification,
+  sendReturnRejectedNotification,
+  sendRefundCompletedNotification,
+  sendOrderStatusUpdatedNotification,
+  sendOrderShippedNotification
+} from '@/lib/notifications'
+import { generateTrackingUrl } from '@/lib/courier'
 import {
   sendPasswordResetEmail,
   checkEmailProviderStatus,
@@ -6512,6 +6521,10 @@ async function handleRoute(request, { params }) {
               { 'address.phone': reg },
               { 'items.name': reg },
               { guestEmail: reg },
+              { trackingNumber: reg },
+              { 'courier.trackingNumber': reg },
+              { carrier: reg },
+              { 'courier.carrier': reg },
               { userId: { $in: matchingUserIds } }
             ]
           };
@@ -6555,6 +6568,10 @@ async function handleRoute(request, { params }) {
                   { 'address.phone': reg },
                   { 'items.name': reg },
                   { guestEmail: reg },
+                  { trackingNumber: reg },
+                  { 'courier.trackingNumber': reg },
+                  { carrier: reg },
+                  { 'courier.carrier': reg },
                   { userId: { $in: matchingUserIds } }
                 ]
               }
@@ -6575,7 +6592,7 @@ async function handleRoute(request, { params }) {
       if (sub.startsWith('orders/') && method === 'PUT') {
         if (!hasPermission(admin, 'orders.update')) return err('Permission denied: orders.update required', 403);
         const id = sub.split('/')[1];
-        const b = await request.json();
+        const b = await request.json().catch(() => ({}));
 
         const existingOrder = await db.collection('orders').findOne({ id });
         if (!existingOrder) return err('Order not found', 404);
@@ -6584,18 +6601,80 @@ async function handleRoute(request, { params }) {
           return err('Cancelled orders cannot be updated. Cancelled is a terminal state.', 400);
         }
 
-        const notes = {
-          packed: 'Order packed & ready to ship.',
-          shipped: 'Shipped via courier.',
-          delivered: 'Delivered successfully.',
-          cancelled: 'Cancelled by MikuMantra',
-          confirmed: 'Order confirmed.'
-        };
-        const setDoc = { status: b.status };
-        if (b.status === 'delivered') {
+        const VALID_STATUSES = ['confirmed', 'placed', 'processing', 'packed', 'shipped', 'out_for_delivery', 'out for delivery', 'delivered', 'cancelled', 'refunded'];
+        let targetStatus = null;
+        if (b.status !== undefined && b.status !== null) {
+          const rawStatus = String(b.status).toLowerCase().trim();
+          if (!VALID_STATUSES.includes(rawStatus)) {
+            return err(`Invalid order status "${b.status}". Supported: Confirmed, Processing, Packed, Shipped, Out for Delivery, Delivered, Cancelled, Refunded.`, 400);
+          }
+          targetStatus = rawStatus === 'placed' ? 'confirmed' : (rawStatus === 'out for delivery' ? 'out_for_delivery' : rawStatus);
+        }
+
+        const currentStatus = String(existingOrder.status || '').toLowerCase().trim();
+        const isStatusChanging = Boolean(targetStatus && targetStatus !== currentStatus);
+        const effectiveStatus = targetStatus || currentStatus;
+        const hasCourierInput = Boolean(
+          b.courier ||
+          b.carrier !== undefined ||
+          b.trackingNumber !== undefined ||
+          b.trackingUrl !== undefined ||
+          b.notes !== undefined
+        );
+
+        // Deduplication: If status is unchanged and no courier update, avoid redundant writes and duplicate emails
+        if (!isStatusChanging && !hasCourierInput) {
+          return ok({
+            message: 'Order status unchanged.',
+            order: clean(existingOrder),
+            emailNotification: { sent: false, skipped: true, reason: 'STATUS_UNCHANGED' }
+          });
+        }
+
+        const setDoc = { updatedAt: new Date() };
+        if (isStatusChanging) {
+          setDoc.status = effectiveStatus;
+        }
+
+        if (effectiveStatus === 'delivered' && !existingOrder.deliveredAt) {
           setDoc.deliveredAt = new Date();
         }
-        if (b.status === 'cancelled') {
+
+        // Structured Courier and Logistics Handling
+        let courierDoc = null;
+        if (hasCourierInput || effectiveStatus === 'shipped') {
+          const rawCarrier = b.courier?.carrier !== undefined ? b.courier.carrier : (b.carrier !== undefined ? b.carrier : (existingOrder.courier?.carrier || existingOrder.carrier || ''));
+          const rawTrackingNum = b.courier?.trackingNumber !== undefined ? b.courier.trackingNumber : (b.trackingNumber !== undefined ? b.trackingNumber : (existingOrder.courier?.trackingNumber || existingOrder.trackingNumber || ''));
+          let rawTrackingUrl = b.courier?.trackingUrl !== undefined ? b.courier.trackingUrl : (b.trackingUrl !== undefined ? b.trackingUrl : (existingOrder.courier?.trackingUrl || existingOrder.trackingUrl || ''));
+          const rawNotes = b.courier?.notes !== undefined ? b.courier.notes : (b.notes !== undefined ? b.notes : (existingOrder.courier?.notes || ''));
+
+          const carrier = (rawCarrier || '').trim();
+          const trackingNumber = (rawTrackingNum || '').trim();
+          let trackingUrl = (rawTrackingUrl || '').trim();
+          if (!trackingUrl && carrier && trackingNumber) {
+            trackingUrl = generateTrackingUrl(carrier, trackingNumber);
+          }
+          const shippedAt = b.courier?.shippedAt ? new Date(b.courier.shippedAt) : (existingOrder.shippedAt || existingOrder.courier?.shippedAt || new Date());
+
+          courierDoc = {
+            carrier,
+            trackingNumber,
+            trackingUrl,
+            shippedAt,
+            notes: (rawNotes || '').trim()
+          };
+
+          setDoc.courier = courierDoc;
+          if (carrier) setDoc.carrier = carrier;
+          if (trackingNumber !== undefined) setDoc.trackingNumber = trackingNumber;
+          if (trackingUrl !== undefined) setDoc.trackingUrl = trackingUrl;
+          if (!existingOrder.shippedAt && (effectiveStatus === 'shipped' || effectiveStatus === 'out_for_delivery' || effectiveStatus === 'delivered')) {
+            setDoc.shippedAt = shippedAt;
+          }
+        }
+
+        // Cancellation Handling & Restocking
+        if (effectiveStatus === 'cancelled' && isStatusChanging) {
           if (!hasPermission(admin, 'orders.cancel') && !hasPermission(admin, 'orders.update')) {
             return err('Permission denied: orders.cancel required', 403);
           }
@@ -6618,25 +6697,52 @@ async function handleRoute(request, { params }) {
           }
         }
 
+        const notes = {
+          confirmed: 'Order confirmed.',
+          processing: 'Order processing & preparation in progress.',
+          packed: 'Order packed & ready to ship.',
+          shipped: 'Shipped via courier.',
+          out_for_delivery: 'Out for delivery to customer.',
+          delivered: 'Delivered successfully.',
+          cancelled: 'Cancelled by MikuMantra',
+          refunded: 'Refund completed.'
+        };
+
+        let historyNote = b.note || (isStatusChanging ? notes[effectiveStatus] : '') || '';
+        if (effectiveStatus === 'shipped' && courierDoc) {
+          if (courierDoc.carrier && courierDoc.trackingNumber) {
+            historyNote = b.note || `Shipped via ${courierDoc.carrier} (AWB: ${courierDoc.trackingNumber})`;
+          } else if (courierDoc.carrier) {
+            historyNote = b.note || `Shipped via ${courierDoc.carrier}`;
+          }
+        } else if (hasCourierInput && !isStatusChanging) {
+          const cName = courierDoc?.carrier || existingOrder.carrier || 'Courier';
+          const cAwb = courierDoc?.trackingNumber || existingOrder.trackingNumber || '';
+          historyNote = b.note || `Courier tracking updated: ${cName}${cAwb ? ` (AWB: ${cAwb})` : ''}`;
+        }
+
+        const updateOps = { $set: setDoc };
+        if (historyNote || isStatusChanging) {
+          updateOps.$push = {
+            statusHistory: {
+              status: effectiveStatus,
+              at: new Date(),
+              note: historyNote
+            }
+          };
+        }
+
         const updateResult = await db.collection('orders').updateOne(
           { id, status: { $ne: 'cancelled' } },
-          {
-            $set: setDoc,
-            $push: {
-              statusHistory: {
-                status: b.status,
-                at: new Date(),
-                note: b.note || notes[b.status] || ''
-              }
-            }
-          }
+          updateOps
         );
 
-        if (updateResult.modifiedCount === 0) {
+        if (updateResult.matchedCount === 0) {
           return err('Cancelled orders cannot be updated.', 400);
         }
 
-        if (b.status === 'cancelled' && Array.isArray(existingOrder.items)) {
+        // Restock inventory on cancellation
+        if (effectiveStatus === 'cancelled' && isStatusChanging && Array.isArray(existingOrder.items)) {
           for (const item of existingOrder.items) {
             if (item.id && item.qty > 0) {
               await db.collection('products').updateOne(
@@ -6650,7 +6756,8 @@ async function handleRoute(request, { params }) {
 
         const up = await db.collection('orders').findOne({ id });
 
-        if (b.status === 'cancelled') {
+        // Audit Logging
+        if (effectiveStatus === 'cancelled' && isStatusChanging) {
           try {
             await logAdminActivity(db, {
               admin,
@@ -6668,15 +6775,68 @@ async function handleRoute(request, { params }) {
           } catch (logErr) {
             console.error('Failed to log admin cancellation activity:', logErr);
           }
-
+        } else if (isStatusChanging) {
           try {
-            await sendOrderCancelledNotification({ order: up, user: null, db });
-          } catch (notifErr) {
-            console.error('Failed to send order cancellation notification:', notifErr);
+            await logAdminActivity(db, {
+              admin,
+              action: 'ORDER_STATUS_UPDATED',
+              module: 'Orders',
+              targetId: existingOrder.id,
+              targetName: `Order #${existingOrder.orderNumber}`,
+              metadata: {
+                oldStatus: currentStatus,
+                newStatus: effectiveStatus,
+                carrier: courierDoc?.carrier || null,
+                trackingNumber: courierDoc?.trackingNumber || null
+              },
+              request
+            });
+          } catch (logErr) {
+            console.error('Failed to log admin status update activity:', logErr);
           }
         }
 
-        return ok({ order: clean(up) });
+        // Customer Email Notification Delivery
+        let emailResult = { sent: false };
+        if (isStatusChanging || (effectiveStatus === 'shipped' && hasCourierInput)) {
+          try {
+            const customerUser = up.userId ? await db.collection('users').findOne({ id: up.userId }) : null;
+            emailResult = await sendOrderStatusUpdatedNotification({
+              order: up,
+              previousStatus: currentStatus,
+              newStatus: effectiveStatus,
+              user: customerUser,
+              courier: up.courier,
+              db
+            });
+          } catch (notifErr) {
+            console.error(`[Admin Order Update] Notification failed for #${up.orderNumber}:`, notifErr.message);
+            emailResult = { sent: false, error: notifErr.message };
+          }
+
+          // Trigger supplementary SMS/WhatsApp if applicable
+          if (effectiveStatus === 'cancelled') {
+            try {
+              await sendOrderCancelledNotification({ order: up, user: null, db });
+            } catch (notifErr) {
+              console.error('Failed to send order cancellation notification:', notifErr.message);
+            }
+          }
+
+          if (effectiveStatus === 'shipped') {
+            try {
+              await sendOrderShippedNotification({ order: up, user: null, db });
+            } catch (notifErr) {
+              console.error('Failed to send order shipment notification:', notifErr.message);
+            }
+          }
+        }
+
+        return ok({
+          message: 'Order updated successfully.',
+          order: clean(up),
+          emailNotification: emailResult
+        });
       }
 
       // Customers

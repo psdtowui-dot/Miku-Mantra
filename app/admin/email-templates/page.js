@@ -5,7 +5,7 @@ import {
   Save, Loader2, RefreshCw, Send, CheckCircle2,
   AlertCircle, Smartphone, Monitor, Copy, Check,
   ShoppingBag, Truck, BellRing, KeyRound, HeartHandshake,
-  ExternalLink, Power, ShieldCheck
+  ExternalLink, Power, ShieldCheck, Package, Compass, XCircle, Wallet
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -18,10 +18,45 @@ const TEMPLATE_TABS = [
     category: 'Orders'
   },
   {
+    id: 'order_processing',
+    label: 'Order Processing',
+    sublabel: 'In production & packing',
+    icon: Package,
+    category: 'Orders'
+  },
+  {
     id: 'order_shipped',
     label: 'Shipment & Tracking',
     sublabel: 'Dispatch notification',
     icon: Truck,
+    category: 'Orders'
+  },
+  {
+    id: 'order_out_for_delivery',
+    label: 'Out for Delivery',
+    sublabel: 'Day of delivery alert',
+    icon: Compass,
+    category: 'Orders'
+  },
+  {
+    id: 'order_delivered',
+    label: 'Order Delivered',
+    sublabel: 'Delivery completion notice',
+    icon: CheckCircle2,
+    category: 'Orders'
+  },
+  {
+    id: 'order_cancelled',
+    label: 'Order Cancelled',
+    sublabel: 'Cancellation & refund notice',
+    icon: XCircle,
+    category: 'Orders'
+  },
+  {
+    id: 'order_refunded',
+    label: 'Refund Processed',
+    sublabel: 'Refund credit confirmation',
+    icon: Wallet,
     category: 'Orders'
   },
   {

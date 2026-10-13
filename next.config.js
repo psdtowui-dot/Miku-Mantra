@@ -11,7 +11,7 @@ const nextConfig = {
     ],
   },
   // Renamed from experimental.serverComponentsExternalPackages in Next 15
-  serverExternalPackages: ['mongodb', 'pdfkit'],
+  serverExternalPackages: ['mongodb', 'pdfkit', 'nodemailer'],
   webpack(config, { dev }) {
     if (dev) {
       config.watchOptions = {

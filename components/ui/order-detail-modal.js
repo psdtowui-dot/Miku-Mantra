@@ -19,7 +19,9 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
   const address = order.address || {};
   const amounts = order.amounts || {};
   const historyByStatus = Object.fromEntries((order.statusHistory || []).map(h => [h.status, h]));
-  const currentIdx = STEPS.findIndex(s => s.key === order.status);
+  const currentIdx = order.status === 'processing'
+    ? 1
+    : (order.status === 'out_for_delivery' ? 2 : STEPS.findIndex(s => s.key === order.status));
   const activeIdx = order.status === 'cancelled' ? 0 : (currentIdx === -1 ? 0 : currentIdx);
   const cancellationDisplayText = getCancellationLabel(order) || 'Cancelled';
   const cancellationActor = getCancellationActor(order);
@@ -86,8 +88,10 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
                       className="border border-neutral-200 bg-[#F7F5F0] rounded-md px-2.5 py-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-700 focus:outline-none focus:border-[#9C6B30] cursor-pointer"
                     >
                       <option value="confirmed">Confirmed</option>
+                      <option value="processing">Processing</option>
                       <option value="packed">Packed</option>
                       <option value="shipped">Shipped</option>
+                      <option value="out_for_delivery">Out for Delivery</option>
                       <option value="delivered">Delivered</option>
                       <option value="cancelled">Cancelled</option>
                     </select>
