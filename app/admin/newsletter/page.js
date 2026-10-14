@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import Link from 'next/link';
 import {
   Mail, Search, X, Download, Trash2, CheckCircle2, XCircle,
   Loader2, ChevronLeft, ChevronRight, RefreshCw, Filter, AlertTriangle,
-  UserX, ArrowUpRight, Eye, CheckSquare, Square, History, ShieldCheck, HelpCircle
+  UserX, ArrowUpRight, Eye, CheckSquare, Square, History, ShieldCheck, HelpCircle, Settings
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -262,6 +263,15 @@ export default function AdminNewsletterPage() {
         </div>
 
         <div className="flex items-center gap-2 self-start sm:self-auto">
+          <Link
+            href="/admin/newsletter/settings"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs border border-neutral-200 rounded-lg bg-white text-neutral-700 hover:bg-neutral-50 transition shadow-2xs font-medium"
+            title="Configure newsletter display copy, visibility, and styling"
+          >
+            <Settings size={13} />
+            <span>Newsletter Settings</span>
+          </Link>
+
           <button
             onClick={loadData}
             disabled={loading}

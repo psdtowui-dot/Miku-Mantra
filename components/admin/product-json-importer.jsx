@@ -647,9 +647,9 @@ export default function ProductJsonImporter({ isOpen, onClose, existingProducts 
         if (usedImageIds.has(img.id)) return;
         const normImg = normalizeKey(img.name);
 
-        const matchesName = normImg.length > 2 && (normImg === normName || normImg.includes(normName) || normName.includes(normImg));
-        const matchesSku = normSku && normSku.length > 2 && (normImg === normSku || normImg.includes(normSku));
-        const matchesSlug = normSlug && normSlug.length > 2 && (normImg === normSlug || normImg.includes(normSlug));
+        const matchesName = normImg.length > 2 && normImg === normName;
+        const matchesSku = normSku && normSku.length > 2 && normImg === normSku;
+        const matchesSlug = normSlug && normSlug.length > 2 && normImg === normSlug;
 
         if (matchesName || matchesSku || matchesSlug) {
           matchedForThisProduct.push(img);

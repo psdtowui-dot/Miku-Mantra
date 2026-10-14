@@ -63,10 +63,10 @@ export default function SocialMediaSection({ initialItems, initialSettings }) {
   const isAnimationEnabled = settings.hoverAnimation !== false;
 
   return (
-    <section className="py-14 sm:py-20 bg-white overflow-hidden" aria-label="Social Media Gallery">
+    <section className="pt-14 sm:pt-20 bg-[#fff6ed] overflow-hidden pb-0" aria-label="Social Media Gallery">
       <div className="max-w-[1400px] mx-auto px-4 sm:px-6 md:px-8 text-center">
         {/* Section Header */}
-        <div className="mb-8 sm:mb-12">
+        <div className="mb-4 sm:mb-8">
           <div className="text-[11px] sm:text-xs tracking-[0.35em] uppercase text-[#9C6B30] mb-2 font-medium">
             {settings.eyebrow || '@mikumantra.jewels'}
           </div>
@@ -83,7 +83,7 @@ export default function SocialMediaSection({ initialItems, initialSettings }) {
         </div>
 
         {/* Desktop Dynamic Hover Gallery (md and above) */}
-        <div className="hidden md:flex items-center justify-center gap-3 lg:gap-4 py-8 px-2 overflow-visible">
+        <div className="hidden md:flex items-center justify-center gap-3 lg:gap-4 pt-8 pb-20 px-2 overflow-visible">
           {activeItems.map((item) => {
             const isHovered = hoveredId === item.id;
             const isOtherHovered = hoveredId !== null && !isHovered;
