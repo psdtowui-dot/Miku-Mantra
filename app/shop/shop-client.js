@@ -4,7 +4,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import ProductCard from '@/components/site/product-card';
 import CompareBar from '@/components/site/compare-bar';
-import { PRODUCTS as SEED, getNormalizedSpecs } from '@/lib/products';
+import { getNormalizedSpecs } from '@/lib/products';
 import { SlidersHorizontal, X, Loader2, ChevronDown } from 'lucide-react';
 
 function normalizeAlphaNum(str) {
@@ -164,12 +164,12 @@ function matchesFilterValue(product, key, selectedVal, group) {
   return false;
 }
 
-function ShopInner() {
+function ShopInner({ initialProducts }) {
   const sp = useSearchParams();
   const router = useRouter();
 
-  const [all, setAll] = useState(SEED);
-  const [loading, setLoading] = useState(false);
+  const [all, setAll] = useState(Array.isArray(initialProducts) ? initialProducts : []);
+  const [loading, setLoading] = useState(!Array.isArray(initialProducts) || initialProducts.length === 0);
 
   // Dynamic Product Filter Groups fetched from Backend API
   const [filterGroups, setFilterGroups] = useState([]);
@@ -203,7 +203,7 @@ function ShopInner() {
         ]);
         if (pRes.ok) {
           const d = await pRes.json();
-          if (d.products?.length) setAll(d.products);
+          if (d && Array.isArray(d.products)) setAll(d.products);
         }
         if (filtersRes.ok) {
           const d = await filtersRes.json();
@@ -772,9 +772,15 @@ function ShopInner() {
             </div>
 
             {/* Product Cards Grid */}
-            {loading ? (
-              <div className="py-24 text-center">
-                <Loader2 className="animate-spin inline text-[#9C6B30]" size={24} />
+            {loading && all.length === 0 ? (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 sm:gap-6 md:gap-8">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="animate-pulse space-y-3">
+                    <div className="rounded-xl bg-[#FAF6EF] aspect-[4/5] w-full" />
+                    <div className="h-4 bg-neutral-100 rounded w-3/4 mx-auto" />
+                    <div className="h-3 bg-neutral-100 rounded w-1/2 mx-auto" />
+                  </div>
+                ))}
               </div>
             ) : list.length === 0 ? (
               <div className="text-center py-20 px-4">
@@ -807,10 +813,10 @@ function ShopInner() {
   );
 }
 
-export default function ShopClient() {
+export default function ShopClient({ initialProducts }) {
   return (
     <Suspense fallback={<div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-[#9C6B30]" /></div>}>
-      <ShopInner />
+      <ShopInner initialProducts={initialProducts} />
     </Suspense>
   );
 }

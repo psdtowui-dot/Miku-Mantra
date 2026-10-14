@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { useWishlist } from '@/lib/cart-store';
-import { PRODUCTS, formatINR, formatRating } from '@/lib/products';
+import { formatINR, formatRating } from '@/lib/products';
 import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound, RotateCcw, Clock, Star, Sparkles, CheckCircle2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { getCancellationLabel } from '@/lib/utils';
@@ -331,7 +331,6 @@ export default function AccountPage() {
 
   if (loading || !user) return <div className="h-96 flex items-center justify-center text-neutral-400"><Loader2 className="animate-spin" /></div>;
 
-  const wishItems = PRODUCTS.filter(p => ids.includes(p.id));
   const tabs = [
     { k: 'profile', n: 'Profile', i: User },
     { k: 'security', n: 'Password & Security', i: Lock },

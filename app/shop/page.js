@@ -1,5 +1,8 @@
 import ShopClient from './shop-client';
-import { getSiteSettings, getCanonicalBaseUrl, toAbsoluteUrl, applyTitleTemplate } from '@/lib/db-site-settings';
+import { getSiteSettings, getCanonicalBaseUrl, toAbsoluteUrl, applyTitleTemplate, getShopProductsDB } from '@/lib/db-site-settings';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export async function generateMetadata({ searchParams }) {
   const params = await searchParams;
@@ -57,6 +60,8 @@ export async function generateMetadata({ searchParams }) {
   };
 }
 
-export default function ShopPage() {
-  return <ShopClient />;
+export default async function ShopPage() {
+  const initialProducts = await getShopProductsDB();
+  const serialized = initialProducts ? JSON.parse(JSON.stringify(initialProducts)) : [];
+  return <ShopClient initialProducts={serialized} />;
 }

@@ -55,7 +55,18 @@ const _cache = new Map();
 function cacheGet(k) { const e = _cache.get(k); if (!e) return null; if (Date.now() > e.exp) { _cache.delete(k); return null; } return e.v; }
 function cacheSet(k, v, ttlMs = 60000) { _cache.set(k, { v, exp: Date.now() + ttlMs }); }
 function cacheBust(prefix) {
-  for (const k of _cache.keys()) { if (k.startsWith(prefix)) _cache.delete(k); }
+  for (const k of _cache.keys()) { if (!prefix || k.startsWith(prefix)) _cache.delete(k); }
+  if (!prefix || prefix.includes('product')) {
+    _cache.delete('homepage_data');
+    _cache.delete('admin_products');
+    _cache.delete('admin_dashboard');
+    _cache.delete('shop_products');
+    try {
+      invalidateSiteDataCache('homepage_data');
+      invalidateSiteDataCache('shop_products');
+      invalidateSiteDataCache('product_');
+    } catch (e) {}
+  }
   try { invalidateSiteDataCache(prefix); } catch (e) {}
 }
 
@@ -305,6 +316,9 @@ async function ensureIndexes(database) {
       database.collection('categories').createIndex({ id: 1 }),
       database.collection('collections').createIndex({ id: 1 }),
       database.collection('activity_logs').createIndex({ timestamp: -1 }),
+      database.collection('addresses').createIndex({ userId: 1, createdAt: -1 }),
+      database.collection('addresses').createIndex({ id: 1, userId: 1 }),
+      database.collection('coupons').createIndex({ code: 1 }),
       database.collection('wishlist').createIndex({ userId: 1, productId: 1 }, { unique: true }),
       database.collection('newsletter_subscribers').createIndex({ email: 1 }, { unique: true }),
       database.collection('newsletter_subscribers').createIndex({ status: 1 }),
@@ -323,7 +337,6 @@ async function ensureIndexes(database) {
         const database = db;
         await syncEnvAdminEmailsWithDatabase(database);
         await seedRbacIfEmpty(database);
-        await syncAllProductRatings(database);
         return database;
       } catch (err) {
         connectPromise = null; // Reset connection promise so subsequent requests can retry
@@ -337,11 +350,15 @@ async function ensureIndexes(database) {
 }
 
 async function seedIfEmpty(db) {
-  const pc = await db.collection('products').countDocuments();
-  if (pc === 0) {
-    const now = new Date()
-    const products = SEED_PRODUCTS.map(p => ({ ...p, stock: 25, featured: ['p01', 'p02', 'p03', 'p05', 'p08'].includes(p.id), bestseller: ['p04', 'p07', 'p11'].includes(p.id), newArrival: p.collection === 'new-arrival', seoTitle: p.name + ' | MikuMantra Fine Jewellery', seoDescription: p.description.slice(0, 155), video: '', productBenefits: p.productBenefits || DEFAULT_PRODUCT_BENEFITS, createdAt: now }))
-    await db.collection('products').insertMany(products)
+  const seededMeta = await db.collection('system_meta').findOne({ key: 'catalog_seeded' });
+  if (!seededMeta && Array.isArray(SEED_PRODUCTS) && SEED_PRODUCTS.length > 0) {
+    const pc = await db.collection('products').countDocuments();
+    if (pc === 0) {
+      const now = new Date();
+      const products = SEED_PRODUCTS.map(p => ({ ...p, stock: 25, featured: ['p01', 'p02', 'p03', 'p05', 'p08'].includes(p.id), bestseller: ['p04', 'p07', 'p11'].includes(p.id), newArrival: p.collection === 'new-arrival', seoTitle: p.name + ' | MikuMantra Fine Jewellery', seoDescription: p.description.slice(0, 155), video: '', productBenefits: p.productBenefits || DEFAULT_PRODUCT_BENEFITS, createdAt: now }));
+      await db.collection('products').insertMany(products);
+    }
+    await db.collection('system_meta').updateOne({ key: 'catalog_seeded' }, { $set: { key: 'catalog_seeded', seededAt: new Date() } }, { upsert: true });
   }
   const cc = await db.collection('categories').countDocuments()
   if (cc === 0) await db.collection('categories').insertMany(SEED_CATEGORIES.map(c => ({ ...c, id: uuidv4(), createdAt: new Date() })))
@@ -985,7 +1002,16 @@ async function requireAdmin(db, request) {
 function clean(doc) { if (!doc) return doc; const { _id, passwordHash, passwordSalt, ...r } = doc; return r }
 function ok(data) { return handleCORS(NextResponse.json(data)) }
 function err(msg, code = 400) { return handleCORS(NextResponse.json({ error: msg }, { status: code })) }
-function handleCORS(res) { res.headers.set('Access-Control-Allow-Origin', process.env.CORS_ORIGINS || '*'); res.headers.set('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH'); res.headers.set('Access-Control-Allow-Headers', 'Content-Type,Authorization,x-auth-token'); res.headers.set('Access-Control-Allow-Credentials', 'true'); return res }
+function handleCORS(res) {
+  res.headers.set('Access-Control-Allow-Origin', process.env.CORS_ORIGINS || '*');
+  res.headers.set('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH');
+  res.headers.set('Access-Control-Allow-Headers', 'Content-Type,Authorization,x-auth-token');
+  res.headers.set('Access-Control-Allow-Credentials', 'true');
+  res.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.headers.set('Pragma', 'no-cache');
+  res.headers.set('Expires', '0');
+  return res;
+}
 export async function OPTIONS() { return handleCORS(new NextResponse(null, { status: 200 })) }
 
 function calculateReturnRefund({ order, items }) {
@@ -2533,8 +2559,10 @@ async function handleRoute(request, { params }) {
 
       cacheBust('products:');
 
-      // Trigger WhatsApp & SMS notification for order placement
-      await sendOrderPlacedNotification({ order, user: u, db });
+      // Trigger WhatsApp, SMS & Email notifications asynchronously in background
+      sendOrderPlacedNotification({ order, user: u, db }).catch(notifErr => {
+        console.error('Non-blocking order notification failed:', notifErr?.message || notifErr);
+      });
 
       return ok({ order: clean(order) });
     }

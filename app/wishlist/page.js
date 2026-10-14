@@ -5,7 +5,6 @@ import Link from 'next/link';
 import ProductCard from '@/components/site/product-card';
 import { useWishlist } from '@/lib/cart-store';
 import { useAuth, authFetch } from '@/lib/use-auth';
-import { PRODUCTS } from '@/lib/products';
 import { Heart, Loader2 } from 'lucide-react';
 
 export default function WishlistPage() {
@@ -50,9 +49,8 @@ export default function WishlistPage() {
     );
   }
 
-  // Merge static PRODUCTS, API products catalog, and direct wishlist products
+  // Merge API products catalog and direct wishlist products
   const productMap = new Map();
-  PRODUCTS.forEach(p => productMap.set(p.id, p));
   productsList.forEach(p => productMap.set(p.id, p));
   (wishlistProducts || []).forEach(p => productMap.set(p.id, p));
   const allProducts = Array.from(productMap.values());

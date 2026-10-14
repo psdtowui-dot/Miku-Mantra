@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import {
@@ -30,7 +30,6 @@ import RecentlyViewed from '@/components/site/recently-viewed';
 import CompareBar from '@/components/site/compare-bar';
 import SocialMediaSection from '@/components/site/social-media-section';
 import CategoryShowcaseSection from '@/components/site/category-showcase-section';
-import { PRODUCTS as SEED, CATEGORIES as SEED_C, COLLECTIONS as SEED_K } from '@/lib/products';
 
 function Hero({ slides, transitionStyle = 'fade' }) {
   const [i, setI] = useState(0);
@@ -207,7 +206,7 @@ function SectionTitle({ eyebrow, title, sub }) {
 
 
 
-function CollectionsTabs({ collections = [], allProducts = [] }) {
+function CollectionsTabs({ collections = [], allProducts = [], loading = false }) {
   const uniqueCollections = (collections || []).reduce((acc, c) => {
     if (c && c.slug && !acc.some(existing => existing.slug === c.slug)) {
       acc.push(c);
@@ -216,23 +215,59 @@ function CollectionsTabs({ collections = [], allProducts = [] }) {
   }, []);
 
   const [active, setActive] = useState(uniqueCollections[0]?.slug || 'trending');
-  const list = (allProducts || []).filter(p => p.collection === active).slice(0, 8);
+  
+  // Normalized collection filter with graceful fallback to all active products
+  const list = useMemo(() => {
+    if (!allProducts || allProducts.length === 0) return [];
+    const matched = allProducts.filter(p => {
+      const pCol = String(p.collection || '').toLowerCase();
+      const pBadge = String(p.badge || '').toLowerCase();
+      const act = String(active || '').toLowerCase();
+      if (pCol === act || pBadge === act) return true;
+      if (act === 'trending' && (p.featured || pCol.includes('trend'))) return true;
+      if (act === 'best-sellers' && (p.bestseller || pCol.includes('best'))) return true;
+      if (act === 'new-arrival' && (p.newArrival || pCol.includes('new'))) return true;
+      return false;
+    });
+    return matched.length > 0 ? matched.slice(0, 8) : allProducts.slice(0, 8);
+  }, [allProducts, active]);
+
   return (
     <section className="bg-[#FAF6EF]/40 py-12 sm:py-20">
       <div className="max-w-[1400px] mx-auto px-4 sm:px-6 md:px-8">
         <SectionTitle eyebrow="The MikuMantra Edit" title="Featured Collections" sub="Handpicked by our design house — refreshed every season." />
-        <div className="flex justify-center flex-wrap gap-1.5 sm:gap-2 mb-8 sm:mb-10">
-          {uniqueCollections.map((c, i) => (
-            <button
-              key={c.id || `${c.slug}-${i}`}
-              onClick={() => setActive(c.slug)}
-              className={`px-3.5 py-2 sm:px-5 sm:py-2.5 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase rounded-full transition-all ${active === c.slug ? 'bg-[#1A1A1A] text-white' : 'bg-white text-[#1A1A1A] border border-[#E8E8E8] hover:border-[#9C6B30]'}`}
-            >
-              {c.name}
-            </button>
-          ))}
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-6 md:gap-8">{list.map((p, i) => <ProductCard key={p.id} p={p} index={i} />)}</div>
+        {uniqueCollections.length > 0 && (
+          <div className="flex justify-center flex-wrap gap-1.5 sm:gap-2 mb-8 sm:mb-10">
+            {uniqueCollections.map((c, i) => (
+              <button
+                key={c.id || `${c.slug}-${i}`}
+                onClick={() => setActive(c.slug)}
+                className={`px-3.5 py-2 sm:px-5 sm:py-2.5 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase rounded-full transition-all ${active === c.slug ? 'bg-[#1A1A1A] text-white' : 'bg-white text-[#1A1A1A] border border-[#E8E8E8] hover:border-[#9C6B30]'}`}
+              >
+                {c.name}
+              </button>
+            ))}
+          </div>
+        )}
+        {loading && list.length === 0 ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-6 md:gap-8">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="animate-pulse space-y-3">
+                <div className="rounded-xl bg-[#FAF6EF] aspect-[4/5] w-full" />
+                <div className="h-4 bg-neutral-100 rounded w-3/4 mx-auto" />
+                <div className="h-3 bg-neutral-100 rounded w-1/2 mx-auto" />
+              </div>
+            ))}
+          </div>
+        ) : list.length > 0 ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-6 md:gap-8">
+            {list.map((p, i) => <ProductCard key={p.id || p.slug} p={p} index={i} />)}
+          </div>
+        ) : (
+          <div className="text-center py-12 text-neutral-400 font-serif-luxe text-base">
+            Curated treasures arriving shortly.
+          </div>
+        )}
         <div className="text-center mt-8 sm:mt-12"><Link href="/shop" className="inline-flex items-center gap-2 border-b border-[#9C6B30] text-[#9C6B30] pb-1 text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase hover:gap-4 transition-all">View Entire Collection <ArrowRight size={14} /></Link></div>
       </div>
     </section>
@@ -495,9 +530,9 @@ function Newsletter({ initialSettings }) {
 const FALLBACK_HERO = [{ title: 'The Bridal Edit', kicker: 'Wedding Collection', copy: 'Heirloom polki chokers, uncut diamond haars & maang tikkas — handcrafted over 120+ hours.', cta: 'Discover the Edit', href: '/shop?category=wedding', img: 'https://images.unsplash.com/photo-1601121141461-9d6647bca1ed?crop=entropy&cs=srgb&fm=jpg&q=85' }];
 
 export default function HomePage({ initialData }) {
-  const [products, setProducts] = useState(initialData?.products?.length ? initialData.products : SEED);
-  const [categories, setCategories] = useState(initialData?.categories?.length ? initialData.categories : SEED_C);
-  const [collections, setCollections] = useState(initialData?.collections?.length ? initialData.collections : SEED_K);
+  const [products, setProducts] = useState(initialData?.products || []);
+  const [categories, setCategories] = useState(initialData?.categories || []);
+  const [collections, setCollections] = useState(initialData?.collections || []);
   const [banners, setBanners] = useState(initialData?.banners?.length ? initialData.banners : FALLBACK_HERO);
   const [transition, setTransition] = useState(initialData?.transition || 'fade');
   const [homepageCMS, setHomepageCMS] = useState(initialData?.homepageCMS || {
@@ -505,26 +540,26 @@ export default function HomePage({ initialData }) {
     assuranceSection: { enabled: true, eyebrow: 'Our Promise', title: 'The MikuMantra Assurance', description: 'Six generations of craftsmanship, ten values that never change.' },
     assuranceCards: []
   });
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(!initialData?.products);
 
   useEffect(() => {
     // If initialData was already passed, we already have server-fresh data. Only fetch if missing.
-    if (initialData && initialData.products?.length) return;
+    if (initialData && Array.isArray(initialData.products) && initialData.products.length > 0) return;
 
     (async () => {
       try {
         const [p, c, k, b, cms] = await Promise.all([
-          fetch('/api/products').then(r => r.json()).catch(() => ({})),
-          fetch('/api/categories').then(r => r.json()).catch(() => ({})),
-          fetch('/api/collections').then(r => r.json()).catch(() => ({})),
-          fetch('/api/banners').then(r => r.json()).catch(() => ({})),
-          fetch('/api/homepage-content').then(r => r.json()).catch(() => ({}))
+          fetch('/api/products', { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
+          fetch('/api/categories', { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
+          fetch('/api/collections', { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
+          fetch('/api/banners', { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
+          fetch('/api/homepage-content', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}))
         ]);
-        if (p.products?.length) setProducts(p.products);
-        if (c.categories?.length) setCategories(c.categories);
-        if (k.collections?.length) setCollections(k.collections);
-        if (b.banners?.length) setBanners(b.banners);
-        if (b.transition) setTransition(b.transition);
+        if (p && Array.isArray(p.products)) setProducts(p.products);
+        if (c && Array.isArray(c.categories)) setCategories(c.categories);
+        if (k && Array.isArray(k.collections)) setCollections(k.collections);
+        if (b && Array.isArray(b.banners)) setBanners(b.banners);
+        if (b && b.transition) setTransition(b.transition);
         if (cms) {
           setHomepageCMS({
             homepagePromotions: cms.homepagePromotions || [],
@@ -540,7 +575,7 @@ export default function HomePage({ initialData }) {
     })();
   }, [initialData]);
 
-  if (loading) {
+  if (loading && !products.length && !banners.length) {
     return (
       <div className="h-[80vh] w-full flex flex-col items-center justify-center bg-white text-neutral-500">
         <span className="h-auto w-36 pb-2">
@@ -555,7 +590,7 @@ export default function HomePage({ initialData }) {
     <main className="bg-white text-[#333]">
       <Hero slides={banners} transitionStyle={transition} />
       <CategoryShowcaseSection initialCategories={initialData?.categories} initialSettings={initialData?.categoryShowcaseSettings} />
-      <CollectionsTabs collections={collections} allProducts={products} />
+      <CollectionsTabs collections={collections} allProducts={products} loading={loading} />
       <OfferBanner promotions={homepageCMS.homepagePromotions} />
       <WhyUs assuranceSection={homepageCMS.assuranceSection} assuranceCards={homepageCMS.assuranceCards} />
       <SocialMediaSection initialItems={initialData?.socialMedia} initialSettings={initialData?.socialMediaSettings} />

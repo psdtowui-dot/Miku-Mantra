@@ -1,6 +1,9 @@
 import ProductClient from './product-client';
 import { getSiteSettings, getProductBySlugDB, getCanonicalBaseUrl, toAbsoluteUrl, applyTitleTemplate } from '@/lib/db-site-settings';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export async function generateMetadata({ params }){
   const { slug } = await params;
   const [p, settings] = await Promise.all([

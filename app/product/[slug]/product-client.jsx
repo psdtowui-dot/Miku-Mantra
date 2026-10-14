@@ -5,7 +5,7 @@ import Link from 'next/link';
 import ProductCard from '@/components/site/product-card';
 import RecentlyViewed from '@/components/site/recently-viewed';
 import CompareBar from '@/components/site/compare-bar';
-import { getRelated, formatINR, formatRating, getNormalizedSpecs, getNormalizedBenefits } from '@/lib/products';
+import { formatINR, formatRating, getNormalizedSpecs, getNormalizedBenefits } from '@/lib/products';
 import { useCart, useWishlist } from '@/lib/cart-store';
 import { useCompare, useRecentlyViewed } from '@/lib/browsing';
 import { Heart, Share2, Truck, Minus, Plus, ChevronRight, ChevronDown, ChevronUp, Star, MapPin, Loader2, GitCompare, ShieldCheck } from 'lucide-react';
@@ -17,7 +17,7 @@ import { WAREHOUSE_PINCODE } from '@/lib/constants';
 export default function ProductClient({ initialProduct, slug, siteSettings }) {
   const router = useRouter();
   const [p, setP] = useState(initialProduct);
-  const [related, setRelated] = useState(getRelated(slug));
+  const [related, setRelated] = useState([]);
   const [loading, setLoading] = useState(!initialProduct);
   const [zoomConfig, setZoomConfig] = useState(siteSettings?.zoomSettings || null);
   const { add } = useCart();

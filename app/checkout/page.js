@@ -14,6 +14,7 @@ export default function CheckoutPage() {
   const router = useRouter();
   const [step, setStep] = useState('address');
   const [savedAddresses, setSavedAddresses] = useState([]);
+  const [loadingAddresses, setLoadingAddresses] = useState(true);
   const [selectedAddrId, setSelectedAddrId] = useState('');
   const [addr, setAddr] = useState({ fullName: '', phone: '', line1: '', line2: '', city: '', state: '', pincode: '' });
   const [email, setEmail] = useState('');
@@ -112,6 +113,7 @@ export default function CheckoutPage() {
   };
 
   async function loadAddr() {
+    setLoadingAddresses(true);
     try {
       const r = await authFetch('/api/addresses');
       const d = await r.json();
@@ -138,6 +140,8 @@ export default function CheckoutPage() {
       }
     } catch (e) {
       console.error('Failed to load addresses:', e);
+    } finally {
+      setLoadingAddresses(false);
     }
   }
 
@@ -384,55 +388,10 @@ export default function CheckoutPage() {
   }
 
   async function placeOrder() {
+    if (placing) return;
     setPlacing(true);
     try {
       if (!Array.isArray(items) || items.length === 0) { toast.error('Cart is empty'); setPlacing(false); return; }
-
-      // Validate stock availability
-      const valRes = await authFetch('/api/cart/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: items.map(i => ({ id: i.id, qty: i.qty })) })
-      });
-      if (valRes.ok) {
-        const valData = await valRes.json();
-        if (!valData.valid) {
-          const firstErr = valData.items?.find(it => it.status !== 'ok');
-          const msg = firstErr?.message || 'This product is currently out of stock.';
-          toast.error(msg);
-          setPlacing(false);
-          return;
-        }
-      }
-
-      // Re-verify coupon eligibility immediately before payment
-      const activeCode = coupon?.code || storeCoupon?.code;
-      if (activeCode) {
-        const priceCheck = await authFetch('/api/cart/pricing', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            items: items.map(i => ({ id: i.id, qty: i.qty })),
-            coupon: activeCode,
-            giftWrap: gift
-          })
-        });
-        if (priceCheck.ok) {
-          const pCheckData = await priceCheck.json();
-          if (pCheckData.couponValid === false) {
-            setCoupon(null);
-            removeCoupon();
-            const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';
-            sessionStorage.removeItem(couponKey);
-            sessionStorage.removeItem('mikumantra_coupon');
-            localStorage.removeItem(couponKey);
-            localStorage.removeItem('mikumantra_coupon');
-            toast.error(pCheckData.couponError || 'Coupon is no longer eligible. Pricing has been updated.');
-            setPlacing(false);
-            return;
-          }
-        }
-      }
 
       let razorpayPaymentId = null;
       if (payment === 'razorpay') {
@@ -452,7 +411,11 @@ export default function CheckoutPage() {
       };
       const r = await authFetch('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json();
-      if (!r.ok) { console.error('Order API error', r.status, d); toast.error(d.error || 'Order failed'); return; }
+      if (!r.ok) { 
+        console.error('Order API error', r.status, d); 
+        toast.error(d.error || 'Order placement failed. Please verify your items.'); 
+        return; 
+      }
       
       const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';
       const giftKey = user?.id ? `mikumantra_gift_${user.id}` : 'mikumantra_gift_guest';
@@ -492,7 +455,18 @@ export default function CheckoutPage() {
               <div className="border border-[#E8E8E8] rounded-xl p-4 sm:p-6 md:p-8">
                 <div className="font-display text-xl sm:text-2xl mb-1">Shipping Address</div><div className="gold-line w-10 mb-6" />
                 {!user && (<div className="mb-6"><label className="text-[10px] tracking-widest uppercase text-neutral-500">Email (for order updates)</label><input required type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@email.com" className="w-full mt-1 px-4 py-3 border border-[#E8E8E8] rounded-md text-sm focus:outline-none focus:border-[#9C6B30]" /><div className="text-xs text-neutral-500 mt-2"><Link href="/login?redirect=/checkout" className="text-[#9C6B30] hover:underline">Sign in</Link> for faster checkout &amp; order tracking.</div></div>)}
-                {savedAddresses.length > 0 && (
+                {user && loadingAddresses ? (
+                  <div className="mb-6">
+                    <div className="text-[10px] tracking-widest uppercase text-neutral-400 mb-3 flex items-center gap-2">
+                      <Loader2 size={12} className="animate-spin text-[#9C6B30]" />
+                      Loading Saved Addresses...
+                    </div>
+                    <div className="grid md:grid-cols-2 gap-3">
+                      <div className="border border-[#E8E8E8] rounded-lg p-4 bg-neutral-50/50 animate-pulse h-24" />
+                      <div className="border border-[#E8E8E8] rounded-lg p-4 bg-neutral-50/50 animate-pulse h-24" />
+                    </div>
+                  </div>
+                ) : user && savedAddresses.length > 0 ? (
                   <div className="mb-6">
                     <div className="flex items-center justify-between mb-3">
                       <div className="text-[10px] tracking-widest uppercase text-neutral-500">Saved Addresses</div>
@@ -524,7 +498,7 @@ export default function CheckoutPage() {
                       ))}
                     </div>
                   </div>
-                )}
+                ) : null}
                 <div className="grid md:grid-cols-2 gap-3">
                   <div>
                     <input
