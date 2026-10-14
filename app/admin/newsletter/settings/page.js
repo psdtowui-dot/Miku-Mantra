@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 export default function AdminNewsletterSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [togglingVisibility, setTogglingVisibility] = useState(false);
   const [activeTab, setActiveTab] = useState('content');
   const [errors, setErrors] = useState({});
 
@@ -138,6 +139,55 @@ export default function AdminNewsletterSettingsPage() {
     }
   };
 
+  const handleToggleVisibility = async (newVal) => {
+    const updatedStatus = typeof newVal === 'boolean' ? newVal : !form.isEnabled;
+    setTogglingVisibility(true);
+
+    // Optimistically update form state
+    setForm(prev => ({ ...prev, isEnabled: updatedStatus }));
+
+    try {
+      const validationErrors = validateForm();
+      const payload = Object.keys(validationErrors).length === 0
+        ? { ...form, isEnabled: updatedStatus }
+        : { isEnabled: updatedStatus };
+
+      const res = await fetch('/api/admin/newsletter/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast.success(
+          updatedStatus
+            ? 'Newsletter section is now VISIBLE on the website.'
+            : 'Newsletter section is now HIDDEN from the website.'
+        );
+        if (data.settings) {
+          setForm(prev => ({
+            ...prev,
+            ...data.settings,
+            privileges: Array.isArray(data.settings.privileges) ? data.settings.privileges : prev.privileges,
+            design: {
+              ...prev.design,
+              ...(data.settings.design || {})
+            }
+          }));
+        }
+      } else {
+        setForm(prev => ({ ...prev, isEnabled: !updatedStatus }));
+        toast.error(data.message || data.error || 'Failed to update section visibility.');
+      }
+    } catch (err) {
+      setForm(prev => ({ ...prev, isEnabled: !updatedStatus }));
+      toast.error('Network error updating section visibility.');
+    } finally {
+      setTogglingVisibility(false);
+    }
+  };
+
   const handlePrivilegeChange = (index, value) => {
     const updated = [...(form.privileges || [])];
     updated[index] = value;
@@ -179,14 +229,106 @@ export default function AdminNewsletterSettingsPage() {
           </p>
         </div>
 
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-2 px-5 py-2.5 bg-[#9C6B30] text-white rounded-lg text-xs font-semibold hover:bg-[#845826] transition shadow-md disabled:opacity-60 self-start sm:self-auto"
-        >
-          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-          <span>Save Changes</span>
-        </button>
+        <div className="flex items-center gap-2.5 self-start sm:self-auto flex-wrap">
+          {/* Quick Visibility Button in Header */}
+          <button
+            type="button"
+            onClick={() => handleToggleVisibility(!form.isEnabled)}
+            disabled={togglingVisibility || saving}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold transition shadow-xs border ${
+              form.isEnabled
+                ? 'bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-200'
+                : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
+            } disabled:opacity-60`}
+            title={form.isEnabled ? 'Hide section from live website' : 'Show section on live website'}
+          >
+            {togglingVisibility ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : form.isEnabled ? (
+              <EyeOff size={14} />
+            ) : (
+              <Eye size={14} />
+            )}
+            <span>{form.isEnabled ? 'Hide Section' : 'Show Section'}</span>
+          </button>
+
+          <button
+            onClick={handleSave}
+            disabled={saving || togglingVisibility}
+            className="flex items-center gap-2 px-5 py-2.5 bg-[#9C6B30] text-white rounded-lg text-xs font-semibold hover:bg-[#845826] transition shadow-md disabled:opacity-60"
+          >
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            <span>Save Changes</span>
+          </button>
+        </div>
+      </div>
+
+      {/* SECTION VISIBILITY CONTROL BANNER */}
+      <div className={`p-4 sm:p-5 rounded-2xl border transition-all ${
+        form.isEnabled 
+          ? 'bg-emerald-50/60 border-emerald-200 shadow-2xs' 
+          : 'bg-amber-50/50 border-amber-200 shadow-2xs'
+      }`}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className={`p-2.5 rounded-xl shrink-0 ${
+              form.isEnabled 
+                ? 'bg-emerald-600 text-white shadow-xs' 
+                : 'bg-neutral-200 text-neutral-600'
+            }`}>
+              {form.isEnabled ? <Eye size={20} /> : <EyeOff size={20} />}
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-semibold text-neutral-900">
+                  Storefront Newsletter Section
+                </span>
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide ${
+                  form.isEnabled 
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' 
+                    : 'bg-neutral-200 text-neutral-700 border border-neutral-300'
+                }`}>
+                  <span className={`w-2 h-2 rounded-full ${form.isEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-400'}`} />
+                  {form.isEnabled ? 'CURRENTLY VISIBLE' : 'CURRENTLY HIDDEN'}
+                </span>
+              </div>
+              <p className="text-xs text-neutral-600 mt-1">
+                {form.isEnabled
+                  ? 'The subscription banner shown in the live preview is visible to visitors on the homepage.'
+                  : 'The subscription banner is currently hidden and will not be displayed on the homepage.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+            <button
+              type="button"
+              onClick={() => handleToggleVisibility(true)}
+              disabled={togglingVisibility || saving || form.isEnabled}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition ${
+                form.isEnabled
+                  ? 'bg-emerald-600 text-white shadow-xs cursor-default ring-2 ring-emerald-500/30'
+                  : 'bg-white hover:bg-neutral-50 text-neutral-700 border border-neutral-300 shadow-2xs hover:border-neutral-400'
+              }`}
+            >
+              <Eye size={14} />
+              <span>Show Section</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleToggleVisibility(false)}
+              disabled={togglingVisibility || saving || !form.isEnabled}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition ${
+                !form.isEnabled
+                  ? 'bg-neutral-800 text-white shadow-xs cursor-default ring-2 ring-neutral-700/30'
+                  : 'bg-white hover:bg-neutral-50 text-neutral-700 border border-neutral-300 shadow-2xs hover:border-neutral-400'
+              }`}
+            >
+              <EyeOff size={14} />
+              <span>Hide Section</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -235,21 +377,52 @@ export default function AdminNewsletterSettingsPage() {
           {/* TAB 1: CONTENT & VISIBILITY */}
           {activeTab === 'content' && (
             <div className="bg-white rounded-xl border border-neutral-200 p-5 space-y-5 shadow-xs">
-              <div className="flex items-center justify-between pb-4 border-b border-neutral-100">
+              <div className="p-4 rounded-xl border border-neutral-200 bg-neutral-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                  <h3 className="text-sm font-semibold text-neutral-900">Newsletter Section Visibility</h3>
-                  <p className="text-xs text-neutral-500">Toggle whether the newsletter section appears on the homepage and footer.</p>
+                  <h3 className="text-sm font-semibold text-neutral-900 flex items-center gap-1.5">
+                    {form.isEnabled ? <Eye size={15} className="text-emerald-600" /> : <EyeOff size={15} className="text-neutral-500" />}
+                    <span>Newsletter Section Visibility</span>
+                  </h3>
+                  <p className="text-xs text-neutral-500 mt-0.5">Show or hide this newsletter subscription section on the homepage.</p>
                 </div>
 
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={!!form.isEnabled}
-                    onChange={(e) => setForm(f => ({ ...f, isEnabled: e.target.checked }))}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-neutral-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#9C6B30]"></div>
-                </label>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleVisibility(!form.isEnabled)}
+                    disabled={togglingVisibility || saving}
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition border shadow-2xs ${
+                      form.isEnabled
+                        ? 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100'
+                        : 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700'
+                    }`}
+                  >
+                    {togglingVisibility ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : form.isEnabled ? (
+                      <>
+                        <EyeOff size={13} />
+                        <span>Hide Section</span>
+                      </>
+                    ) : (
+                      <>
+                        <Eye size={13} />
+                        <span>Show Section</span>
+                      </>
+                    )}
+                  </button>
+
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!form.isEnabled}
+                      onChange={(e) => handleToggleVisibility(e.target.checked)}
+                      disabled={togglingVisibility || saving}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-neutral-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#9C6B30]"></div>
+                  </label>
+                </div>
               </div>
 
               <div>
@@ -678,9 +851,36 @@ export default function AdminNewsletterSettingsPage() {
             <h3 className="text-sm font-semibold text-neutral-900 flex items-center gap-1.5">
               <Eye size={15} className="text-[#9C6B30]" /> Live Preview
             </h3>
-            <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-semibold ${form.isEnabled ? 'bg-emerald-100 text-emerald-800' : 'bg-neutral-200 text-neutral-600'}`}>
-              {form.isEnabled ? 'Active' : 'Disabled'}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-semibold ${form.isEnabled ? 'bg-emerald-100 text-emerald-800' : 'bg-neutral-200 text-neutral-600'}`}>
+                {form.isEnabled ? 'Visible' : 'Hidden'}
+              </span>
+              <button
+                type="button"
+                onClick={() => handleToggleVisibility(!form.isEnabled)}
+                disabled={togglingVisibility || saving}
+                title={form.isEnabled ? 'Hide section from live website' : 'Show section on live website'}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium transition border ${
+                  form.isEnabled 
+                    ? 'border-neutral-200 hover:border-rose-300 text-neutral-600 hover:text-rose-800 bg-white shadow-2xs'
+                    : 'border-emerald-600 text-white bg-emerald-600 hover:bg-emerald-700 shadow-2xs'
+                }`}
+              >
+                {togglingVisibility ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : form.isEnabled ? (
+                  <>
+                    <EyeOff size={12} />
+                    <span>Hide</span>
+                  </>
+                ) : (
+                  <>
+                    <Eye size={12} />
+                    <span>Show</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           <div className="border border-neutral-200 rounded-xl overflow-hidden shadow-md">
@@ -749,9 +949,23 @@ export default function AdminNewsletterSettingsPage() {
                 )}
               </div>
             ) : (
-              <div className="p-12 text-center bg-neutral-50 text-neutral-400 text-xs">
-                <EyeOff size={24} className="mx-auto mb-2 opacity-50" />
-                Section is currently turned OFF.
+              <div className="p-10 text-center bg-neutral-50 text-neutral-500 text-xs space-y-3">
+                <EyeOff size={32} className="mx-auto text-neutral-400" />
+                <div>
+                  <p className="font-semibold text-neutral-800 text-sm">Section is currently HIDDEN</p>
+                  <p className="text-[11px] text-neutral-400 mt-1 max-w-xs mx-auto">
+                    This newsletter section will not appear on the live storefront homepage.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleToggleVisibility(true)}
+                  disabled={togglingVisibility || saving}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#9C6B30] text-white rounded-lg text-xs font-semibold hover:bg-[#845826] transition shadow-xs"
+                >
+                  <Eye size={13} />
+                  <span>Show Section on Website</span>
+                </button>
               </div>
             )}
           </div>

@@ -312,8 +312,15 @@ function Newsletter({ initialSettings }) {
   const [submittedSuccess, setSubmittedSuccess] = useState(false);
 
   useEffect(() => {
+    if (initialSettings !== undefined && initialSettings !== null) {
+      setSettings(initialSettings);
+      setSettingsLoading(false);
+    }
+  }, [initialSettings]);
+
+  useEffect(() => {
     let isMounted = true;
-    fetch('/api/newsletter/settings')
+    fetch('/api/newsletter/settings', { cache: 'no-store' })
       .then(r => r.json())
       .then(d => {
         if (isMounted) {
@@ -328,7 +335,7 @@ function Newsletter({ initialSettings }) {
   }, []);
 
   if (settingsLoading) return null;
-  if (!settings || settings.isEnabled === false) return null;
+  if (!settings || settings.isEnabled === false || settings.isEnabled === 'false') return null;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -376,7 +383,7 @@ function Newsletter({ initialSettings }) {
 
   return (
     <section
-      className="py-20 sm:py-24 relative overflow-hidden transition-colors duration-300"
+      className="py-20 sm:py-24 relative overflow-hidden transition-colors duration-300 mt-14 sm:mt-20"
       style={{ backgroundColor: design.backgroundColor || '#FAF6EF' }}
     >
       {/* Decorative ambient radial lighting */}
