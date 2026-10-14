@@ -6171,51 +6171,53 @@ async function handleRoute(request, { params }) {
           const existingList = await db.collection('products').find({}).toArray();
 
           const existingIdMap = new Map();
-          const existingSlugMap = new Map();
           const existingSkuMap = new Map();
+          const existingSlugMap = new Map();
           for (const ep of existingList) {
             if (ep.id) existingIdMap.set(String(ep.id).toLowerCase(), ep);
-            if (ep.slug) existingSlugMap.set(String(ep.slug).toLowerCase(), ep);
             if (ep.sku) existingSkuMap.set(String(ep.sku).toLowerCase(), ep);
+            if (ep.slug) existingSlugMap.set(String(ep.slug).toLowerCase(), ep);
           }
 
           // Scan available project image assets
           const availableImages = await scanAvailableImages(db);
 
-          // Run automatic image matching
+          // Run automatic image matching with cross-product conflict prevention
           const productsWithImages = await batchMatchProductImages(validProducts, {
             db,
             availableImages,
             existingProducts: existingList
           });
 
-          // Check duplicates and annotate
+          // Check duplicates with priority: ID -> SKU -> Slug
           let duplicateCount = 0;
           let matchedImagesCount = 0;
           let needsImageReviewCount = 0;
           let missingImagesCount = 0;
+          let totalConflicts = 0;
 
           const previewList = productsWithImages.map(p => {
             const normId = p.id ? String(p.id).toLowerCase() : '';
-            const normSlug = p.slug ? String(p.slug).toLowerCase() : '';
             const normSku = p.sku ? String(p.sku).toLowerCase() : '';
+            const normSlug = p.slug ? String(p.slug).toLowerCase() : '';
 
             let isDuplicate = false;
             let duplicateField = '';
             let existingProduct = null;
 
+            // Strict Priority: 1. ID -> 2. SKU -> 3. Slug
             if (normId && existingIdMap.has(normId)) {
               isDuplicate = true;
               duplicateField = 'id';
               existingProduct = existingIdMap.get(normId);
-            } else if (normSlug && existingSlugMap.has(normSlug)) {
-              isDuplicate = true;
-              duplicateField = 'slug';
-              existingProduct = existingSlugMap.get(normSlug);
             } else if (normSku && existingSkuMap.has(normSku)) {
               isDuplicate = true;
               duplicateField = 'sku';
               existingProduct = existingSkuMap.get(normSku);
+            } else if (normSlug && existingSlugMap.has(normSlug)) {
+              isDuplicate = true;
+              duplicateField = 'slug';
+              existingProduct = existingSlugMap.get(normSlug);
             }
 
             if (isDuplicate) duplicateCount++;
@@ -6224,6 +6226,10 @@ async function handleRoute(request, { params }) {
             if (imgStatus === 'matched') matchedImagesCount++;
             else if (imgStatus === 'missing_images') missingImagesCount++;
             else needsImageReviewCount++;
+
+            if (p._imageMatch?.conflicts?.length) {
+              totalConflicts += p._imageMatch.conflicts.length;
+            }
 
             return {
               ...p,
@@ -6251,7 +6257,8 @@ async function handleRoute(request, { params }) {
             matchedImagesCount,
             needsImageReviewCount,
             missingImagesCount,
-            availableImagesCount: availableImages.length
+            availableImagesCount: availableImages.length,
+            potentialConflicts: totalConflicts
           };
 
           return ok({
@@ -6272,7 +6279,7 @@ async function handleRoute(request, { params }) {
         if (!hasPermission(admin, 'products.create')) return err('Permission denied: products.create required', 403);
         try {
           const body = await request.json();
-          const { products: itemsToSave, duplicateStrategy = 'skip' } = body;
+          const { products: itemsToSave, duplicateStrategy = 'skip', filename = '' } = body;
 
           if (!Array.isArray(itemsToSave) || itemsToSave.length === 0) {
             return err('No products provided for import.', 400);
@@ -6282,6 +6289,7 @@ async function handleRoute(request, { params }) {
           const updated = [];
           const skipped = [];
           const failed = [];
+          const assignedImagesSet = new Set();
 
           for (const item of itemsToSave) {
             try {
@@ -6298,12 +6306,17 @@ async function handleRoute(request, { params }) {
                 continue;
               }
 
-              // Check if duplicate exists
-              const queryOr = [{ slug: baseSlug }];
-              if (item.id) queryOr.push({ id: item.id });
-              if (item.sku) queryOr.push({ sku: item.sku });
-
-              const existing = await db.collection('products').findOne({ $or: queryOr });
+              // Check if duplicate exists with Priority: 1. ID -> 2. SKU -> 3. Slug
+              let existing = null;
+              if (item.id) {
+                existing = await db.collection('products').findOne({ id: String(item.id).trim() });
+              }
+              if (!existing && item.sku) {
+                existing = await db.collection('products').findOne({ sku: String(item.sku).trim() });
+              }
+              if (!existing && baseSlug) {
+                existing = await db.collection('products').findOne({ slug: baseSlug });
+              }
 
               if (existing) {
                 if (duplicateStrategy === 'skip') {
@@ -6311,20 +6324,30 @@ async function handleRoute(request, { params }) {
                     id: existing.id,
                     name: item.name,
                     slug: existing.slug,
-                    reason: `Existing product with matching ${existing.slug === baseSlug ? 'slug' : 'ID/SKU'} found.`
+                    reason: `Existing product with matching ${existing.id === item.id ? 'ID' : (existing.sku === item.sku ? 'SKU' : 'slug')} found.`
                   });
                   continue;
                 } else if (duplicateStrategy === 'update') {
+                  // Only replace images if new image match is reliable (confidence >= 75)
+                  const hasReliableNewImages = Array.isArray(item.images) && item.images.length > 0 &&
+                    (!item._imageMatch || item._imageMatch.confidence >= 75);
+                  const finalImages = hasReliableNewImages
+                    ? item.images
+                    : (Array.isArray(existing.images) && existing.images.length > 0 ? existing.images : (item.images || []));
+
+                  finalImages.forEach(u => assignedImagesSet.add(u));
+
                   const updateData = {
+                    ...existing,
                     ...item,
                     name,
-                    slug: existing.slug, // keep existing slug to preserve links
+                    slug: existing.slug, // keep existing slug to preserve URLs and SEO
                     category: item.category || existing.category,
                     price: Number(item.price) >= 0 ? Number(item.price) : existing.price,
                     mrp: Number(item.mrp) >= Number(item.price) ? Number(item.mrp) : (item.mrp ? Number(item.mrp) : existing.mrp),
-                    images: Array.isArray(item.images) && item.images.length > 0 ? item.images : existing.images,
-                    specifications: Array.isArray(item.specifications) && item.specifications.length > 0 ? item.specifications : existing.specifications,
-                    productBenefits: Array.isArray(item.productBenefits) && item.productBenefits.length > 0 ? item.productBenefits : existing.productBenefits,
+                    images: finalImages,
+                    specifications: Array.isArray(item.specifications) && item.specifications.length > 0 ? item.specifications : (existing.specifications || []),
+                    productBenefits: Array.isArray(item.productBenefits) && item.productBenefits.length > 0 ? item.productBenefits : (existing.productBenefits || []),
                     updatedAt: new Date()
                   };
 
@@ -6335,16 +6358,18 @@ async function handleRoute(request, { params }) {
                     updateData.stock = Number(item.stock);
                   }
 
-                  // Protect dynamic ratings/reviews & internal preview tags
+                  // Protect dynamic customer ratings/reviews and internal flags
                   delete updateData._id;
                   delete updateData.id;
-                  delete updateData.rating;
-                  delete updateData.reviews;
-                  delete updateData.breakdown;
+                  if (existing.rating !== undefined) updateData.rating = existing.rating;
+                  if (existing.reviews !== undefined) updateData.reviews = existing.reviews;
+                  if (existing.breakdown !== undefined) updateData.breakdown = existing.breakdown;
                   delete updateData._duplicate;
                   delete updateData._imageMatch;
                   delete updateData._originalIndex;
                   delete updateData._hasProvidedImages;
+                  delete updateData.tempId;
+                  delete updateData.raw;
 
                   await db.collection('products').updateOne({ id: existing.id }, { $set: updateData });
                   updated.push({ id: existing.id, name, slug: existing.slug });
@@ -6353,7 +6378,7 @@ async function handleRoute(request, { params }) {
               }
 
               // Create New Product
-              const prodId = item.id || uuidv4();
+              const prodId = item.id ? String(item.id).trim() : uuidv4();
 
               // Ensure slug uniqueness
               let uniqueSlug = baseSlug;
@@ -6362,6 +6387,9 @@ async function handleRoute(request, { params }) {
                 suffixCounter++;
                 uniqueSlug = `${baseSlug}-${suffixCounter}`;
               }
+
+              const newProductImages = Array.isArray(item.images) ? item.images : [];
+              newProductImages.forEach(u => assignedImagesSet.add(u));
 
               const newProduct = {
                 ...item,
@@ -6372,11 +6400,11 @@ async function handleRoute(request, { params }) {
                 price: Number(item.price) || 0,
                 mrp: Number(item.mrp) || Number(item.price) || 0,
                 stock: item.stock !== undefined && !isNaN(Number(item.stock)) ? Number(item.stock) : 10,
-                images: Array.isArray(item.images) ? item.images : [],
+                images: newProductImages,
                 specifications: Array.isArray(item.specifications) ? item.specifications : [],
                 productBenefits: Array.isArray(item.productBenefits) ? item.productBenefits : [],
-                rating: 0,
-                reviews: 0,
+                rating: item.rating !== undefined && !isNaN(Number(item.rating)) ? Number(item.rating) : 0,
+                reviews: item.reviews !== undefined && !isNaN(Number(item.reviews)) ? Number(item.reviews) : 0,
                 createdAt: new Date(),
                 updatedAt: new Date()
               };
@@ -6386,6 +6414,8 @@ async function handleRoute(request, { params }) {
               delete newProduct._imageMatch;
               delete newProduct._originalIndex;
               delete newProduct._hasProvidedImages;
+              delete newProduct.tempId;
+              delete newProduct.raw;
 
               await db.collection('products').insertOne(newProduct);
               imported.push({ id: prodId, name, slug: uniqueSlug });
@@ -6413,6 +6443,10 @@ async function handleRoute(request, { params }) {
             } catch (logErr) {}
           }
 
+          const availableImages = await scanAvailableImages(db);
+          const needsImageReviewCount = itemsToSave.filter(p => p._imageMatch?.needsReview).length;
+          const potentialConflicts = itemsToSave.reduce((sum, p) => sum + (p._imageMatch?.conflicts?.length || 0), 0);
+
           return ok({
             success: true,
             total: itemsToSave.length,
@@ -6420,6 +6454,21 @@ async function handleRoute(request, { params }) {
             updatedCount: updated.length,
             skippedCount: skipped.length,
             failedCount: failed.length,
+            summary: {
+              source: filename || 'Product File',
+              total: itemsToSave.length,
+              importedCount: imported.length,
+              updatedCount: updated.length,
+              skippedCount: skipped.length,
+              needsImageReviewCount,
+              failedCount: failed.length
+            },
+            imageMatching: {
+              totalImages: availableImages.length,
+              matchedCount: assignedImagesSet.size,
+              unmatchedCount: Math.max(0, availableImages.length - assignedImagesSet.size),
+              potentialConflicts
+            },
             imported,
             updated,
             skipped,

@@ -204,7 +204,8 @@ export default function ProductImportPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           products: targetProducts,
-          duplicateStrategy
+          duplicateStrategy,
+          filename: filename || 'imported-catalog.js'
         })
       });
 
@@ -924,40 +925,90 @@ export default function ProductImportPage() {
 
       {/* STEP 3: RESULT REPORT */}
       {step === 'result' && saveResult && (
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-          <div className="bg-white border border-stone-200 rounded-2xl p-6 sm:p-10 shadow-sm text-center max-w-2xl mx-auto">
-            <div className="w-16 h-16 bg-emerald-50 border border-emerald-200 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 max-w-4xl mx-auto">
+          {/* Header Card */}
+          <div className="bg-white border border-stone-200 rounded-2xl p-6 sm:p-8 shadow-sm text-center">
+            <div className="w-16 h-16 bg-emerald-50 border border-emerald-200 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-3">
               <CheckCircle2 className="w-8 h-8" />
             </div>
             <h2 className="text-2xl font-bold text-stone-900">
-              Import Completed Successfully!
+              Product Import Complete
             </h2>
             <p className="text-stone-500 text-sm mt-1">
-              Your catalog has been updated and caches have been refreshed.
+              Source file: <span className="font-semibold text-stone-700 font-mono text-xs bg-stone-100 px-2 py-0.5 rounded">{saveResult.summary?.source || filename || 'Product File'}</span>
             </p>
 
-            {/* Results Grid */}
-            <div className="grid grid-cols-4 gap-3 my-8">
-              <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800">
-                <div className="text-xs uppercase tracking-wider opacity-75">Added</div>
-                <div className="text-2xl font-bold mt-1">{saveResult.importedCount}</div>
+            {/* Dual Reports Section */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left my-6">
+              {/* Product Import Summary */}
+              <div className="border border-stone-200 rounded-xl p-5 bg-stone-50/50">
+                <div className="flex items-center gap-2 text-stone-900 font-semibold text-sm mb-3">
+                  <FileCode className="w-4 h-4 text-[#A27B5C]" />
+                  <span>PRODUCT IMPORT SUMMARY</span>
+                </div>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between py-1 border-b border-stone-200">
+                    <span className="text-stone-600">Total Products in Batch:</span>
+                    <span className="font-bold text-stone-900">{saveResult.summary?.total ?? saveResult.total ?? 0}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-stone-200 text-emerald-700">
+                    <span className="font-medium">Successfully Imported (New):</span>
+                    <span className="font-bold">{saveResult.importedCount || 0}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-stone-200 text-blue-700">
+                    <span className="font-medium">Updated Existing:</span>
+                    <span className="font-bold">{saveResult.updatedCount || 0}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-stone-200 text-stone-600">
+                    <span>Skipped (Preserved DB):</span>
+                    <span className="font-bold">{saveResult.skippedCount || 0}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-stone-200 text-purple-700">
+                    <span>Needs Image Review:</span>
+                    <span className="font-bold">{saveResult.summary?.needsImageReviewCount || 0}</span>
+                  </div>
+                  <div className="flex justify-between py-1 text-red-700">
+                    <span>Failed / Errors:</span>
+                    <span className="font-bold">{saveResult.failedCount || 0}</span>
+                  </div>
+                </div>
               </div>
-              <div className="p-4 rounded-xl bg-blue-50 border border-blue-200 text-blue-800">
-                <div className="text-xs uppercase tracking-wider opacity-75">Updated</div>
-                <div className="text-2xl font-bold mt-1">{saveResult.updatedCount}</div>
-              </div>
-              <div className="p-4 rounded-xl bg-stone-50 border border-stone-200 text-stone-700">
-                <div className="text-xs uppercase tracking-wider opacity-75">Skipped</div>
-                <div className="text-2xl font-bold mt-1">{saveResult.skippedCount}</div>
-              </div>
-              <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-800">
-                <div className="text-xs uppercase tracking-wider opacity-75">Failed</div>
-                <div className="text-2xl font-bold mt-1">{saveResult.failedCount}</div>
+
+              {/* Image Matching Summary */}
+              <div className="border border-stone-200 rounded-xl p-5 bg-stone-50/50">
+                <div className="flex items-center gap-2 text-stone-900 font-semibold text-sm mb-3">
+                  <ImageIcon className="w-4 h-4 text-emerald-600" />
+                  <span>IMAGE MATCHING REPORT</span>
+                </div>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between py-1 border-b border-stone-200">
+                    <span className="text-stone-600">Total Available Project Images:</span>
+                    <span className="font-bold text-stone-900">{saveResult.imageMatching?.totalImages || availableImages.length}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-stone-200 text-emerald-700">
+                    <span className="font-medium">Assigned & Matched Images:</span>
+                    <span className="font-bold">{saveResult.imageMatching?.matchedCount || 0}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-stone-200 text-stone-600">
+                    <span>Unmatched / Extra Assets:</span>
+                    <span className="font-bold">{saveResult.imageMatching?.unmatchedCount || 0}</span>
+                  </div>
+                  <div className="flex justify-between py-1 text-amber-700">
+                    <span className="font-medium">Potential Image Conflicts:</span>
+                    <span className="font-bold">{saveResult.imageMatching?.potentialConflicts || 0}</span>
+                  </div>
+                </div>
+                {saveResult.imageMatching?.potentialConflicts === 0 && (
+                  <div className="mt-3 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-2 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span>Zero cross-product image conflicts detected. Image boundaries preserved!</span>
+                  </div>
+                )}
               </div>
             </div>
 
             {/* Action Links */}
-            <div className="flex flex-wrap items-center justify-center gap-3">
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-4 border-t border-stone-100">
               <Link
                 href="/admin/products"
                 className="px-6 py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-sm font-semibold transition"
@@ -969,7 +1020,7 @@ export default function ProductImportPage() {
                 target="_blank"
                 className="px-6 py-2.5 bg-white hover:bg-stone-50 text-stone-800 border border-stone-300 rounded-lg text-sm font-semibold transition flex items-center gap-1.5"
               >
-                <span>Storefront</span>
+                <span>View Storefront</span>
                 <ExternalLink className="w-4 h-4" />
               </Link>
               <button
