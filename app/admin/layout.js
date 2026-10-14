@@ -8,13 +8,14 @@ import {
   Ticket, MessageSquare, Image as ImageIcon, LogOut, Loader2, Menu, X,
   History, Settings, ChevronDown, ChevronRight, Layout, SlidersHorizontal,
   Globe, RotateCcw, ShieldCheck, KeyRound, Eye, EyeOff, Shield, UserCheck,
-  Lock, ScrollText, CreditCard, Share2, Mail, Send, FileText, BarChart3
+  Lock, ScrollText, CreditCard, Share2, Mail, Send, FileText, BarChart3, UploadCloud
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 const NAV = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard, permission: 'dashboard.view' },
   { href: '/admin/products', label: 'Products', icon: Package, permission: 'products.view' },
+  { href: '/admin/products/import', label: 'Product File Import', icon: UploadCloud, permission: 'products.create' },
   { href: '/admin/categories', label: 'Categories', icon: FolderTree, permission: 'products.view' },
   { href: '/admin/collections', label: 'Collections', icon: Sparkles, permission: 'products.view' },
   { href: '/admin/orders', label: 'Orders', icon: ShoppingCart, permission: 'orders.view' },

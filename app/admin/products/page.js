@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { formatINR, formatRating, getNormalizedSpecs, getNormalizedBenefits, slugify } from '@/lib/products';
 import {
-  Plus, Pencil, Trash2, X, Loader2, Search, Upload,
+  Plus, Pencil, Trash2, X, Loader2, Search, Upload, UploadCloud,
   Link as LinkIcon, Trash, Check, ArrowLeft, ArrowRight,
   FileText, Sparkles, Settings, Image as ImageIcon, Eye, Award, Star
 } from 'lucide-react';
@@ -317,12 +318,20 @@ export default function AdminProducts() {
           <div className="font-display text-2xl xs:text-3xl sm:text-4xl text-[#1A1A1A] font-light">Products</div>
           <div className="gold-line w-12 mt-2" />
         </div>
-        <button
-          onClick={openNew}
-          className="flex items-center justify-center gap-2 bg-[#1A1A1A] text-white px-5 py-2.5 text-[11px] tracking-widest uppercase rounded-md hover:bg-[#9C6B30] transition-colors font-semibold w-full xs:w-auto"
-        >
-          <Plus size={14} /> Add Product
-        </button>
+        <div className="flex items-center gap-2 w-full xs:w-auto">
+          <Link
+            href="/admin/products/import"
+            className="flex items-center justify-center gap-2 bg-stone-100 text-stone-800 border border-stone-300 px-4 py-2.5 text-[11px] tracking-widest uppercase rounded-md hover:bg-stone-200 transition-colors font-semibold w-full xs:w-auto"
+          >
+            <UploadCloud size={14} /> Import Products
+          </Link>
+          <button
+            onClick={openNew}
+            className="flex items-center justify-center gap-2 bg-[#1A1A1A] text-white px-5 py-2.5 text-[11px] tracking-widest uppercase rounded-md hover:bg-[#9C6B30] transition-colors font-semibold w-full xs:w-auto"
+          >
+            <Plus size={14} /> Add Product
+          </button>
+        </div>
       </div>
 
       <div className="mt-6 relative max-w-md">
