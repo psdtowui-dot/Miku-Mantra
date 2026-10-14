@@ -4156,6 +4156,9 @@ async function handleRoute(request, { params }) {
           try {
             const updated = await updateNewsletterSettings(db, body);
             _cache.delete('newsletter_settings_public');
+            _cache.delete('homepage_data');
+            try { invalidateSiteDataCache('homepage_data'); } catch (e) {}
+            try { invalidateSiteDataCache(); } catch (e) {}
             try { revalidatePath('/', 'layout'); } catch (e) {}
 
             await logAdminActivity(db, {
