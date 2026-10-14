@@ -40,10 +40,9 @@ import {
   getWelcomeTemplate, updateWelcomeTemplate, handleBulkSubscriberAction,
   getCampaigns, getCampaignById, createCampaign, updateCampaign, deleteCampaign,
   cancelCampaign, executeCampaignSend, getCampaignLogs, processUnsubscribeToken,
-  getAnalytics, validateEmail
+  getAnalytics, validateEmail, processScheduledCampaigns
 } from '@/lib/newsletter-service'
 import { calculateCartPricing, validateCouponRules } from '@/lib/cart-pricing'
-
 
 
 
@@ -1066,7 +1065,24 @@ async function handleRoute(request, { params }) {
     const db = await connectToMongo()
     const url = new URL(request.url); const q = url.searchParams
 
+
     if (route === '/' && method === 'GET') return ok({ ok: true, app: 'MikuMantra API' })
+
+    // ============ SCHEDULED CAMPAIGNS CRON DISPATCHER ============
+    if ((route === '/cron/campaigns' || route === '/cron/newsletter') && (method === 'GET' || method === 'POST')) {
+      const authHeader = request.headers.get('authorization') || '';
+      const cronSecret = process.env.CRON_SECRET;
+      if (cronSecret && authHeader !== `Bearer ${cronSecret}` && q.get('secret') !== cronSecret) {
+        return err('Unauthorized cron invocation', 401);
+      }
+      const results = await processScheduledCampaigns(db);
+      return ok({
+        success: true,
+        endpoint: route,
+        timestamp: new Date().toISOString(),
+        ...results
+      });
+    }
 
     if (route.startsWith('/uploads/') && method === 'GET') {
       const filename = route.split('/')[2];
@@ -4278,6 +4294,12 @@ async function handleRoute(request, { params }) {
           });
           return ok({ success: true, campaign: created });
         }
+      }
+
+      if (sub === 'newsletter/campaigns/process-due' && (method === 'POST' || method === 'GET')) {
+        if (!hasPermission(admin, 'settings.edit')) return err('Permission denied', 403);
+        const results = await processScheduledCampaigns(db);
+        return ok({ success: true, message: `Processed ${results.processed || 0} due scheduled campaign(s).`, ...results });
       }
 
       if (sub.startsWith('newsletter/campaigns/')) {

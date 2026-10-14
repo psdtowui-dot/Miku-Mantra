@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import {
   Send, Plus, Search, X, Loader2, Calendar, Users, Eye, CheckCircle2,
-  Clock, AlertTriangle, Trash2, Edit3, Copy, RefreshCw, AlertCircle,
+  AlertTriangle, Trash2, Edit3, Copy, RefreshCw, AlertCircle,
   ShieldCheck, CheckSquare, ExternalLink, Mail, Ban, Save, Smartphone,
   Monitor, Sparkles, Filter, ChevronRight, Check, ArrowRight, Info,
   Percent, Hash, Radio
@@ -62,8 +62,7 @@ export default function AdminNewsletterCampaignsPage() {
     fromEmail: 'akash@unictechnology.com',
     replyTo: 'akashsriv1984@gmail.com',
     audience: 'all',
-    sendOption: 'save_draft', // 'save_draft' | 'send_now' | 'schedule'
-    scheduleDate: ''
+    sendOption: 'save_draft' // 'save_draft' | 'send_now'
   });
 
   const loadData = async () => {
@@ -108,11 +107,10 @@ export default function AdminNewsletterCampaignsPage() {
     const total = campaigns.length;
     const sent = campaigns.filter(c => (c.status || '').toUpperCase() === 'SENT').length;
     const drafts = campaigns.filter(c => (c.status || '').toUpperCase() === 'DRAFT').length;
-    const scheduled = campaigns.filter(c => (c.status || '').toUpperCase() === 'SCHEDULED').length;
     const failed = campaigns.filter(c => (c.status || '').toUpperCase() === 'FAILED').length;
     const totalDelivered = campaigns.reduce((acc, curr) => acc + (curr.sentCount || 0), 0);
 
-    return { total, sent, drafts, scheduled, failed, totalDelivered };
+    return { total, sent, drafts, failed, totalDelivered };
   }, [campaigns]);
 
   // Filtered campaigns list
@@ -145,8 +143,7 @@ export default function AdminNewsletterCampaignsPage() {
       fromEmail: health?.fromAddress || 'akash@unictechnology.com',
       replyTo: health?.replyTo || 'akashsriv1984@gmail.com',
       audience: 'all',
-      sendOption: 'save_draft',
-      scheduleDate: ''
+      sendOption: 'save_draft'
     });
     setComposeTab('setup');
     setShowCreateModal(true);
@@ -166,8 +163,7 @@ export default function AdminNewsletterCampaignsPage() {
       fromEmail: camp.fromEmail || health?.fromAddress || 'akash@unictechnology.com',
       replyTo: camp.replyTo || health?.replyTo || 'akashsriv1984@gmail.com',
       audience: camp.audience || 'all',
-      sendOption: camp.status === 'SCHEDULED' ? 'schedule' : 'save_draft',
-      scheduleDate: camp.scheduleDate ? new Date(camp.scheduleDate).toISOString().slice(0, 16) : ''
+      sendOption: 'save_draft'
     });
     setComposeTab('setup');
     setShowCreateModal(true);
@@ -250,7 +246,7 @@ export default function AdminNewsletterCampaignsPage() {
     }
   };
 
-  const handleSaveDraftOrSchedule = async (e) => {
+  const handleSaveCampaign = async (e) => {
     if (e?.preventDefault) e.preventDefault();
 
     if (!form.name.trim() || !form.subject.trim()) {
@@ -286,8 +282,7 @@ export default function AdminNewsletterCampaignsPage() {
         fromEmail: form.fromEmail.trim(),
         replyTo: form.replyTo.trim(),
         audience: form.audience,
-        status: form.sendOption === 'schedule' ? 'SCHEDULED' : 'DRAFT',
-        scheduleDate: form.sendOption === 'schedule' ? form.scheduleDate : null
+        status: 'DRAFT'
       };
 
       const url = editingId ? `/api/admin/newsletter/campaigns/${editingId}` : '/api/admin/newsletter/campaigns';
@@ -313,11 +308,7 @@ export default function AdminNewsletterCampaignsPage() {
           return;
         }
 
-        toast.success(
-          payload.status === 'SCHEDULED'
-            ? 'Campaign scheduled successfully!'
-            : (editingId ? 'Campaign draft updated.' : 'Campaign saved as draft.')
-        );
+        toast.success(editingId ? 'Campaign draft updated.' : 'Campaign saved as draft.');
         setShowCreateModal(false);
         loadData();
       } else {
@@ -408,25 +399,6 @@ export default function AdminNewsletterCampaignsPage() {
     }
   };
 
-  const handleCancelScheduled = async (id) => {
-    if (!confirm('Are you sure you want to cancel this scheduled campaign?')) return;
-    try {
-      const res = await fetch(`/api/admin/newsletter/campaigns/${id}/cancel`, {
-        method: 'POST',
-        credentials: 'include'
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        toast.success('Scheduled campaign cancelled.');
-        loadData();
-      } else {
-        toast.error(data.message || 'Failed to cancel campaign.');
-      }
-    } catch (err) {
-      toast.error('Network error cancelling campaign.');
-    }
-  };
-
   const handleDelete = async (id) => {
     if (!confirm('Are you sure you want to permanently delete this campaign and its recipient delivery logs?')) return;
     try {
@@ -492,7 +464,7 @@ export default function AdminNewsletterCampaignsPage() {
           </div>
           <div className="gold-line w-12 mt-2 mb-2" />
           <p className="text-xs sm:text-sm text-neutral-500 font-light">
-            Compose, preview, test, schedule, and broadcast luxury email campaigns to your verified subscriber circle.
+            Compose, preview, test, and broadcast luxury email campaigns to your verified subscriber circle.
           </p>
         </div>
 
@@ -530,7 +502,7 @@ export default function AdminNewsletterCampaignsPage() {
           </div>
           <div className="text-2xl font-bold text-neutral-900 mt-2">{stats.total}</div>
           <div className="text-[11px] text-neutral-400 mt-1">
-            {stats.sent} Sent · {stats.drafts} Drafts · {stats.scheduled} Scheduled
+            {stats.sent} Sent · {stats.drafts} Drafts
           </div>
         </div>
 
@@ -615,7 +587,6 @@ export default function AdminNewsletterCampaignsPage() {
               { id: 'ALL', label: 'All', count: stats.total },
               { id: 'SENT', label: 'Sent', count: stats.sent },
               { id: 'DRAFT', label: 'Drafts', count: stats.drafts },
-              { id: 'SCHEDULED', label: 'Scheduled', count: stats.scheduled },
               { id: 'FAILED', label: 'Failed', count: stats.failed }
             ].map(tab => (
               <button
@@ -692,7 +663,7 @@ export default function AdminNewsletterCampaignsPage() {
                   <th className="text-left p-3.5">Target Audience</th>
                   <th className="text-left p-3.5">Status</th>
                   <th className="text-left p-3.5">Recipients Delivered</th>
-                  <th className="text-left p-3.5">Schedule / Date</th>
+                  <th className="text-left p-3.5">Date</th>
                   <th className="text-right p-3.5 pr-4">Actions</th>
                 </tr>
               </thead>
@@ -732,7 +703,6 @@ export default function AdminNewsletterCampaignsPage() {
                       <td className="p-3.5">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
                           statusUpper === 'SENT' ? 'bg-emerald-100 text-emerald-800' :
-                          statusUpper === 'SCHEDULED' ? 'bg-blue-100 text-blue-800' :
                           statusUpper === 'SENDING' ? 'bg-amber-100 text-amber-800 animate-pulse' :
                           statusUpper === 'PARTIALLY_SENT' ? 'bg-purple-100 text-purple-800' :
                           statusUpper === 'FAILED' ? 'bg-red-100 text-red-800' :
@@ -741,7 +711,6 @@ export default function AdminNewsletterCampaignsPage() {
                         }`}>
                           {statusUpper === 'SENDING' && <Loader2 size={10} className="animate-spin" />}
                           {statusUpper === 'SENT' && <Check size={11} />}
-                          {statusUpper === 'SCHEDULED' && <Clock size={11} />}
                           {statusUpper}
                         </span>
                       </td>
@@ -762,24 +731,14 @@ export default function AdminNewsletterCampaignsPage() {
                               />
                             </div>
                           </div>
-                        ) : statusUpper === 'SCHEDULED' ? (
-                          <span className="text-neutral-500 font-sans text-xs">Pending broadcast</span>
                         ) : (
                           <span className="text-neutral-400 font-sans text-xs">Draft ({targetAudienceEstimate} target)</span>
                         )}
                       </td>
 
-                      {/* Schedule / Date */}
+                      {/* Date */}
                       <td className="p-3.5 text-neutral-500 text-xs">
-                        {statusUpper === 'SCHEDULED' && camp.scheduleDate ? (
-                          <div className="text-blue-700 font-medium">
-                            <Clock size={12} className="inline mr-1" />
-                            {new Date(camp.scheduleDate).toLocaleString('en-IN', {
-                              dateStyle: 'medium',
-                              timeStyle: 'short'
-                            })}
-                          </div>
-                        ) : camp.sentAt ? (
+                        {camp.sentAt ? (
                           <div>{new Date(camp.sentAt).toLocaleDateString('en-IN', { dateStyle: 'medium' })}</div>
                         ) : (
                           <div>{new Date(camp.createdAt).toLocaleDateString('en-IN', { dateStyle: 'medium' })}</div>
@@ -790,7 +749,7 @@ export default function AdminNewsletterCampaignsPage() {
                       <td className="p-3.5 pr-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
                           {/* DRAFT ACTIONS */}
-                          {statusUpper === 'DRAFT' && (
+                          {(statusUpper === 'DRAFT' || statusUpper === 'CANCELLED') && (
                             <>
                               <button
                                 onClick={() => handleOpenSendNowConfirm(camp)}
@@ -819,33 +778,6 @@ export default function AdminNewsletterCampaignsPage() {
                                 title="Duplicate Campaign"
                               >
                                 <Copy size={14} />
-                              </button>
-                            </>
-                          )}
-
-                          {/* SCHEDULED ACTIONS */}
-                          {statusUpper === 'SCHEDULED' && (
-                            <>
-                              <button
-                                onClick={() => handleOpenSendTest(camp)}
-                                className="px-2 py-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded text-xs font-medium"
-                                title="Send test preview"
-                              >
-                                Test
-                              </button>
-                              <button
-                                onClick={() => handleCancelScheduled(camp.id)}
-                                className="px-2 py-1 bg-amber-100 text-amber-800 hover:bg-amber-200 rounded text-xs font-semibold"
-                                title="Cancel schedule"
-                              >
-                                Cancel
-                              </button>
-                              <button
-                                onClick={() => handleOpenEdit(camp)}
-                                className="p-1.5 text-neutral-600 hover:text-neutral-900 rounded hover:bg-neutral-100"
-                                title="Edit Schedule"
-                              >
-                                <Edit3 size={14} />
                               </button>
                             </>
                           )}
@@ -947,7 +879,7 @@ export default function AdminNewsletterCampaignsPage() {
 
             {/* Modal Scrollable Body */}
             <div className="p-6 overflow-y-auto flex-1">
-              <form onSubmit={handleSaveDraftOrSchedule} className="space-y-5">
+              <form onSubmit={handleSaveCampaign} className="space-y-5">
                 {/* ----------------- TAB 1: SETUP ----------------- */}
                 {composeTab === 'setup' && (
                   <div className="space-y-4 max-w-2xl mx-auto">
@@ -1210,7 +1142,7 @@ export default function AdminNewsletterCampaignsPage() {
                       <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-700 mb-2">
                         Delivery Mode
                       </label>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <label
                           className={`p-3.5 rounded-xl border cursor-pointer transition text-center ${
                             form.sendOption === 'save_draft'
@@ -1248,47 +1180,8 @@ export default function AdminNewsletterCampaignsPage() {
                           </div>
                           <p className="text-[11px] text-red-700/80 mt-1">Immediate live broadcast</p>
                         </label>
-
-                        <label
-                          className={`p-3.5 rounded-xl border cursor-pointer transition text-center ${
-                            form.sendOption === 'schedule'
-                              ? 'border-blue-500 bg-blue-50/40 ring-1 ring-blue-500 text-blue-900'
-                              : 'border-neutral-200 hover:border-neutral-300'
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="sendOption"
-                            checked={form.sendOption === 'schedule'}
-                            onChange={() => setForm(f => ({ ...f, sendOption: 'schedule' }))}
-                            className="sr-only"
-                          />
-                          <div className="text-xs font-semibold text-blue-900 flex items-center justify-center gap-1">
-                            <Clock size={12} /> Schedule
-                          </div>
-                          <p className="text-[11px] text-blue-700/80 mt-1">Pick date & time</p>
-                        </label>
                       </div>
                     </div>
-
-                    {/* Schedule Date & Time Picker */}
-                    {form.sendOption === 'schedule' && (
-                      <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-200">
-                        <label className="block text-xs font-semibold uppercase tracking-wider text-blue-900 mb-1">
-                          Scheduled Broadcast Date & Time
-                        </label>
-                        <input
-                          type="datetime-local"
-                          required
-                          value={form.scheduleDate}
-                          onChange={(e) => setForm(f => ({ ...f, scheduleDate: e.target.value }))}
-                          className="w-full px-3.5 py-2.5 border border-blue-200 rounded-lg text-xs sm:text-sm focus:outline-none focus:border-blue-500 bg-white"
-                        />
-                        <p className="text-[11px] text-blue-700 mt-1">
-                          The campaign will be queued and sent automatically when the specified time arrives.
-                        </p>
-                      </div>
-                    )}
 
                     <div className="flex items-center justify-between pt-3">
                       <button
@@ -1463,8 +1356,6 @@ export default function AdminNewsletterCampaignsPage() {
                       <span>
                         {form.sendOption === 'send_now'
                           ? 'Send Broadcast Now'
-                          : form.sendOption === 'schedule'
-                          ? 'Schedule Campaign'
                           : 'Save Draft'}
                       </span>
                     </button>
