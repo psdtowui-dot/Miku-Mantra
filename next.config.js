@@ -4,6 +4,8 @@ const nextConfig = {
   distDir: process.env.BUILD_DIR || '.next',
   output: 'standalone',
   outputFileTracingRoot: path.join(__dirname, './'),
+  compress: true,
+  poweredByHeader: false,
   images: {
     unoptimized: true,
     remotePatterns: [
@@ -23,7 +25,33 @@ const nextConfig = {
   async headers() {
     return [
       {
-        source: "/api/:path*",
+        source: "/api/uploads/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+          { key: "Access-Control-Allow-Origin", value: "*" },
+        ],
+      },
+      {
+        source: "/api/images/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+          { key: "Access-Control-Allow-Origin", value: "*" },
+        ],
+      },
+      {
+        source: "/uploads/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+        ],
+      },
+      {
+        source: "/images/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+        ],
+      },
+      {
+        source: "/api/((?!uploads|images).*)",
         headers: [
           { key: "Cache-Control", value: "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0" },
           { key: "Pragma", value: "no-cache" },

@@ -13,8 +13,9 @@ export default function CategoryShowcaseSection({ initialCategories, initialSett
 
   // Client-side fetch to ensure categories and settings are always fresh and responsive
   useEffect(() => {
+    if (initialCategories && initialCategories.length > 0 && initialSettings) return;
     let isMounted = true;
-    fetch('/api/categories', { cache: 'no-store' })
+    fetch('/api/categories')
       .then(res => res.json())
       .then(data => {
         if (!isMounted) return;
@@ -36,7 +37,7 @@ export default function CategoryShowcaseSection({ initialCategories, initialSett
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [initialCategories, initialSettings]);
 
   // Section visibility toggle
   if (settings.sectionEnabled === false) {

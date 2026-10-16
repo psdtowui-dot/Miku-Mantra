@@ -134,6 +134,8 @@ function Hero({ slides, transitionStyle = 'fade' }) {
           <motion.img
             src={s.img}
             alt={s.title}
+            fetchPriority={i === 0 ? "high" : "auto"}
+            loading={i === 0 ? "eager" : "lazy"}
             className="w-full h-full object-cover object-[center_35%] md:object-center"
             {...imageTransition}
           />
@@ -354,8 +356,9 @@ function Newsletter({ initialSettings }) {
   }, [initialSettings]);
 
   useEffect(() => {
+    if (initialSettings) return;
     let isMounted = true;
-    fetch('/api/newsletter/settings', { cache: 'no-store' })
+    fetch('/api/newsletter/settings')
       .then(r => r.json())
       .then(d => {
         if (isMounted) {
@@ -367,7 +370,7 @@ function Newsletter({ initialSettings }) {
         if (isMounted) setSettingsLoading(false);
       });
     return () => { isMounted = false; };
-  }, []);
+  }, [initialSettings]);
 
   if (settingsLoading) return null;
   if (!settings || settings.isEnabled === false || settings.isEnabled === 'false') return null;

@@ -1109,16 +1109,42 @@ async function handleRoute(request, { params }) {
       const filename = parts.slice(1).join('/');
       if (!filename) return err('File name required', 400);
 
-      let fileDoc = await db.collection('uploads').findOne({ filename });
       let buffer = null;
-      let contentType = fileDoc?.contentType;
+      let contentType = null;
+      const mimeMap = {
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        png: 'image/png',
+        webp: 'image/webp',
+        svg: 'image/svg+xml',
+        gif: 'image/gif',
+        avif: 'image/avif',
+        ico: 'image/x-icon'
+      };
 
-      if (fileDoc && fileDoc.data) {
-        buffer = fileDoc.data;
-        if (buffer && buffer.buffer) buffer = Buffer.from(buffer.buffer);
-        else if (!Buffer.isBuffer(buffer)) buffer = Buffer.from(buffer);
+      // 0. Content Negotiation: Check for modern WebP companion if client supports it
+      const acceptHeader = request.headers.get('accept') || '';
+      const acceptsWebp = acceptHeader.includes('image/webp');
+      if (acceptsWebp && /\.(png|jpe?g)$/i.test(filename)) {
+        const webpFilename = filename.replace(/\.(png|jpe?g)$/i, '.webp');
+        const webpCandidates = [
+          pathModule.join(process.cwd(), 'public', folder, webpFilename),
+          pathModule.join(process.cwd(), 'public', 'uploads', webpFilename),
+          pathModule.join(process.cwd(), 'public', 'images', webpFilename),
+          pathModule.join(process.cwd(), folder, webpFilename)
+        ];
+        for (const wp of webpCandidates) {
+          if (fs.existsSync(wp)) {
+            try {
+              buffer = fs.readFileSync(wp);
+              contentType = 'image/webp';
+              break;
+            } catch (e) {}
+          }
+        }
       }
 
+      // 1. Fast disk read first (<0.1ms, eliminates MongoDB Atlas network round-trip)
       if (!buffer) {
         const candidatePaths = [
           pathModule.join(process.cwd(), 'public', folder, filename),
@@ -1132,20 +1158,27 @@ async function handleRoute(request, { params }) {
             try {
               buffer = fs.readFileSync(p);
               const ext = pathModule.extname(p).toLowerCase().replace('.', '');
-              const mimeMap = {
-                jpg: 'image/jpeg',
-                jpeg: 'image/jpeg',
-                png: 'image/png',
-                webp: 'image/webp',
-                svg: 'image/svg+xml',
-                gif: 'image/gif',
-                avif: 'image/avif',
-                ico: 'image/x-icon'
-              };
               contentType = mimeMap[ext] || 'image/jpeg';
               break;
             } catch (e) {}
           }
+        }
+      }
+
+      // 2. Fallback to MongoDB only if not on local filesystem
+      if (!buffer) {
+        let fileDoc = await db.collection('uploads').findOne({ filename });
+        if (fileDoc && fileDoc.data) {
+          buffer = fileDoc.data;
+          if (buffer && buffer.buffer) buffer = Buffer.from(buffer.buffer);
+          else if (!Buffer.isBuffer(buffer)) buffer = Buffer.from(buffer);
+          contentType = fileDoc.contentType;
+          // Cache to local filesystem so subsequent requests read from disk
+          try {
+            const cachePath = pathModule.join(process.cwd(), 'public', 'uploads', filename);
+            if (!fs.existsSync(pathModule.dirname(cachePath))) fs.mkdirSync(pathModule.dirname(cachePath), { recursive: true });
+            fs.writeFileSync(cachePath, buffer);
+          } catch (_) {}
         }
       }
 
@@ -1155,7 +1188,8 @@ async function handleRoute(request, { params }) {
         headers: {
           'Content-Type': contentType || 'image/jpeg',
           'Cache-Control': 'public, max-age=31536000, immutable',
-          'Access-Control-Allow-Origin': '*'
+          'Access-Control-Allow-Origin': '*',
+          'Vary': 'Accept'
         }
       });
     }
@@ -1325,6 +1359,15 @@ async function handleRoute(request, { params }) {
         filter.price = { $gte: minPrice };
       } else if (!isNaN(maxPrice)) {
         filter.price = { $lte: maxPrice };
+      }
+
+      // Specific IDs filter (allows targeted lookups without fetching full catalogue)
+      const idsParam = (q.get('ids') || '').trim();
+      if (idsParam) {
+        const idList = idsParam.split(',').map(s => s.trim()).filter(Boolean);
+        if (idList.length > 0) {
+          filter.$or = [{ id: { $in: idList } }, { slug: { $in: idList } }];
+        }
       }
 
       // Stock / availability

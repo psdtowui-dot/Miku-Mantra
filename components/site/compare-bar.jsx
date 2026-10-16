@@ -10,7 +10,7 @@ export default function CompareBar(){
   const [items,setItems] = useState([]);
   useEffect(()=>{
     if(ids.length===0){ setItems([]); return; }
-    (async()=>{ try{ const r=await fetch('/api/products'); const d=await r.json(); const byId=Object.fromEntries((d.products||[]).map(p=>[p.id,p])); setItems(ids.map(i=>byId[i]).filter(Boolean)); }catch{} })();
+    (async()=>{ try{ const r=await fetch('/api/products?ids=' + encodeURIComponent(ids.join(','))); const d=await r.json(); const byId=Object.fromEntries((d.products||[]).map(p=>[p.id,p])); setItems(ids.map(i=>byId[i]).filter(Boolean)); }catch{} })();
   },[ids]);
   return (
     <AnimatePresence>

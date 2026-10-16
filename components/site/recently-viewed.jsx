@@ -11,7 +11,7 @@ export default function RecentlyViewed({ exclude }){
       const filtered = ids.filter(id=>id!==exclude);
       if(filtered.length===0){ setItems([]); return; }
       try{
-        const r = await fetch('/api/products'); const d = await r.json();
+        const r = await fetch('/api/products?ids=' + encodeURIComponent(filtered.slice(0, 4).join(','))); const d = await r.json();
         const byId = Object.fromEntries((d.products||[]).map(p=>[p.id,p]));
         setItems(filtered.map(i=>byId[i]).filter(Boolean).slice(0,4));
       }catch{}

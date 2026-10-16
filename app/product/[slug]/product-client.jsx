@@ -14,10 +14,10 @@ import ProductImageZoom from '@/components/site/product-image-zoom';
 import { toast } from 'sonner';
 import { WAREHOUSE_PINCODE } from '@/lib/constants';
 
-export default function ProductClient({ initialProduct, slug, siteSettings }) {
+export default function ProductClient({ initialProduct, initialRelated, slug, siteSettings }) {
   const router = useRouter();
   const [p, setP] = useState(initialProduct);
-  const [related, setRelated] = useState([]);
+  const [related, setRelated] = useState(initialRelated || initialProduct?.related || []);
   const [loading, setLoading] = useState(!initialProduct);
   const [zoomConfig, setZoomConfig] = useState(siteSettings?.zoomSettings || null);
   const { add } = useCart();
@@ -37,9 +37,12 @@ export default function ProductClient({ initialProduct, slug, siteSettings }) {
 
   useEffect(() => {
     setShowAllReviews(false);
+    if (initialProduct && (initialRelated?.length || initialProduct?.related?.length)) {
+      return;
+    }
     (async () => {
       try {
-        const r = await fetch(`/api/products/${slug}`, { cache: 'no-store' });
+        const r = await fetch(`/api/products/${slug}`);
         if (r.ok) {
           const d = await r.json();
           if (d.product) setP(d.product);
@@ -50,7 +53,7 @@ export default function ProductClient({ initialProduct, slug, siteSettings }) {
         setLoading(false);
       }
     })();
-  }, [slug]);
+  }, [slug, initialProduct, initialRelated]);
 
   useEffect(() => {
     if (!zoomConfig) {

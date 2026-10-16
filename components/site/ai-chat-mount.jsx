@@ -1,6 +1,8 @@
 'use client';
 import { usePathname } from 'next/navigation';
-import AIChat from './ai-chat';
+import dynamic from 'next/dynamic';
+
+const AIChat = dynamic(() => import('./ai-chat'), { ssr: false });
 
 export default function AIChatMount(){
   const path = usePathname() || '';
