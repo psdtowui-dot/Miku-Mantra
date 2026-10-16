@@ -52,7 +52,11 @@ async function getSitemapData() {
     }
     const db = client.db(process.env.DB_NAME || 'userPortal');
 
-    const products = await db.collection('products').find({}).toArray();
+    const products = await db.collection('products').find({
+      active: { $ne: false },
+      isDemoProduct: { $ne: true },
+      status: { $nin: ['deleted', 'inactive', 'archived'] }
+    }).toArray();
     const categories = await db.collection('categories').find({}).toArray();
     const collections = await db.collection('collections').find({}).toArray();
 

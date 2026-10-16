@@ -527,7 +527,7 @@ function Newsletter({ initialSettings }) {
   );
 }
 
-const FALLBACK_HERO = [{ title: 'The Bridal Edit', kicker: 'Wedding Collection', copy: 'Heirloom polki chokers, uncut diamond haars & maang tikkas — handcrafted over 120+ hours.', cta: 'Discover the Edit', href: '/shop?category=wedding', img: 'https://images.unsplash.com/photo-1601121141461-9d6647bca1ed?crop=entropy&cs=srgb&fm=jpg&q=85' }];
+const FALLBACK_HERO = [{ title: 'The Bridal Edit', kicker: 'Wedding Collection', copy: 'Heirloom polki chokers, uncut diamond haars & maang tikkas — handcrafted over 120+ hours.', cta: 'Discover the Edit', href: '/shop?category=wedding', img: '/api/uploads/36bd7ee8-7bb1-4584-9900-7336e2396647-0e0f1045-51aa-4451-847b-b610eab258c4-wmremove-transformed.png' }];
 
 export default function HomePage({ initialData }) {
   const [products, setProducts] = useState(initialData?.products || []);

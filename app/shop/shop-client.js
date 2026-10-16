@@ -1,6 +1,6 @@
 'use client';
 import { Suspense, useMemo, useState, useEffect } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import ProductCard from '@/components/site/product-card';
 import CompareBar from '@/components/site/compare-bar';
@@ -166,7 +166,6 @@ function matchesFilterValue(product, key, selectedVal, group) {
 
 function ShopInner({ initialProducts }) {
   const sp = useSearchParams();
-  const router = useRouter();
 
   const [all, setAll] = useState(Array.isArray(initialProducts) ? initialProducts : []);
   const [loading, setLoading] = useState(!Array.isArray(initialProducts) || initialProducts.length === 0);
@@ -195,17 +194,24 @@ function ShopInner({ initialProducts }) {
 
   // Load products and dynamic filter config from backend
   useEffect(() => {
+    let active = true;
     (async () => {
       try {
         const [pRes, filtersRes] = await Promise.all([
-          fetch('/api/products', { cache: 'no-store' }),
-          fetch('/api/product-filters', { cache: 'no-store' })
+          fetch('/api/products'),
+          fetch('/api/product-filters')
         ]);
+        if (!active) return;
         if (pRes.ok) {
           const d = await pRes.json();
-          if (d && Array.isArray(d.products)) setAll(d.products);
+          if (d && Array.isArray(d.products)) {
+            const activeOnly = d.products.filter(
+              p => p && p.active !== false && p.isDemoProduct !== true && p.status !== 'deleted' && p.status !== 'inactive' && p.status !== 'archived'
+            );
+            setAll(activeOnly);
+          }
         }
-        if (filtersRes.ok) {
+        if (filtersRes.ok && active) {
           const d = await filtersRes.json();
           if (d.groups?.length) {
             setFilterGroups(d.groups);
@@ -214,11 +220,16 @@ function ShopInner({ initialProducts }) {
       } catch (err) {
         console.error('Failed to load shop data:', err);
       } finally {
-        setLoading(false);
-        setFilterLoading(false);
-        setHasLoadedFilters(true);
+        if (active) {
+          setLoading(false);
+          setFilterLoading(false);
+          setHasLoadedFilters(true);
+        }
       }
     })();
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Derive dynamic filter groups from products if backend filter groups are empty
@@ -308,16 +319,59 @@ function ShopInner({ initialProducts }) {
     return derived;
   }, [filterGroups, hasLoadedFilters, all]);
 
-  // Sync URL search params with dynamic Range and Sort states
+  // Helper to extract clean dictionary from URLSearchParams or query string
+  const getParamsMap = (searchParams) => {
+    const params = {};
+    if (!searchParams) return params;
+    const entries = typeof searchParams.entries === 'function'
+      ? searchParams.entries()
+      : new URLSearchParams(searchParams).entries();
+    for (const [k, v] of entries) {
+      if (v) params[k] = v;
+    }
+    return params;
+  };
+
+  const [activeParams, setActiveParams] = useState(() => getParamsMap(sp));
+
+  // Sync state if navigation occurs from outside (e.g. navbar links)
   useEffect(() => {
-    const sortParam = sp.get('sort');
+    setActiveParams(getParamsMap(sp));
+  }, [sp]);
+
+  // Sync state on browser back/forward buttons
+  useEffect(() => {
+    const handlePopState = () => {
+      setActiveParams(getParamsMap(new URLSearchParams(window.location.search)));
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const updateUrl = (paramsObj) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(paramsObj)) {
+      if (v !== undefined && v !== null && v !== '') {
+        q.set(k, String(v));
+      }
+    }
+    const queryString = q.toString();
+    const newUrl = queryString ? `/shop?${queryString}` : '/shop';
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', newUrl);
+    }
+  };
+
+  // Sync activeParams with dynamic Range and Sort states
+  useEffect(() => {
+    const sortParam = activeParams.sort;
     if (sortParam && ['newest', 'rating', 'price-asc', 'price-desc', 'discount'].includes(sortParam)) {
       setSort(sortParam);
     }
 
-    const minParam = sp.get('min');
-    const maxParam = sp.get('max');
-    const priceParam = sp.get('price');
+    const minParam = activeParams.min;
+    const maxParam = activeParams.max;
+    const priceParam = activeParams.price;
 
     const pg = (activeFilterGroups || []).find(g => (g.type === 'price' || g.type === 'range' || g.key === 'price') && g.enabled !== false);
     const minBound = pg?.priceConfig?.min != null ? Number(pg.priceConfig.min) : (pg?.min != null ? Number(pg.min) : 0);
@@ -350,35 +404,65 @@ function ShopInner({ initialProducts }) {
 
     // Default range when no price query param is present
     setRange([minBound, maxBound]);
-  }, [sp, activeFilterGroups, all]);
+  }, [activeParams, activeFilterGroups, all]);
 
-  // Set URL query parameters helper
+  // Set URL query parameters helper - runs fully client side with replaceState (0ms buffering)
   const setParam = (key, val) => {
-    const q = new URLSearchParams(sp.toString());
-    if (val) {
-      q.set(key, val);
-    } else {
-      q.delete(key);
-      if (key === 'price') {
-        q.delete('min');
-        q.delete('max');
+    setActiveParams(prev => {
+      const next = { ...prev };
+      if (val) {
+        next[key] = val;
+      } else {
+        delete next[key];
+        if (key === 'price') {
+          delete next.min;
+          delete next.max;
+        }
       }
-    }
-    router.push(`/shop?${q.toString()}`, { scroll: false });
+      updateUrl(next);
+      return next;
+    });
   };
 
-  // Clear All Filters helper
+  // Clear All Filters helper - runs fully client side with replaceState
   const clearAll = () => {
-    router.push('/shop', { scroll: false });
+    setActiveParams({});
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', '/shop');
+    }
     const pg = (activeFilterGroups || []).find(g => (g.type === 'price' || g.type === 'range' || g.key === 'price') && g.enabled !== false);
     const minB = pg?.priceConfig?.min != null ? Number(pg.priceConfig.min) : (pg?.min != null ? Number(pg.min) : 0);
     const maxB = pg?.priceConfig?.max != null ? Number(pg.priceConfig.max) : (pg?.max != null ? Number(pg.max) : (all.length ? Math.max(...all.map(p => p.price || 0)) : 1000000));
     setRange([minB, maxB]);
+    setSort('newest');
   };
+
+  // Debounced URL sync when user slides price range (250ms debounce)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const pg = (activeFilterGroups || []).find(g => (g.type === 'price' || g.type === 'range' || g.key === 'price') && g.enabled !== false);
+      const minBound = pg?.priceConfig?.min != null ? Number(pg.priceConfig.min) : (pg?.min != null ? Number(pg.min) : 0);
+      const maxBound = pg?.priceConfig?.max != null ? Number(pg.priceConfig.max) : (pg?.max != null ? Number(pg.max) : (all.length ? Math.max(...all.map(p => p.price || 0)) : 1000000));
+
+      if (range[0] !== minBound || range[1] !== maxBound) {
+        setActiveParams(prev => {
+          if (prev.min === String(range[0]) && prev.max === String(range[1])) return prev;
+          const next = { ...prev, min: String(range[0]), max: String(range[1]) };
+          delete next.price;
+          updateUrl(next);
+          return next;
+        });
+      }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [range, activeFilterGroups, all]);
 
   // Fully dynamic product filtering engine
   const list = useMemo(() => {
-    let result = [...all];
+    // Strictly filter out any inactive, demo, or deleted products
+    let result = (all || []).filter(
+      p => p && p.active !== false && p.isDemoProduct !== true && p.status !== 'deleted' && p.status !== 'inactive' && p.status !== 'archived'
+    );
 
     const enabledGroups = (activeFilterGroups || []).filter(g => g.enabled !== false);
     const disabledKeys = new Set(
@@ -396,21 +480,21 @@ function ShopInner({ initialProducts }) {
 
         // Price Filter Handling
         if (group.type === 'price' || group.type === 'range' || key === 'price') {
-          result = result.filter(p => p.price >= range[0] && p.price <= range[1]);
+          result = result.filter(p => (p.price || 0) >= range[0] && (p.price || 0) <= range[1]);
           continue;
         }
 
         // Standard Options Filter Handling
-        const selectedVal = sp.get(key);
+        const selectedVal = activeParams[key];
         if (selectedVal) {
           result = result.filter(p => matchesFilterValue(p, key, selectedVal, group));
         }
       }
     }
 
-    // 2. Generic fallback for any other query param in the URL (e.g. from links or external URLs)
+    // 2. Generic fallback for any other query param
     const reservedParams = new Set(['sort', 'page', 'min', 'max', 'price']);
-    for (const [paramKey, paramVal] of sp.entries()) {
+    for (const [paramKey, paramVal] of Object.entries(activeParams)) {
       if (reservedParams.has(paramKey) || handledKeys.has(paramKey) || disabledKeys.has(paramKey)) {
         continue;
       }
@@ -420,8 +504,8 @@ function ShopInner({ initialProducts }) {
     }
 
     // Sort order
-    if (sort === 'price-asc') result.sort((a, b) => a.price - b.price);
-    else if (sort === 'price-desc') result.sort((a, b) => b.price - a.price);
+    if (sort === 'price-asc') result.sort((a, b) => (a.price || 0) - (b.price || 0));
+    else if (sort === 'price-desc') result.sort((a, b) => (b.price || 0) - (a.price || 0));
     else if (sort === 'rating') {
       result.sort((a, b) => {
         const rDiff = (b.rating || 0) - (a.rating || 0);
@@ -447,18 +531,18 @@ function ShopInner({ initialProducts }) {
     }
 
     return result;
-  }, [all, activeFilterGroups, sp, range, sort]);
+  }, [all, activeFilterGroups, activeParams, range, sort]);
 
   // Dynamic Page Title computation
   const title = useMemo(() => {
-    const sQuery = sp.get('search') || sp.get('q');
+    const sQuery = activeParams.search || activeParams.q;
     if (sQuery) {
       return `Search: "${sQuery}"`;
     }
 
     for (const g of activeFilterGroups || []) {
       if (g.enabled === false) continue;
-      const val = sp.get(g.key);
+      const val = activeParams[g.key];
       if (val) {
         const matchedOpt = (g.options || []).find(o => isOptionSelected(val, o.value, o.name));
         const displayName = matchedOpt?.name || val.replace(/[-_]/g, ' ');
@@ -476,7 +560,7 @@ function ShopInner({ initialProducts }) {
       }
     }
 
-    for (const [key, val] of sp.entries()) {
+    for (const [key, val] of Object.entries(activeParams)) {
       if (['sort', 'page', 'min', 'max', 'price'].includes(key)) continue;
       if (val) {
         return `${val.replace(/[-_]/g, ' ')} Jewellery`;
@@ -484,7 +568,7 @@ function ShopInner({ initialProducts }) {
     }
 
     return 'All Jewellery';
-  }, [activeFilterGroups, sp]);
+  }, [activeFilterGroups, activeParams]);
 
   // Filters UI Component - 100% Dynamic rendering based on backend state
   const Filters = ({ animate = false }) => {
@@ -564,7 +648,7 @@ function ShopInner({ initialProducts }) {
                   {priceOptions.length > 0 && (
                     <ul className="mt-3 space-y-1.5 pt-2 border-t border-neutral-100">
                       {priceOptions.map(opt => {
-                        const selectedVal = sp.get(group.key);
+                        const selectedVal = activeParams[group.key];
                         const isSelected = isOptionSelected(selectedVal, opt.value, opt.name);
                         return (
                           <li key={opt.id || opt.value}>
@@ -601,7 +685,7 @@ function ShopInner({ initialProducts }) {
 
             if (activeOptions.length === 0) return null;
 
-            const selectedValue = sp.get(group.key);
+            const selectedValue = activeParams[group.key];
             const Element = animate ? motion.div : 'div';
             const props = animate ? { variants: itemVariants } : {};
 
@@ -753,6 +837,7 @@ function ShopInner({ initialProducts }) {
                               onClick={() => {
                                 setSort(opt.val);
                                 setSortOpen(false);
+                                setParam('sort', opt.val === 'newest' ? '' : opt.val);
                               }}
                               className={`w-full text-left px-4 py-2.5 text-[11px] tracking-wider uppercase transition-colors flex items-center justify-between cursor-pointer ${sort === opt.val
                                 ? 'bg-[#FAF6EF] text-[#9C6B30] font-semibold'
@@ -786,15 +871,15 @@ function ShopInner({ initialProducts }) {
               <div className="text-center py-20 px-4">
                 <div className="font-serif-luxe text-2xl sm:text-3xl text-neutral-800 font-medium">Product not found</div>
                 <p className="text-sm text-neutral-500 mt-2 max-w-md mx-auto">
-                  {sp.get('search') || sp.get('q')
-                    ? `We couldn't find any products matching "${sp.get('search') || sp.get('q')}". Try checking for spelling errors or searching with other keywords.`
+                  {activeParams.search || activeParams.q
+                    ? `We couldn't find any products matching "${activeParams.search || activeParams.q}". Try checking for spelling errors or searching with other keywords.`
                     : 'We could not find any products matching your selected criteria.'}
                 </p>
                 <button
                   onClick={clearAll}
                   className="mt-6 inline-flex items-center justify-center px-6 py-2.5 text-xs uppercase tracking-widest font-semibold border border-[#9C6B30] text-[#9C6B30] hover:bg-[#9C6B30] hover:text-white transition-colors cursor-pointer"
                 >
-                  {sp.get('search') || sp.get('q') ? 'Clear Search & Filters' : 'Clear Filters'}
+                  {activeParams.search || activeParams.q ? 'Clear Search & Filters' : 'Clear Filters'}
                 </button>
               </div>
             ) : (

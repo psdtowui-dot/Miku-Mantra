@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useCart } from '@/lib/cart-store';
@@ -26,6 +26,7 @@ export default function CheckoutPage() {
   const [savingAddr, setSavingAddr] = useState(false);
   const [isDefaultAddr, setIsDefaultAddr] = useState(false);
   const [saveForFuture, setSaveForFuture] = useState(true);
+  const loadedUserIdRef = useRef(null);
 
   const [shippingConfig, setShippingConfig] = useState({
     freeShippingEnabled: true,
@@ -113,7 +114,7 @@ export default function CheckoutPage() {
   };
 
   async function loadAddr() {
-    setLoadingAddresses(true);
+    setLoadingAddresses(prev => savedAddresses.length === 0);
     try {
       const r = await authFetch('/api/addresses');
       const d = await r.json();
@@ -218,7 +219,8 @@ export default function CheckoutPage() {
         const data = await res.json();
         if (res.ok) {
           toast.success('Address updated successfully');
-          await loadAddr();
+          const updatedAddr = data.address || { ...payload, id: selectedAddrId };
+          setSavedAddresses(prev => prev.map(a => a.id === selectedAddrId ? { ...a, ...updatedAddr } : a));
           if (advanceToPayment) setStep('payment');
           return true;
         } else {
@@ -234,8 +236,9 @@ export default function CheckoutPage() {
         const data = await res.json();
         if (res.ok) {
           toast.success('Address saved successfully');
-          if (data.address?.id) setSelectedAddrId(data.address.id);
-          await loadAddr();
+          const created = data.address || { ...payload, id: 'addr_' + Date.now() };
+          if (created.id) setSelectedAddrId(created.id);
+          setSavedAddresses(prev => [created, ...prev]);
           if (advanceToPayment) setStep('payment');
           return true;
         } else {
@@ -283,7 +286,15 @@ export default function CheckoutPage() {
     }
   }, [hydrated, authLoading, user, items, router]);
 
-  useEffect(() => { if (user) { setEmail(user.email); loadAddr(); } }, [user]);
+  useEffect(() => {
+    if (user) {
+      setEmail(user.email);
+      if (loadedUserIdRef.current !== user.id) {
+        loadedUserIdRef.current = user.id;
+        loadAddr();
+      }
+    }
+  }, [user]);
   useEffect(() => {
     try {
       const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';

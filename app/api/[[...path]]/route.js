@@ -66,6 +66,8 @@ function cacheBust(prefix) {
       invalidateSiteDataCache('shop_products');
       invalidateSiteDataCache('product_');
     } catch (e) {}
+    try { revalidatePath('/', 'layout'); } catch (e) {}
+    try { revalidatePath('/shop'); } catch (e) {}
   }
   try { invalidateSiteDataCache(prefix); } catch (e) {}
 }
@@ -308,6 +310,10 @@ async function ensureIndexes(database) {
       database.collection('products').createIndex({ slug: 1 }),
       database.collection('products').createIndex({ category: 1 }),
       database.collection('products').createIndex({ createdAt: -1 }),
+      database.collection('products').createIndex({ active: 1, isDemoProduct: 1, status: 1, category: 1, price: 1, createdAt: -1 }),
+      database.collection('products').createIndex({ active: 1, isDemoProduct: 1, status: 1, collection: 1, price: 1, createdAt: -1 }),
+      database.collection('products').createIndex({ active: 1, isDemoProduct: 1, status: 1, gender: 1, price: 1, createdAt: -1 }),
+      database.collection('products').createIndex({ slug: 1, active: 1, isDemoProduct: 1 }),
       database.collection('orders').createIndex({ id: 1 }),
       database.collection('orders').createIndex({ orderNumber: 1 }),
       database.collection('orders').createIndex({ placedAt: -1 }),
@@ -1296,34 +1302,77 @@ async function handleRoute(request, { params }) {
 
     // ============ PUBLIC: PRODUCTS ============
     if (route === '/products' && method === 'GET') {
-      const filter = {}
-      if (q.get('category')) filter.category = q.get('category')
-      if (q.get('collection')) filter.collection = q.get('collection')
-      if (q.get('gender')) filter.gender = q.get('gender')
-      if (q.get('featured') === '1') filter.featured = true
-      if (q.get('bestseller') === '1') filter.bestseller = true
-      if (q.get('newArrival') === '1') filter.newArrival = true
-      if (q.get('search')) {
-        const term = q.get('search').trim();
+      const filter = {
+        active: { $ne: false },
+        isDemoProduct: { $ne: true },
+        status: { $nin: ['deleted', 'inactive', 'archived'] }
+      };
+      if (q.get('category')) filter.category = q.get('category');
+      if (q.get('collection')) filter.collection = q.get('collection');
+      if (q.get('gender')) filter.gender = q.get('gender');
+      if (q.get('metal')) filter.metal = { $regex: q.get('metal').trim(), $options: 'i' };
+      if (q.get('stone')) filter.stone = { $regex: q.get('stone').trim(), $options: 'i' };
+      if (q.get('featured') === '1') filter.featured = true;
+      if (q.get('bestseller') === '1') filter.bestseller = true;
+      if (q.get('newArrival') === '1') filter.newArrival = true;
+
+      // Price filtering
+      const minPrice = parseFloat(q.get('min') || q.get('minPrice') || '');
+      const maxPrice = parseFloat(q.get('max') || q.get('maxPrice') || '');
+      if (!isNaN(minPrice) && !isNaN(maxPrice)) {
+        filter.price = { $gte: minPrice, $lte: maxPrice };
+      } else if (!isNaN(minPrice)) {
+        filter.price = { $gte: minPrice };
+      } else if (!isNaN(maxPrice)) {
+        filter.price = { $lte: maxPrice };
+      }
+
+      // Stock / availability
+      if (q.get('inStock') === '1' || q.get('availability') === 'inStock') {
+        filter.stock = { $gt: 0 };
+      }
+
+      // Search term
+      const searchTerm = (q.get('search') || q.get('q') || '').trim();
+      if (searchTerm) {
         filter.$or = [
-          { name: { $regex: term, $options: 'i' } },
-          { sku: { $regex: term, $options: 'i' } },
-          { category: { $regex: term, $options: 'i' } },
-          { subcategory: { $regex: term, $options: 'i' } },
-          { brand: { $regex: term, $options: 'i' } },
-          { tags: { $regex: term, $options: 'i' } },
-          { keywords: { $regex: term, $options: 'i' } },
-          { description: { $regex: term, $options: 'i' } }
+          { name: { $regex: searchTerm, $options: 'i' } },
+          { sku: { $regex: searchTerm, $options: 'i' } },
+          { category: { $regex: searchTerm, $options: 'i' } },
+          { subcategory: { $regex: searchTerm, $options: 'i' } },
+          { brand: { $regex: searchTerm, $options: 'i' } },
+          { tags: { $regex: searchTerm, $options: 'i' } },
+          { keywords: { $regex: searchTerm, $options: 'i' } },
+          { description: { $regex: searchTerm, $options: 'i' } }
         ];
       }
+
+      // Sorting
+      const sortParam = q.get('sort') || 'newest';
+      let sortObj = { createdAt: -1 };
+      if (sortParam === 'price-asc') sortObj = { price: 1, createdAt: -1 };
+      else if (sortParam === 'price-desc') sortObj = { price: -1, createdAt: -1 };
+      else if (sortParam === 'rating') sortObj = { rating: -1, reviews: -1 };
+      else if (sortParam === 'discount') sortObj = { mrp: -1, price: 1 };
+      else if (sortParam === 'newest') sortObj = { createdAt: -1 };
+
       const page = Math.max(1, parseInt(q.get('page') || '1'));
-      const limit = Math.min(100, Math.max(1, parseInt(q.get('limit') || '100')));
+      const limit = Math.min(250, Math.max(1, parseInt(q.get('limit') || '100')));
       const skip = (page - 1) * limit;
-      const cacheKey = 'products:' + JSON.stringify({ filter, page, limit });
+
+      const cacheKey = 'products:' + JSON.stringify({ filter, sortObj, page, limit });
       const cached = cacheGet(cacheKey);
       if (cached) return ok(cached);
+
+      const projection = {
+        id: 1, slug: 1, name: 1, sku: 1, price: 1, mrp: 1, category: 1, subcategory: 1,
+        collection: 1, gender: 1, metal: 1, stone: 1, images: 1, image: 1, badge: 1,
+        stock: 1, rating: 1, reviews: 1, featured: 1, bestseller: 1, newArrival: 1,
+        specifications: 1, productBenefits: 1, createdAt: 1
+      };
+
       const [list, total] = await Promise.all([
-        db.collection('products').find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).toArray(),
+        db.collection('products').find(filter, { projection }).sort(sortObj).skip(skip).limit(limit).toArray(),
         db.collection('products').countDocuments(filter)
       ]);
       const resp = { products: list.map(clean), total, page, totalPages: Math.ceil(total / limit) };
@@ -1331,11 +1380,29 @@ async function handleRoute(request, { params }) {
       return ok(resp);
     }
     if (route.startsWith('/products/') && method === 'GET') {
-      const slug = route.split('/')[2]
-      const p = await db.collection('products').findOne({ $or: [{ slug }, { id: slug }] })
-      if (!p) return err('Not found', 404)
-      const related = await db.collection('products').find({ category: p.category, id: { $ne: p.id } }).limit(4).toArray()
-      return ok({ product: clean(p), related: related.map(clean) })
+      const slug = route.split('/')[2];
+      const activeFilter = {
+        active: { $ne: false },
+        isDemoProduct: { $ne: true },
+        status: { $nin: ['deleted', 'inactive', 'archived'] }
+      };
+      const p = await db.collection('products').findOne({
+        $or: [{ slug }, { id: slug }, { slug: new RegExp('^' + slug + '$', 'i') }],
+        ...activeFilter
+      });
+      if (!p) return err('Not found', 404);
+      const related = await db.collection('products').find({
+        category: p.category,
+        id: { $ne: p.id },
+        ...activeFilter
+      }, {
+        projection: {
+          id: 1, slug: 1, name: 1, sku: 1, price: 1, mrp: 1, category: 1,
+          collection: 1, gender: 1, metal: 1, stone: 1, images: 1, image: 1,
+          badge: 1, stock: 1, rating: 1, reviews: 1, createdAt: 1
+        }
+      }).limit(4).toArray();
+      return ok({ product: clean(p), related: related.map(clean) });
     }
     if ((route === '/categories' || route === '/category-showcase') && method === 'GET') {
       const c = cacheGet('cats');
@@ -2320,23 +2387,40 @@ async function handleRoute(request, { params }) {
       }
       const cleanPhone = `+91${mobile10}`;
 
-      // Re-fetch and validate every product from MongoDB
+      // Batch fetch and validate every product from MongoDB in a single query
       const validatedItems = [];
       let calculatedSubtotal = 0;
 
+      const lookupOrs = [];
       for (const item of rawItems) {
         if (!item.id) return err('Invalid product in cart.', 400);
         const qty = parseInt(item.qty);
         if (isNaN(qty) || qty <= 0) return err('Invalid product quantity.', 400);
+        lookupOrs.push({ id: item.id }, { id: String(item.id) }, { slug: item.id });
+        if (item.slug) lookupOrs.push({ slug: item.slug });
+      }
 
-        const dbProduct = await db.collection('products').findOne({
-          $or: [
-            { id: item.id },
-            { id: String(item.id) },
-            { slug: item.id },
-            ...(item.slug ? [{ slug: item.slug }] : [])
-          ]
-        });
+      const dbProducts = await db.collection('products').find({
+        $or: lookupOrs,
+        active: { $ne: false },
+        isDemoProduct: { $ne: true },
+        status: { $nin: ['deleted', 'inactive', 'archived'] }
+      }).toArray();
+
+      const prodMap = new Map();
+      for (const p of dbProducts) {
+        if (p.id) {
+          prodMap.set(p.id, p);
+          prodMap.set(String(p.id), p);
+        }
+        if (p.slug) {
+          prodMap.set(p.slug, p);
+        }
+      }
+
+      for (const item of rawItems) {
+        const qty = parseInt(item.qty);
+        const dbProduct = prodMap.get(item.id) || prodMap.get(String(item.id)) || (item.slug ? prodMap.get(item.slug) : null);
         if (!dbProduct) {
           return err(`Product "${item.name || item.id}" is no longer available.`, 400);
         }
@@ -2344,11 +2428,11 @@ async function handleRoute(request, { params }) {
         const currentStock = Math.max(0, parseInt(dbProduct.stock) || 0);
 
         if (currentStock <= 0) {
-          return err('This product is currently out of stock.', 400);
+          return err(`Product "${dbProduct.name}" is currently out of stock.`, 400);
         }
 
         if (currentStock < qty) {
-          return err(`Only ${currentStock} items are available.`, 400);
+          return err(`Only ${currentStock} item(s) available for "${dbProduct.name}".`, 400);
         }
 
         const realPrice = Number(dbProduct.price) || 0;
