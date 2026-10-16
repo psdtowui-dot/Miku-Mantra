@@ -1606,11 +1606,14 @@ async function handleRoute(request, { params }) {
     if (route === '/product-filters' && method === 'GET') {
       const c = cacheGet('product_filters');
       if (c) return ok(c);
-      await seedFiltersIfEmpty(db);
-      await syncCategoryAndCollectionFilterOptions(db);
-      const list = await db.collection('product_filters').find({}).sort({ order: 1 }).toArray();
-      const r = { groups: list.map(clean) };
-      cacheSet('product_filters', r, 5000);
+      let list = await db.collection('product_filters').find({}).sort({ order: 1 }).toArray();
+      if (!list || list.length === 0) {
+        await seedFiltersIfEmpty(db);
+        await syncCategoryAndCollectionFilterOptions(db);
+        list = await db.collection('product_filters').find({}).sort({ order: 1 }).toArray();
+      }
+      const r = { groups: (list || []).map(clean) };
+      cacheSet('product_filters', r, 300000);
       return ok(r);
     }
 
@@ -2314,7 +2317,7 @@ async function handleRoute(request, { params }) {
         },
         helperText
       };
-      cacheSet('coupon_settings', res, 5000);
+      cacheSet('coupon_settings', res, 300000);
       return ok(res);
     }
 
@@ -2328,11 +2331,9 @@ async function handleRoute(request, { params }) {
 
       if (!code) return err('Coupon code is required', 400);
 
-      const c = await db.collection('coupons').findOne({
-        code,
-        $or: [{ active: true }, { isActive: true }]
-      });
-      if (!c) return err('Invalid coupon', 404);
+      // Direct indexed lookup on code
+      const c = await db.collection('coupons').findOne({ code });
+      if (!c || (c.active === false && c.isActive === false)) return err('Invalid coupon', 404);
 
       const valResult = validateCouponRules(c, subtotal, { items, user, db });
       if (!valResult.valid) {
@@ -2359,19 +2360,38 @@ async function handleRoute(request, { params }) {
       const results = [];
       let allValid = true;
 
+      // Batch lookup all items in a single query
+      const productMap = new Map();
+      const allIds = [];
+      const allSlugs = [];
+      for (const item of rawItems) {
+        const id = item.id || item.productId;
+        if (id) {
+          allIds.push(id, String(id));
+        }
+        if (item.slug) allSlugs.push(item.slug);
+      }
+      const orClauses = [];
+      if (allIds.length > 0) orClauses.push({ id: { $in: allIds } });
+      if (allSlugs.length > 0) orClauses.push({ slug: { $in: allSlugs } });
+
+      if (orClauses.length > 0) {
+        const dbProducts = await db.collection('products').find(
+          orClauses.length === 1 ? orClauses[0] : { $or: orClauses }
+        ).project({ id: 1, slug: 1, name: 1, stock: 1 }).toArray();
+
+        for (const p of dbProducts) {
+          if (p.id) productMap.set(String(p.id), p);
+          if (p.slug) productMap.set(String(p.slug), p);
+        }
+      }
+
       for (const item of rawItems) {
         const id = item.id || item.productId;
         const qty = parseInt(item.qty) || 1;
         if (!id) continue;
 
-        const dbProduct = await db.collection('products').findOne({
-          $or: [
-            { id },
-            { id: String(id) },
-            { slug: id },
-            ...(item.slug ? [{ slug: item.slug }] : [])
-          ]
-        });
+        const dbProduct = productMap.get(String(id)) || (item.slug ? productMap.get(String(item.slug)) : null);
         if (!dbProduct) {
           results.push({ id, status: 'out_of_stock', availableStock: 0, message: 'This product is currently out of stock.' });
           allValid = false;

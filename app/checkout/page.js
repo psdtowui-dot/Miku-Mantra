@@ -312,37 +312,42 @@ export default function CheckoutPage() {
     const activeCode = coupon?.code || storeCoupon?.code;
     let isMounted = true;
 
-    authFetch('/api/cart/pricing', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        items: items.map(i => ({ id: i.id, qty: i.qty, price: i.price })),
-        coupon: activeCode || null,
-        giftWrap: gift
+    const timer = setTimeout(() => {
+      authFetch('/api/cart/pricing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: items.map(i => ({ id: i.id, qty: i.qty, price: i.price })),
+          coupon: activeCode || null,
+          giftWrap: gift
+        })
       })
-    })
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (!data || !isMounted) return;
-        if (data.couponValid === false && (coupon || storeCoupon)) {
-          setCoupon(null);
-          removeCoupon();
-          const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';
-          sessionStorage.removeItem(couponKey);
-          sessionStorage.removeItem('mikumantra_coupon');
-          localStorage.removeItem(couponKey);
-          localStorage.removeItem('mikumantra_coupon');
-          toast.error(data.couponError || 'Coupon is no longer eligible and has been removed.', {
-            id: 'coupon-checkout-invalidated'
-          });
-        } else if (data.coupon && data.couponValid) {
-          setCoupon(data.coupon);
-        }
-      })
-      .catch(err => console.warn('Pricing validation error:', err));
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (!data || !isMounted) return;
+          if (data.couponValid === false && (coupon || storeCoupon)) {
+            setCoupon(null);
+            removeCoupon();
+            const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';
+            sessionStorage.removeItem(couponKey);
+            sessionStorage.removeItem('mikumantra_coupon');
+            localStorage.removeItem(couponKey);
+            localStorage.removeItem('mikumantra_coupon');
+            toast.error(data.couponError || 'Coupon is no longer eligible and has been removed.', {
+              id: 'coupon-checkout-invalidated'
+            });
+          } else if (data.coupon && data.couponValid) {
+            setCoupon(data.coupon);
+          }
+        })
+        .catch(err => console.warn('Pricing validation error:', err));
+    }, 150);
 
-    return () => { isMounted = false; };
-  }, [hydrated, items, subtotal, gift, user]);
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [hydrated, items, gift, user?.id]);
 
   async function payWithRazorpay() {
     try {

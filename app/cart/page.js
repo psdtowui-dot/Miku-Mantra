@@ -82,8 +82,11 @@ export default function CartPage() {
 
   useEffect(() => {
     let unmounted = false;
-    async function validateStock() {
-      if (!items || items.length === 0) return;
+    const timer = setTimeout(async () => {
+      if (!items || items.length === 0) {
+        setValidating(false);
+        return;
+      }
       try {
         const r = await authFetch('/api/cart/validate', {
           method: 'POST',
@@ -103,9 +106,12 @@ export default function CartPage() {
       } finally {
         if (!unmounted) setValidating(false);
       }
-    }
-    validateStock();
-    return () => { unmounted = true; };
+    }, 200);
+
+    return () => {
+      unmounted = true;
+      clearTimeout(timer);
+    };
   }, [items]);
 
   const handleApply = async () => {

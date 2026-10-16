@@ -164,16 +164,17 @@ function matchesFilterValue(product, key, selectedVal, group) {
   return false;
 }
 
-function ShopInner({ initialProducts }) {
+function ShopInner({ initialProducts, initialFilterGroups = [] }) {
   const sp = useSearchParams();
 
   const [all, setAll] = useState(Array.isArray(initialProducts) ? initialProducts : []);
   const [loading, setLoading] = useState(!Array.isArray(initialProducts) || initialProducts.length === 0);
 
-  // Dynamic Product Filter Groups fetched from Backend API
-  const [filterGroups, setFilterGroups] = useState([]);
-  const [filterLoading, setFilterLoading] = useState(true);
-  const [hasLoadedFilters, setHasLoadedFilters] = useState(false);
+  // Dynamic Product Filter Groups initialized immediately from server-side prefetch (0ms delay)
+  const hasServerFilters = Array.isArray(initialFilterGroups) && initialFilterGroups.length > 0;
+  const [filterGroups, setFilterGroups] = useState(hasServerFilters ? initialFilterGroups : []);
+  const [filterLoading, setFilterLoading] = useState(!hasServerFilters);
+  const [hasLoadedFilters, setHasLoadedFilters] = useState(hasServerFilters);
 
   // Price Range & Sort state
   const [range, setRange] = useState([0, 1000000]);
@@ -192,18 +193,25 @@ function ShopInner({ initialProducts }) {
     };
   }, [openFilters]);
 
-  // Load products and dynamic filter config from backend
+  // Only fetch client-side if data was not provided by SSR
   useEffect(() => {
+    const needProducts = !Array.isArray(initialProducts) || initialProducts.length === 0;
+    const needFilters = !hasServerFilters;
+    if (!needProducts && !needFilters) return;
+
     let active = true;
     (async () => {
       try {
-        const [pRes, filtersRes] = await Promise.all([
-          fetch('/api/products'),
-          fetch('/api/product-filters')
-        ]);
+        const promises = [];
+        if (needProducts) promises.push(fetch('/api/products').then(r => r.ok ? r.json() : null));
+        if (needFilters) promises.push(fetch('/api/product-filters').then(r => r.ok ? r.json() : null));
+
+        const results = await Promise.all(promises);
         if (!active) return;
-        if (pRes.ok) {
-          const d = await pRes.json();
+
+        let resIdx = 0;
+        if (needProducts) {
+          const d = results[resIdx++];
           if (d && Array.isArray(d.products)) {
             const activeOnly = d.products.filter(
               p => p && p.active !== false && p.isDemoProduct !== true && p.status !== 'deleted' && p.status !== 'inactive' && p.status !== 'archived'
@@ -211,9 +219,9 @@ function ShopInner({ initialProducts }) {
             setAll(activeOnly);
           }
         }
-        if (filtersRes.ok && active) {
-          const d = await filtersRes.json();
-          if (d.groups?.length) {
+        if (needFilters) {
+          const d = results[resIdx++];
+          if (d && d.groups?.length) {
             setFilterGroups(d.groups);
           }
         }
@@ -230,7 +238,7 @@ function ShopInner({ initialProducts }) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [hasServerFilters, initialProducts]);
 
   // Derive dynamic filter groups from products if backend filter groups are empty
   const activeFilterGroups = useMemo(() => {
@@ -898,10 +906,10 @@ function ShopInner({ initialProducts }) {
   );
 }
 
-export default function ShopClient({ initialProducts }) {
+export default function ShopClient({ initialProducts = [], initialFilterGroups = [] }) {
   return (
     <Suspense fallback={<div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-[#9C6B30]" /></div>}>
-      <ShopInner initialProducts={initialProducts} />
+      <ShopInner initialProducts={initialProducts} initialFilterGroups={initialFilterGroups} />
     </Suspense>
   );
 }
