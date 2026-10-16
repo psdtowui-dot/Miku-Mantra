@@ -1,5 +1,4 @@
-import { MongoClient } from 'mongodb'
-import dns from 'dns'
+import { getDb, ensureAppIndexes } from '@/lib/db'
 import { v4 as uuidv4 } from 'uuid'
 import { NextResponse } from 'next/server'
 import { revalidatePath } from 'next/cache'
@@ -46,33 +45,52 @@ import { calculateCartPricing, validateCouponRules } from '@/lib/cart-pricing'
 import { parseProductFileContent, normalizeAndValidateProducts } from '@/lib/product-import/parser'
 import { scanAvailableImages, matchImagesForProduct, batchMatchProductImages } from '@/lib/product-import/matcher'
 
+const WAREHOUSE_PINCODE = '201301';
 
-
-
-
-// Simple in-memory server cache with TTL
+// Ultra-fast in-memory server cache with TTL
 const _cache = new Map();
-function cacheGet(k) { const e = _cache.get(k); if (!e) return null; if (Date.now() > e.exp) { _cache.delete(k); return null; } return e.v; }
-function cacheSet(k, v, ttlMs = 60000) { _cache.set(k, { v, exp: Date.now() + ttlMs }); }
-function cacheBust(prefix) {
-  for (const k of _cache.keys()) { if (!prefix || k.startsWith(prefix)) _cache.delete(k); }
+function cacheGet(k) {
+  const e = _cache.get(k);
+  if (!e) return null;
+  if (Date.now() > e.exp) { _cache.delete(k); return null; }
+  return e.v;
+}
+function cacheSet(k, v, ttlMs = 300000) {
+  _cache.set(k, { v, exp: Date.now() + ttlMs });
+}
+function cacheBust(prefix, { revalidateLayout = false } = {}) {
+  for (const k of _cache.keys()) {
+    if (!prefix || k.startsWith(prefix)) _cache.delete(k);
+  }
   if (!prefix || prefix.includes('product')) {
     _cache.delete('homepage_data');
     _cache.delete('admin_products');
     _cache.delete('admin_dashboard');
     _cache.delete('shop_products');
+    for (const k of _cache.keys()) {
+      if (k.startsWith('product:') || k.startsWith('products:') || k.startsWith('reviews:')) {
+        _cache.delete(k);
+      }
+    }
     try {
       invalidateSiteDataCache('homepage_data');
       invalidateSiteDataCache('shop_products');
       invalidateSiteDataCache('product_');
     } catch (e) {}
-    try { revalidatePath('/', 'layout'); } catch (e) {}
+    if (revalidateLayout) {
+      try { revalidatePath('/', 'layout'); } catch (e) {}
+    }
     try { revalidatePath('/shop'); } catch (e) {}
+  }
+  if (!prefix || prefix.includes('review')) {
+    for (const k of _cache.keys()) {
+      if (k.startsWith('reviews:')) _cache.delete(k);
+    }
   }
   try { invalidateSiteDataCache(prefix); } catch (e) {}
 }
 
-let client, db, seeded = false, connectPromise = null, lastEnvMtime = 0, lastSyncedAdmins = ''
+let seeded = false, lastEnvMtime = 0, lastSyncedAdmins = ''
 
 const DEFAULT_FOOTER = {
   company: {
@@ -272,86 +290,14 @@ async function syncAllProductRatings(db) {
 }
 
 async function connectToMongo() {
-  const directUrl = process.env.MONGO_DIRECT_URL || "mongodb://akashsriv1984_db_user:2M5Edv773XLUmT15@ac-htqrxv1-shard-00-00.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-01.7szyylz.mongodb.net:27017/userPortal?ssl=true&replicaSet=atlas-1c5jr9-shard-0&authSource=admin&retryWrites=true&w=majority";
-  const srvUrl = process.env.MONGO_URL || process.env.MONGODB_URI;
-  const mongoUrl = process.env.MONGO_DIRECT_URL || directUrl || srvUrl;
-  if (!mongoUrl) {
-    throw new Error("MONGO_URL environment variable is missing.");
+  const database = await getDb();
+  if (!seeded) {
+    seeded = true;
+    seedIfEmpty(database).catch(e => console.warn('[Seed] Notice:', e.message));
+    syncEnvAdminEmailsWithDatabase(database).catch(e => console.warn('[AdminSync] Notice:', e.message));
+    seedRbacIfEmpty(database).catch(e => console.warn('[RBAC] Notice:', e.message));
+    initEnvFileWatcher(database);
   }
-  if (!connectPromise) {
-    connectPromise = (async () => {
-      try {
-        try {
-          dns.setServers(['8.8.8.8', '1.1.1.1']);
-        } catch (e) {}
-        try {
-          client = new MongoClient(mongoUrl, { serverSelectionTimeoutMS: 10000 });
-          await client.connect();
-        } catch (srvErr) {
-          if (directUrl && mongoUrl !== directUrl) {
-            console.log('MongoDB connection attempt failed, falling back to direct replica set...');
-            client = new MongoClient(directUrl, { serverSelectionTimeoutMS: 10000 });
-            await client.connect();
-          } else {
-            throw srvErr;
-          }
-        }
-        db = client.db(process.env.DB_NAME || 'userPortal');
-let indexesCreated = false;
-async function ensureIndexes(database) {
-  if (!database || indexesCreated) return;
-  indexesCreated = true;
-  try {
-    await Promise.allSettled([
-      database.collection('sessions').createIndex({ token: 1 }),
-      database.collection('users').createIndex({ id: 1 }),
-      database.collection('users').createIndex({ email: 1 }),
-      database.collection('products').createIndex({ id: 1 }),
-      database.collection('products').createIndex({ slug: 1 }),
-      database.collection('products').createIndex({ category: 1 }),
-      database.collection('products').createIndex({ createdAt: -1 }),
-      database.collection('products').createIndex({ active: 1, isDemoProduct: 1, status: 1, category: 1, price: 1, createdAt: -1 }),
-      database.collection('products').createIndex({ active: 1, isDemoProduct: 1, status: 1, collection: 1, price: 1, createdAt: -1 }),
-      database.collection('products').createIndex({ active: 1, isDemoProduct: 1, status: 1, gender: 1, price: 1, createdAt: -1 }),
-      database.collection('products').createIndex({ slug: 1, active: 1, isDemoProduct: 1 }),
-      database.collection('orders').createIndex({ id: 1 }),
-      database.collection('orders').createIndex({ orderNumber: 1 }),
-      database.collection('orders').createIndex({ placedAt: -1 }),
-      database.collection('orders').createIndex({ status: 1 }),
-      database.collection('reviews').createIndex({ productId: 1, status: 1 }),
-      database.collection('categories').createIndex({ id: 1 }),
-      database.collection('collections').createIndex({ id: 1 }),
-      database.collection('activity_logs').createIndex({ timestamp: -1 }),
-      database.collection('addresses').createIndex({ userId: 1, createdAt: -1 }),
-      database.collection('addresses').createIndex({ id: 1, userId: 1 }),
-      database.collection('coupons').createIndex({ code: 1 }),
-      database.collection('wishlist').createIndex({ userId: 1, productId: 1 }, { unique: true }),
-      database.collection('newsletter_subscribers').createIndex({ email: 1 }, { unique: true }),
-      database.collection('newsletter_subscribers').createIndex({ status: 1 }),
-      database.collection('newsletter_subscribers').createIndex({ subscribedAt: -1 })
-    ]);
-  } catch (e) {
-    console.warn('Index creation notice:', e.message);
-  }
-}
-
-        if (!seeded) {
-          await seedIfEmpty(db);
-          await ensureIndexes(db);
-          seeded = true;
-        }
-        const database = db;
-        await syncEnvAdminEmailsWithDatabase(database);
-        await seedRbacIfEmpty(database);
-        return database;
-      } catch (err) {
-        connectPromise = null; // Reset connection promise so subsequent requests can retry
-        throw err;
-      }
-    })();
-  }
-  const database = await connectPromise;
-  initEnvFileWatcher(database);
   return database;
 }
 
@@ -770,7 +716,14 @@ function hashPassword(password, salt) { const s = salt || crypto.randomBytes(16)
 function verifyPassword(password, salt, hash) { return crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex') === hash }
 
 // Helpers for admin email resolution from .env and database
-function getEnvAdminEmails() {
+let cachedEnvAdminEmails = null;
+let lastEnvReadTime = 0;
+
+function getEnvAdminEmails(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && cachedEnvAdminEmails && (now - lastEnvReadTime < 60000)) {
+    return cachedEnvAdminEmails;
+  }
   const emails = new Set();
 
   const addFromStr = (str) => {
@@ -817,7 +770,9 @@ function getEnvAdminEmails() {
     emails.add('admin@mikumantra.com');
   }
 
-  return Array.from(emails);
+  cachedEnvAdminEmails = Array.from(emails);
+  lastEnvReadTime = now;
+  return cachedEnvAdminEmails;
 }
 
 let fileWatcherInitialized = false;
@@ -836,6 +791,7 @@ function initEnvFileWatcher(db) {
     debounceTimer = setTimeout(async () => {
       try {
         console.log('[Auto-Sync] Detected change in .env file, syncing admin emails to database...');
+        cachedEnvAdminEmails = null;
         await syncEnvAdminEmailsWithDatabase(db);
       } catch (e) {
         console.error('[Auto-Sync] Watcher sync error:', e);
@@ -855,7 +811,7 @@ function initEnvFileWatcher(db) {
 async function syncEnvAdminEmailsWithDatabase(db) {
   if (!db) return;
   try {
-    const envAdmins = getEnvAdminEmails();
+    const envAdmins = getEnvAdminEmails(true);
     if (!envAdmins || envAdmins.length === 0) return;
 
     // 1. Ensure all active .env admin emails have role: 'admin' and syncedFromEnv: true in DB
@@ -911,12 +867,11 @@ async function syncEnvAdminEmailsWithDatabase(db) {
 
 async function isAuthorizedAdminEmail(db, email) {
   if (!email) return false;
-  if (db) await syncEnvAdminEmailsWithDatabase(db);
   const em = email.trim().toLowerCase();
   const envAdmins = getEnvAdminEmails();
   if (envAdmins.includes(em)) return true;
   if (!db) return false;
-  const existingAdmin = await db.collection('users').findOne({ email: em, role: 'admin' });
+  const existingAdmin = await db.collection('users').findOne({ email: em, role: 'admin' }, { projection: { id: 1, role: 1 } });
   return !!existingAdmin;
 }
 
@@ -931,7 +886,7 @@ function userSessionCacheGet(token) {
   }
   return entry.user;
 }
-function userSessionCacheSet(token, user, ttlMs = 30000) {
+function userSessionCacheSet(token, user, ttlMs = 60000) {
   if (!token || !user) return;
   _userSessionCache.set(token, { user, exp: Date.now() + ttlMs });
 }
@@ -1006,16 +961,20 @@ async function requireAdmin(db, request) {
   return u;
 }
 function clean(doc) { if (!doc) return doc; const { _id, passwordHash, passwordSalt, ...r } = doc; return r }
-function ok(data) { return handleCORS(NextResponse.json(data)) }
+function ok(data, { cacheControl = null } = {}) { return handleCORS(NextResponse.json(data), cacheControl) }
 function err(msg, code = 400) { return handleCORS(NextResponse.json({ error: msg }, { status: code })) }
-function handleCORS(res) {
+function handleCORS(res, cacheControl = null) {
   res.headers.set('Access-Control-Allow-Origin', process.env.CORS_ORIGINS || '*');
   res.headers.set('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH');
   res.headers.set('Access-Control-Allow-Headers', 'Content-Type,Authorization,x-auth-token');
   res.headers.set('Access-Control-Allow-Credentials', 'true');
-  res.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  res.headers.set('Pragma', 'no-cache');
-  res.headers.set('Expires', '0');
+  if (cacheControl) {
+    res.headers.set('Cache-Control', cacheControl);
+  } else {
+    res.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.headers.set('Pragma', 'no-cache');
+    res.headers.set('Expires', '0');
+  }
   return res;
 }
 export async function OPTIONS() { return handleCORS(new NextResponse(null, { status: 200 })) }
@@ -1097,11 +1056,58 @@ async function handleRoute(request, { params }) {
   const { path = [] } = await params
   const route = `/${path.join('/')}`
   const method = request.method
+
+  if (route === '/' && method === 'GET') {
+    return ok({ ok: true, app: 'MikuMantra API' }, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+  }
+
+  // Pre-DB fast in-memory response for cached public read endpoints
+  if (method === 'GET') {
+    if (route === '/categories' || route === '/category-showcase') {
+      const c = cacheGet('cats');
+      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+    } else if (route === '/collections') {
+      const c = cacheGet('cols');
+      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+    } else if (route === '/banners') {
+      const c = cacheGet('bans');
+      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+    } else if (route === '/footer') {
+      const c = cacheGet('footer');
+      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+    } else if (route === '/site-settings') {
+      const c = cacheGet('site_settings');
+      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+    } else if (route === '/homepage-content') {
+      const c = cacheGet('homepage_content');
+      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+    } else if (route === '/product-filters') {
+      const c = cacheGet('product_filters');
+      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+    } else if (route === '/coupons/settings') {
+      const isNoCache = request.headers.get('cache-control')?.includes('no-cache') || request.headers.get('cache-control')?.includes('no-store');
+      if (!isNoCache) {
+        const c = cacheGet('coupon_settings');
+        if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      }
+    } else if (route.startsWith('/products/')) {
+      const slug = route.split('/')[2];
+      if (slug) {
+        const c = cacheGet('product:' + slug);
+        if (c) return ok(c, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
+      }
+    } else if (route.startsWith('/reviews/product/')) {
+      const pid = route.split('/')[3];
+      if (pid) {
+        const c = cacheGet('reviews:' + pid);
+        if (c) return ok(c, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
+      }
+    }
+  }
+
   try {
     const db = await connectToMongo()
     const url = new URL(request.url); const q = url.searchParams
-
-    if (route === '/' && method === 'GET') return ok({ ok: true, app: 'MikuMantra API' })
 
     if ((route.startsWith('/uploads/') || route.startsWith('/images/')) && method === 'GET') {
       const parts = route.split('/').filter(Boolean);
@@ -1308,7 +1314,11 @@ async function handleRoute(request, { params }) {
           maxDays = 6;
         }
         
-        let siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+        let siteSettings = cacheGet('site_settings');
+        if (!siteSettings) {
+          siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+          if (siteSettings) cacheSet('site_settings', clean(siteSettings), 300000);
+        }
         const shippingConfig = {
           ...DEFAULT_SITE_SETTINGS.shipping,
           ...((siteSettings && siteSettings.shipping) || {})
@@ -1405,7 +1415,7 @@ async function handleRoute(request, { params }) {
 
       const cacheKey = 'products:' + JSON.stringify({ filter, sortObj, page, limit });
       const cached = cacheGet(cacheKey);
-      if (cached) return ok(cached);
+      if (cached) return ok(cached, { cacheControl: 'public, max-age=15, stale-while-revalidate=60' });
 
       const projection = {
         id: 1, slug: 1, name: 1, sku: 1, price: 1, mrp: 1, category: 1, subcategory: 1,
@@ -1419,21 +1429,35 @@ async function handleRoute(request, { params }) {
         db.collection('products').countDocuments(filter)
       ]);
       const resp = { products: list.map(clean), total, page, totalPages: Math.ceil(total / limit) };
-      cacheSet(cacheKey, resp, 30000);
-      return ok(resp);
+      cacheSet(cacheKey, resp, 60000);
+      return ok(resp, { cacheControl: 'public, max-age=15, stale-while-revalidate=60' });
     }
     if (route.startsWith('/products/') && method === 'GET') {
       const slug = route.split('/')[2];
+      if (!slug) return err('Not found', 404);
+
+      const cachedProduct = cacheGet('product:' + slug);
+      if (cachedProduct) return ok(cachedProduct, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
+
       const activeFilter = {
         active: { $ne: false },
         isDemoProduct: { $ne: true },
         status: { $nin: ['deleted', 'inactive', 'archived'] }
       };
-      const p = await db.collection('products').findOne({
-        $or: [{ slug }, { id: slug }, { slug: new RegExp('^' + slug + '$', 'i') }],
-        ...activeFilter
-      });
+
+      // Fast-path exact indexed search first (avoids unindexed regex overhead)
+      let p = await db.collection('products').findOne({ slug, ...activeFilter });
+      if (!p) {
+        p = await db.collection('products').findOne({ id: slug, ...activeFilter });
+      }
+      if (!p) {
+        p = await db.collection('products').findOne({
+          slug: new RegExp('^' + slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i'),
+          ...activeFilter
+        });
+      }
       if (!p) return err('Not found', 404);
+
       const related = await db.collection('products').find({
         category: p.category,
         id: { $ne: p.id },
@@ -1445,16 +1469,30 @@ async function handleRoute(request, { params }) {
           badge: 1, stock: 1, rating: 1, reviews: 1, createdAt: 1
         }
       }).limit(4).toArray();
-      return ok({ product: clean(p), related: related.map(clean) });
+
+      const result = { product: clean(p), related: related.map(clean) };
+      cacheSet('product:' + slug, result, 300000);
+      if (p.id && p.id !== slug) cacheSet('product:' + p.id, result, 300000);
+      if (p.slug && p.slug !== slug) cacheSet('product:' + p.slug, result, 300000);
+
+      return ok(result, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
     }
     if ((route === '/categories' || route === '/category-showcase') && method === 'GET') {
       const c = cacheGet('cats');
-      if (c) return ok(c);
-      await seedCategoryShowcaseIfEmpty(db);
-      const [list, settingsDoc] = await Promise.all([
-        db.collection('categories').find({ active: { $ne: false }, enabled: { $ne: false } }).sort({ order: 1, displayOrder: 1, createdAt: 1 }).toArray(),
-        db.collection('category_showcase_settings').findOne({ id: 'default' })
-      ]);
+      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+
+      let list = await db.collection('categories').find({ active: { $ne: false }, enabled: { $ne: false } }).sort({ order: 1, displayOrder: 1, createdAt: 1 }).toArray();
+      if (!list || list.length === 0) {
+        await seedCategoryShowcaseIfEmpty(db);
+        list = await db.collection('categories').find({ active: { $ne: false }, enabled: { $ne: false } }).sort({ order: 1, displayOrder: 1, createdAt: 1 }).toArray();
+      }
+
+      let settingsDoc = cacheGet('category_showcase_settings');
+      if (!settingsDoc) {
+        settingsDoc = await db.collection('category_showcase_settings').findOne({ id: 'default' });
+        if (settingsDoc) cacheSet('category_showcase_settings', settingsDoc, 300000);
+      }
+
       const settings = {
         ...DEFAULT_CATEGORY_SHOWCASE_SETTINGS,
         ...(settingsDoc ? clean(settingsDoc) : {})
@@ -1484,12 +1522,15 @@ async function handleRoute(request, { params }) {
         categories: formatted,
         settings
       };
-      cacheSet('cats', r, 3000);
-      return ok(r);
+      cacheSet('cats', r, 300000);
+      return ok(r, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
     }
     if (route === '/category-showcase/settings' && method === 'GET') {
-      await seedCategoryShowcaseIfEmpty(db);
-      const settingsDoc = await db.collection('category_showcase_settings').findOne({ id: 'default' });
+      let settingsDoc = cacheGet('category_showcase_settings');
+      if (!settingsDoc) {
+        settingsDoc = await db.collection('category_showcase_settings').findOne({ id: 'default' });
+        if (settingsDoc) cacheSet('category_showcase_settings', settingsDoc, 300000);
+      }
       const settings = {
         ...DEFAULT_CATEGORY_SHOWCASE_SETTINGS,
         ...(settingsDoc ? clean(settingsDoc) : {})
@@ -1498,9 +1539,18 @@ async function handleRoute(request, { params }) {
         success: true,
         data: { settings },
         settings
-      });
+      }, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
     }
-    if (route === '/collections' && method === 'GET') { const c = cacheGet('cols'); if (c) return ok(c); const list = await db.collection('collections').find({}).toArray(); const seen = new Set(); const uniqueCols = list.map(clean).filter(item => { if (!item?.slug || seen.has(item.slug)) return false; seen.add(item.slug); return true; }); const r = { collections: uniqueCols }; cacheSet('cols', r, 3000); return ok(r) }
+    if (route === '/collections' && method === 'GET') {
+      const c = cacheGet('cols');
+      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      const list = await db.collection('collections').find({}).toArray();
+      const seen = new Set();
+      const uniqueCols = list.map(clean).filter(item => { if (!item?.slug || seen.has(item.slug)) return false; seen.add(item.slug); return true; });
+      const r = { collections: uniqueCols };
+      cacheSet('cols', r, 300000);
+      return ok(r, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+    }
     if (route === '/banners' && method === 'GET') {
       const c = cacheGet('bans');
       if (c) return ok(c);
@@ -2281,7 +2331,11 @@ async function handleRoute(request, { params }) {
     if (route === '/cart/pricing' && method === 'POST') {
       const body = await request.json().catch(() => ({}));
       const u = await getCurrentUser(db, request);
-      let siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+      let siteSettings = cacheGet('site_settings');
+      if (!siteSettings) {
+        siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+        if (siteSettings) cacheSet('site_settings', clean(siteSettings), 300000);
+      }
       const shippingConfig = {
         ...DEFAULT_SITE_SETTINGS.shipping,
         ...((siteSettings && siteSettings.shipping) || {})
@@ -2596,119 +2650,62 @@ async function handleRoute(request, { params }) {
         estimatedDelivery: new Date(Date.now() + 5 * 86400 * 1000)
       };
 
-      // Atomic Decrement stock in DB with concurrency safety
-      const decremented = [];
-      let stockError = null;
+      // Parallel Atomic Decrement stock in DB with concurrency safety
+      const updateResults = await Promise.all(
+        validatedItems.map(it =>
+          db.collection('products').updateOne(
+            { id: it.id, stock: { $gte: it.qty } },
+            { $inc: { stock: -it.qty } }
+          ).then(res => ({ it, success: res.modifiedCount === 1 }))
+        )
+      );
 
-      for (const it of validatedItems) {
-        const updateRes = await db.collection('products').updateOne(
-          { id: it.id, stock: { $gte: it.qty } },
-          { $inc: { stock: -it.qty } }
+      const failedUpdates = updateResults.filter(r => !r.success);
+      if (failedUpdates.length > 0) {
+        // Rollback any items decremented so far in parallel
+        const successful = updateResults.filter(r => r.success);
+        await Promise.all(
+          successful.map(r =>
+            db.collection('products').updateOne(
+              { id: r.it.id },
+              { $inc: { stock: r.it.qty } }
+            )
+          )
         );
-        if (updateRes.modifiedCount === 1) {
-          decremented.push(it);
-        } else {
-          const currentP = await db.collection('products').findOne({ id: it.id });
-          const avail = Math.max(0, parseInt(currentP?.stock) || 0);
-          if (avail <= 0) {
-            stockError = 'Sorry, this product is now out of stock.';
-          } else {
-            stockError = `Sorry, this product is no longer available in the requested quantity. Only ${avail} available.`;
-          }
-          break;
-        }
-      }
-
-      if (stockError) {
-        // Rollback any items decremented so far
-        for (const dec of decremented) {
-          await db.collection('products').updateOne(
-            { id: dec.id },
-            { $inc: { stock: dec.qty } }
-          );
-        }
+        const firstFailed = failedUpdates[0].it;
+        const currentP = await db.collection('products').findOne({ id: firstFailed.id });
+        const avail = Math.max(0, parseInt(currentP?.stock) || 0);
+        const stockError = avail <= 0
+          ? `Sorry, "${firstFailed.name}" is now out of stock.`
+          : `Sorry, "${firstFailed.name}" is no longer available in the requested quantity. Only ${avail} available.`;
         cacheBust('products:');
         return err(stockError, 400);
       }
 
-      await db.collection('orders').insertOne(order);
+      // Persist order, clear cart, and increment coupon usage in parallel
+      const postTasks = [
+        db.collection('orders').insertOne(order),
+        db.collection('cart').deleteMany({ userId: u.id })
+      ];
 
-      // Remove successfully ordered items from DB cart or delete cart if empty
-      const existingCart = await db.collection('cart').findOne({ userId: u.id });
-      if (existingCart && Array.isArray(existingCart.items) && existingCart.items.length > 0) {
-        const orderedMap = new Map();
-        for (const oi of validatedItems) {
-          const id = String(oi.id || oi.productId || oi.slug || '');
-          if (id) {
-            orderedMap.set(id, (orderedMap.get(id) || 0) + (parseInt(oi.qty) || 1));
-          }
-        }
-
-        const remainingCartItems = [];
-        for (const ci of existingCart.items) {
-          const id = String(ci.id || ci.productId || ci.slug || '');
-          const ordQty = orderedMap.get(id) || 0;
-          if (ordQty > 0) {
-            const curQty = parseInt(ci.qty) || 1;
-            if (curQty > ordQty) {
-              remainingCartItems.push({ ...ci, qty: curQty - ordQty });
-              orderedMap.set(id, 0);
-            } else {
-              orderedMap.set(id, ordQty - curQty);
-            }
-          } else {
-            remainingCartItems.push(ci);
-          }
-        }
-
-        if (remainingCartItems.length === 0) {
-          await db.collection('cart').deleteMany({ userId: u.id });
-        } else {
-          // Re-calculate cart pricing for remaining items in MongoDB
-          const remainingPricing = await calculateCartPricing({
-            db,
-            items: remainingCartItems,
-            couponCode: existingCart.coupon || existingCart.couponCode || null,
-            giftWrap: !!existingCart.giftWrap,
-            shippingConfig,
-            user: u
-          });
-          await db.collection('cart').updateOne(
-            { userId: u.id },
-            {
-              $set: {
-                items: remainingPricing.items,
-                subtotal: remainingPricing.subtotal,
-                discount: remainingPricing.discount,
-                total: remainingPricing.total,
-                coupon: remainingPricing.couponCode,
-                couponCode: remainingPricing.couponCode,
-                updatedAt: new Date()
-              }
-            }
-          );
-        }
-      } else {
-        await db.collection('cart').deleteMany({ userId: u.id });
-      }
-
-      // Increment coupon usage count if applied
       if (validCouponDoc) {
-        try {
-          await db.collection('coupons').updateOne(
+        postTasks.push(
+          db.collection('coupons').updateOne(
             { _id: validCouponDoc._id },
             { $inc: { usedCount: 1, usageCount: 1 } }
-          );
-        } catch (couponErr) {
-          console.warn('Failed to increment coupon usage:', couponErr.message);
-        }
+          ).catch(couponErr => console.warn('Failed to increment coupon usage:', couponErr.message))
+        );
       }
+
+      await Promise.all(postTasks);
 
       cacheBust('products:');
 
-      // Trigger WhatsApp, SMS & Email notifications asynchronously in background
-      sendOrderPlacedNotification({ order, user: u, db }).catch(notifErr => {
-        console.error('Non-blocking order notification failed:', notifErr?.message || notifErr);
+      // Trigger WhatsApp, SMS & Email notifications completely decoupled in the background
+      setImmediate(() => {
+        sendOrderPlacedNotification({ order, user: u, db }).catch(notifErr => {
+          console.error('Non-blocking order notification failed:', notifErr?.message || notifErr);
+        });
       });
 
       return ok({ order: clean(order) });
@@ -3528,6 +3525,7 @@ async function handleRoute(request, { params }) {
               'Content-Type': 'application/json',
               'Authorization': authHeader
             },
+            signal: AbortSignal.timeout(8000),
             body: JSON.stringify({
               amount: Math.round(orderAmount * 100), // amount in paise
               currency: 'INR',
@@ -3940,15 +3938,33 @@ async function handleRoute(request, { params }) {
 
     if (route.startsWith('/reviews/product/') && method === 'GET') {
       const pid = route.split('/')[3];
-      const prod = await db.collection('products').findOne({ $or: [{ id: pid }, { slug: pid }] });
+      if (!pid) return err('Product identifier required', 400);
+
+      const cached = cacheGet('reviews:' + pid);
+      if (cached) return ok(cached, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
+
+      // Fast exact indexed lookup
+      let prod = await db.collection('products').findOne({ slug: pid }, { projection: { id: 1, slug: 1 } });
+      if (!prod) {
+        prod = await db.collection('products').findOne({ id: pid }, { projection: { id: 1, slug: 1 } });
+      }
       const targetIds = [pid, prod?.id, prod?.slug].filter(Boolean);
 
-      const siteDoc = await db.collection('site_settings').findOne({ id: 'default' });
+      let siteDoc = cacheGet('site_settings');
+      if (!siteDoc) {
+        siteDoc = await db.collection('site_settings').findOne({ id: 'default' });
+        if (siteDoc) cacheSet('site_settings', clean(siteDoc), 300000);
+      }
       const customerReviewsEnabled = siteDoc?.customerReviewsEnabled ?? true;
 
       const list = await db.collection('reviews').find({
-        productId: { $in: targetIds },
-        $or: [{ status: 'published' }, { status: { $exists: false }, approved: true }]
+        $or: [
+          { productId: { $in: targetIds } },
+          { productSlug: { $in: targetIds } }
+        ],
+        $and: [
+          { $or: [{ status: 'published' }, { status: { $exists: false }, approved: true }] }
+        ]
       }).sort({ createdAt: -1 }).toArray();
 
       const totalReviews = list.length;
@@ -3964,13 +3980,18 @@ async function handleRoute(request, { params }) {
         averageRating = Math.round((sum / totalReviews) * 10) / 10;
       }
 
-      return ok({
+      const resData = {
         reviews: list.map(clean),
         averageRating,
         totalReviews,
         breakdown,
         customerReviewsEnabled
-      });
+      };
+      cacheSet('reviews:' + pid, resData, 300000);
+      if (prod?.id && prod.id !== pid) cacheSet('reviews:' + prod.id, resData, 300000);
+      if (prod?.slug && prod.slug !== pid) cacheSet('reviews:' + prod.slug, resData, 300000);
+
+      return ok(resData, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
     }
     // ============ HEADER CONFIGURATION ============
     if (route.startsWith('/header')) {
@@ -5943,7 +5964,11 @@ async function handleRoute(request, { params }) {
         const cached = cacheGet('admin_dashboard');
         if (cached) return ok(cached);
         const [orders, users, products, revenue, totalOrders] = await Promise.all([
-          db.collection('orders').find({}).sort({ placedAt: -1 }).limit(10).toArray(),
+          db.collection('orders').find({}, {
+            projection: {
+              id: 1, orderNumber: 1, customer: 1, address: 1, amounts: 1, status: 1, placedAt: 1, items: 1, guestEmail: 1
+            }
+          }).sort({ placedAt: -1 }).limit(10).toArray(),
           db.collection('users').countDocuments(),
           db.collection('products').countDocuments(),
           db.collection('orders').aggregate([{ $group: { _id: null, total: { $sum: '$amounts.total' } } }]).toArray(),
@@ -7212,7 +7237,9 @@ async function handleRoute(request, { params }) {
 
         const list = await db.collection('orders').find(query).sort({ placedAt: -1 }).toArray();
         const userIds = [...new Set(list.map(o => o.userId).filter(Boolean))];
-        const users = await db.collection('users').find({ id: { $in: userIds } }).toArray();
+        const users = userIds.length > 0
+          ? await db.collection('users').find({ id: { $in: userIds } }, { projection: { id: 1, email: 1 } }).toArray()
+          : [];
         const userMap = new Map(users.map(u => [u.id, u.email]));
         const enriched = list.map(o => {
           const email = o.userId ? userMap.get(o.userId) : o.guestEmail;
@@ -7261,7 +7288,9 @@ async function handleRoute(request, { params }) {
 
         const list = await db.collection('orders').find(query).sort({ deliveredAt: -1, placedAt: -1 }).toArray();
         const userIds = [...new Set(list.map(o => o.userId).filter(Boolean))];
-        const users = await db.collection('users').find({ id: { $in: userIds } }).toArray();
+        const users = userIds.length > 0
+          ? await db.collection('users').find({ id: { $in: userIds } }, { projection: { id: 1, email: 1 } }).toArray()
+          : [];
         const userMap = new Map(users.map(u => [u.id, u.email]));
         const enriched = list.map(o => {
           const email = o.userId ? userMap.get(o.userId) : o.guestEmail;

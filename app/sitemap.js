@@ -1,5 +1,4 @@
-import { MongoClient } from 'mongodb';
-import dns from 'dns';
+import { getDb } from '@/lib/db';
 import { PRODUCTS as SEED_PRODUCTS, CATEGORIES as SEED_CATEGORIES, COLLECTIONS as SEED_COLLECTIONS } from '@/lib/products';
 
 export const revalidate = 3600;
@@ -24,41 +23,25 @@ async function getSitemapData() {
     };
   }
 
-  let client;
   try {
-    try {
-      dns.setServers(['8.8.8.8', '1.1.1.1']);
-    } catch (e) {}
-    try {
-      client = new MongoClient(mongoUrl, {
-        connectTimeoutMS: 5000,
-        socketTimeoutMS: 15000,
-        serverSelectionTimeoutMS: 5000,
-        maxIdleTimeMS: 30000,
-      });
-      await client.connect();
-    } catch (srvErr) {
-      if (directUrl && mongoUrl !== directUrl) {
-        client = new MongoClient(directUrl, {
-          connectTimeoutMS: 5000,
-          socketTimeoutMS: 15000,
-          serverSelectionTimeoutMS: 5000,
-          maxIdleTimeMS: 30000,
-        });
-        await client.connect();
-      } else {
-        throw srvErr;
-      }
+    const db = await getDb();
+    if (!db) {
+      return {
+        products: SEED_PRODUCTS,
+        categories: SEED_CATEGORIES,
+        collections: SEED_COLLECTIONS,
+      };
     }
-    const db = client.db(process.env.DB_NAME || 'userPortal');
 
-    const products = await db.collection('products').find({
-      active: { $ne: false },
-      isDemoProduct: { $ne: true },
-      status: { $nin: ['deleted', 'inactive', 'archived'] }
-    }).toArray();
-    const categories = await db.collection('categories').find({}).toArray();
-    const collections = await db.collection('collections').find({}).toArray();
+    const [products, categories, collections] = await Promise.all([
+      db.collection('products').find({
+        active: { $ne: false },
+        isDemoProduct: { $ne: true },
+        status: { $nin: ['deleted', 'inactive', 'archived'] }
+      }, { projection: { slug: 1, createdAt: 1 } }).toArray(),
+      db.collection('categories').find({ active: { $ne: false } }, { projection: { slug: 1 } }).toArray(),
+      db.collection('collections').find({}, { projection: { slug: 1 } }).toArray()
+    ]);
 
     return {
       products: products.length > 0 ? products : SEED_PRODUCTS,
@@ -72,14 +55,6 @@ async function getSitemapData() {
       categories: SEED_CATEGORIES,
       collections: SEED_COLLECTIONS,
     };
-  } finally {
-    if (client) {
-      try {
-        await client.close();
-      } catch (e) {
-        // ignore
-      }
-    }
   }
 }
 

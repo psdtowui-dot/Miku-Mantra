@@ -26,7 +26,9 @@ export default function CheckoutPage() {
   const [savingAddr, setSavingAddr] = useState(false);
   const [isDefaultAddr, setIsDefaultAddr] = useState(false);
   const [saveForFuture, setSaveForFuture] = useState(true);
+  const [placingStatus, setPlacingStatus] = useState('');
   const loadedUserIdRef = useRef(null);
+  const orderSuccessRef = useRef(false);
 
   const [shippingConfig, setShippingConfig] = useState({
     freeShippingEnabled: true,
@@ -276,6 +278,7 @@ export default function CheckoutPage() {
 
   useEffect(() => {
     if (authLoading || !hydrated) return;
+    if (orderSuccessRef.current || placing) return;
     if (!user) {
       toast.error('Please login or create an account before placing your order.');
       router.push('/login?redirect=/checkout');
@@ -284,7 +287,7 @@ export default function CheckoutPage() {
     if (items.length === 0) {
       router.push('/cart');
     }
-  }, [hydrated, authLoading, user, items, router]);
+  }, [hydrated, authLoading, user, items, router, placing]);
 
   useEffect(() => {
     if (user) {
@@ -351,9 +354,11 @@ export default function CheckoutPage() {
 
   async function payWithRazorpay() {
     try {
+      setPlacingStatus('Initiating payment…');
       const orderRes = await authFetch('/api/payment/razorpay/order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(10000),
         body: JSON.stringify({
           amount: total,
           items: items.map(i => ({ id: i.id, qty: i.qty })),
@@ -369,10 +374,11 @@ export default function CheckoutPage() {
 
       const isMock = !window.Razorpay || rzOrder.mock || rzOrder.key?.includes('mock');
       if (isMock) {
-        toast.info('Razorpay is in MOCK mode. Simulating a successful payment…');
-        await new Promise(r => setTimeout(r, 800));
+        setPlacingStatus('Payment confirmed…');
         return { paid: true, paymentId: 'pay_MOCK' + Math.random().toString(36).slice(2, 10) };
       }
+
+      setPlacingStatus('Opening payment…');
       return new Promise((resolve) => {
         const rzp = new window.Razorpay({
           key: rzOrder.key,
@@ -384,13 +390,20 @@ export default function CheckoutPage() {
           prefill: { name: addr.fullName, email: user?.email || email, contact: addr.phone },
           theme: { color: paymentConfig?.razorpay?.themeColor || '#9C6B30' },
           handler: async (resp) => {
-            const v = await authFetch('/api/payment/razorpay/verify', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(resp)
-            });
-            const vd = await v.json();
-            resolve({ paid: vd.verified, paymentId: vd.paymentId });
+            setPlacingStatus('Verifying payment…');
+            try {
+              const v = await authFetch('/api/payment/razorpay/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                signal: AbortSignal.timeout(10000),
+                body: JSON.stringify(resp)
+              });
+              const vd = await v.json();
+              resolve({ paid: vd.verified, paymentId: vd.paymentId });
+            } catch (verErr) {
+              console.error('Verification error:', verErr);
+              resolve({ paid: false });
+            }
           },
           modal: { ondismiss: () => resolve({ paid: false }) }
         });
@@ -398,7 +411,7 @@ export default function CheckoutPage() {
       });
     } catch (err) {
       console.error('Payment gateway error:', err);
-      toast.error('Payment gateway error. Please try again.');
+      toast.error(err.name === 'TimeoutError' ? 'Payment gateway timed out. Please try again.' : 'Payment gateway error. Please try again.');
       return { paid: false };
     }
   }
@@ -406,15 +419,28 @@ export default function CheckoutPage() {
   async function placeOrder() {
     if (placing) return;
     setPlacing(true);
+    setPlacingStatus(payment === 'razorpay' ? 'Preparing payment…' : 'Processing order…');
     try {
-      if (!Array.isArray(items) || items.length === 0) { toast.error('Cart is empty'); setPlacing(false); return; }
+      if (!Array.isArray(items) || items.length === 0) {
+        toast.error('Cart is empty');
+        setPlacing(false);
+        setPlacingStatus('');
+        return;
+      }
 
       let razorpayPaymentId = null;
       if (payment === 'razorpay') {
         const res = await payWithRazorpay();
-        if (!res.paid) { toast.error('Payment cancelled'); setPlacing(false); return; }
+        if (!res.paid) {
+          toast.error('Payment was not completed');
+          setPlacing(false);
+          setPlacingStatus('');
+          return;
+        }
         razorpayPaymentId = res.paymentId;
       }
+
+      setPlacingStatus('Confirming your order…');
       const body = {
         items: items.map(i => ({ id: i.id, slug: i.slug, name: i.name, image: i.image, price: i.price, qty: i.qty })),
         address: addr,
@@ -425,30 +451,48 @@ export default function CheckoutPage() {
         giftWrap: gift,
         razorpayPaymentId
       };
-      const r = await authFetch('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+      const r = await authFetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(15000),
+        body: JSON.stringify(body)
+      });
       const d = await r.json();
-      if (!r.ok) { 
-        console.error('Order API error', r.status, d); 
-        toast.error(d.error || 'Order placement failed. Please verify your items.'); 
-        return; 
+      if (!r.ok) {
+        console.error('Order API error', r.status, d);
+        toast.error(d.error || 'Order placement failed. Please verify your items.');
+        setPlacing(false);
+        setPlacingStatus('');
+        return;
       }
-      
+
+      // Mark order as successfully placed to prevent any cart-redirect race condition
+      orderSuccessRef.current = true;
+      setPlacingStatus('Redirecting…');
+      toast.success('Order placed successfully!');
+
       const couponKey = user?.id ? `mikumantra_coupon_${user.id}` : 'mikumantra_coupon_guest';
       const giftKey = user?.id ? `mikumantra_gift_${user.id}` : 'mikumantra_gift_guest';
-      
-      // Successfully confirmed order: remove ordered items and synchronize state
-      await removeOrderedItems(body.items);
 
-      sessionStorage.removeItem(couponKey); 
+      sessionStorage.removeItem(couponKey);
       sessionStorage.removeItem(giftKey);
       sessionStorage.removeItem('mikumantra_coupon');
       sessionStorage.removeItem('mikumantra_gift');
       localStorage.removeItem(couponKey);
       localStorage.removeItem('mikumantra_coupon');
-      
-      toast.success('Order placed successfully');
+
+      // Immediate router transition to order confirmation page
       router.push(`/orders/${d.order.id}?success=1`);
-    } catch (e) { console.error('Place order exception', e); toast.error('Something went wrong'); } finally { setPlacing(false); }
+
+      // Clean up cart store asynchronously in background without blocking navigation
+      removeOrderedItems(body.items).catch(e => console.warn('Cart cleanup notice:', e));
+    } catch (e) {
+      console.error('Place order exception', e);
+      toast.error(e.name === 'TimeoutError' ? 'Order request timed out. Please check your order history.' : 'Order placement failed. Please try again.');
+      setPlacing(false);
+      setPlacingStatus('');
+    }
   }
 
   if (authLoading || !hydrated || !user) {
@@ -703,7 +747,7 @@ export default function CheckoutPage() {
                   <div className="border border-[#E8E8E8] rounded-lg p-4"><div className="text-[10px] tracking-widest uppercase text-neutral-400 mb-2">Payment</div><div className="font-medium capitalize text-sm sm:text-base">{payment === 'cod' ? 'Cash on Delivery' : 'Razorpay'}</div><div className="text-xs text-neutral-500 mt-1">{payment === 'cod' ? `Pay ${formatINR(total)} on delivery` : `${formatINR(total)} via secure checkout`}</div><button onClick={() => setStep('payment')} className="mt-3 text-xs text-[#9C6B30] hover:underline">Change</button></div>
                 </div>
                 <div className="mt-6"><div className="text-[10px] tracking-widest uppercase text-neutral-400 mb-3">Items ({items.length})</div><div className="space-y-3">{items.map(it => (<div key={it.id} className="flex gap-3 sm:gap-4 border border-[#E8E8E8] rounded-lg p-3"><img src={it.image} className="w-14 h-14 sm:w-16 sm:h-16 rounded object-cover shrink-0" /><div className="flex-1 min-w-0"><div className="font-serif-luxe text-base sm:text-lg truncate">{it.name}</div><div className="text-xs text-neutral-500">Qty: {it.qty}</div></div><div className="font-medium text-xs sm:text-sm shrink-0">{formatINR(it.price * it.qty)}</div></div>))}</div></div>
-                <div className="mt-6 flex justify-between gap-2"><button onClick={() => setStep('payment')} className="px-4 sm:px-6 py-3 text-[10px] sm:text-[11px] tracking-wider sm:tracking-widest uppercase text-neutral-500 hover:text-[#1A1A1A] transition cursor-pointer">← Back</button><button disabled={placing} onClick={placeOrder} className="px-5 sm:px-10 py-3.5 sm:py-4 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] disabled:opacity-60 flex items-center gap-2">{placing && <Loader2 size={14} className="animate-spin" />}{payment === 'razorpay' ? 'Pay & Place Order' : 'Place Order'}</button></div>
+                <div className="mt-6 flex justify-between gap-2"><button onClick={() => setStep('payment')} className="px-4 sm:px-6 py-3 text-[10px] sm:text-[11px] tracking-wider sm:tracking-widest uppercase text-neutral-500 hover:text-[#1A1A1A] transition cursor-pointer">← Back</button><button disabled={placing} onClick={placeOrder} className="px-5 sm:px-10 py-3.5 sm:py-4 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] disabled:opacity-60 flex items-center gap-2">{placing && <Loader2 size={14} className="animate-spin shrink-0" />}{placing ? (placingStatus || 'Processing…') : (payment === 'razorpay' ? 'Pay & Place Order' : 'Place Order')}</button></div>
               </div>
             )}
           </div>
