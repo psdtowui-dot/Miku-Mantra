@@ -619,15 +619,7 @@ function LoginInner(){
             )}
           </div>
 
-          <div className="text-center mt-5 pt-4 border-t border-neutral-100 flex items-center justify-center gap-1.5 text-xs text-neutral-400">
-            <span>Staff or Administrator?</span>
-            <Link
-              href="/admin/login"
-              className="text-[#9C6B30] hover:underline font-medium inline-flex items-center gap-1"
-            >
-              Admin Sign In →
-            </Link>
-          </div>
+          
         </div>
       </div>
 
