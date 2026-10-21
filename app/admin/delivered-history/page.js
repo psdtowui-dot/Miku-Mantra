@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { formatINR } from '@/lib/products';
-import { Loader2, Search, Calendar, RefreshCw, Eye, X } from 'lucide-react';
+import { Loader2, Search, Calendar, RefreshCw, Eye, X, FileText } from 'lucide-react';
 import OrderDetailModal from '@/components/ui/order-detail-modal';
 
 export default function DeliveredHistory() {
@@ -279,12 +279,24 @@ export default function DeliveredHistory() {
 
                         {/* Actions */}
                         <td className="p-3 align-top text-center">
-                          <button 
-                            onClick={() => setActiveOrder(o)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#FAF6EF] border border-[#D4AF37]/30 text-[#9C6B30] text-xs font-semibold rounded hover:bg-[#9C6B30] hover:text-white transition-all shadow-sm"
-                          >
-                            <Eye size={12} /> View
-                          </button>
+                          <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                            <button 
+                              onClick={() => setActiveOrder(o)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-[#FAF6EF] border border-[#D4AF37]/30 text-[#9C6B30] text-xs font-semibold rounded hover:bg-[#9C6B30] hover:text-white transition-all shadow-xs"
+                            >
+                              <Eye size={12} /> View
+                            </button>
+                            <a
+                              href={`/api/orders/${o.id}/invoice`}
+                              target="_blank"
+                              rel="noreferrer"
+                              download={`Invoice-${o.orderNumber}.pdf`}
+                              className="p-1.5 bg-white border border-neutral-200 text-neutral-600 hover:text-[#9C6B30] hover:border-[#9C6B30] rounded transition-all shadow-xs"
+                              title="Download Tax Invoice PDF"
+                            >
+                              <FileText size={12} />
+                            </a>
+                          </div>
                         </td>
                       </tr>
                     );

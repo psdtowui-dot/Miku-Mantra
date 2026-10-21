@@ -29,7 +29,8 @@ import {
   getEmailTemplate,
   updateEmailTemplate,
   resetEmailTemplate,
-  sendTestEmailTemplate
+  sendTestEmailTemplate,
+  sendOrderInvoiceEmail
 } from '@/lib/email-service'
 import { seedRbacIfEmpty, resolveUserPermissions, hasPermission, logAdminActivity, validatePrivilegeEscalation, PERMISSIONS, DEFAULT_ROLES } from '@/lib/rbac'
 import { invalidateSiteDataCache } from '@/lib/db-site-settings'
@@ -2999,19 +3000,11 @@ async function handleRoute(request, { params }) {
       }).sort({ placedAt: -1 }).toArray();
       return ok({ orders: list.map(clean) });
     }
-    if (route.startsWith('/orders/') && route.endsWith('/invoice') && method === 'GET') {
-      const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
-      const id = route.split('/')[2];
-      const order = await db.collection('orders').findOne({
-        $or: [{ id }, { orderNumber: id }]
-      });
-      if (!order) return err('Order not found', 404);
-      const isOwner = order.userId === u.id || (u.email && order.customerEmail && order.customerEmail.toLowerCase() === u.email.toLowerCase());
-      if (!isOwner && u.role !== 'admin') return err('Unauthorized', 403);
-
+    async function resolveInvoiceCompanyConfig(db) {
       const footerDoc = await db.collection('footer').findOne({ id: 'default' });
       const siteSettingsDoc = await db.collection('site_settings').findOne({ id: 'default' });
       const headerDoc = await db.collection('header').findOne({ id: 'default' });
+      const invoiceSettingsDoc = await db.collection('invoice_settings').findOne({ id: 'default' });
 
       const logoUrl = siteSettingsDoc?.logo || footerDoc?.company?.logo || headerDoc?.logo?.image || '/logo.png';
 
@@ -3092,23 +3085,59 @@ async function handleRoute(request, { params }) {
         }
       }
 
-      const companyConfig = {
-        name: footerDoc?.company?.name || siteSettingsDoc?.siteName || 'MikuMantra Fine Jewellery',
+      return {
+        name: invoiceSettingsDoc?.legalName || footerDoc?.company?.name || siteSettingsDoc?.siteName || 'MikuMantra Fine Jewellery Pvt Ltd',
         logo: logoUrl,
         logoBuffer,
         favicon: faviconUrl,
         faviconBuffer,
-        address: footerDoc?.company?.address || '',
-        email: footerDoc?.company?.email || '',
-        phone: footerDoc?.company?.phone || '',
-        website: footerDoc?.company?.website || siteSettingsDoc?.siteUrl || '',
-        gstin: footerDoc?.company?.gstin || '',
-        pan: footerDoc?.company?.pan || '',
-        cin: footerDoc?.company?.cin || '',
-        registeredAddress: footerDoc?.company?.registeredAddress || '',
-        invoiceTerms: footerDoc?.company?.invoiceTerms || ''
+        address: invoiceSettingsDoc?.address || footerDoc?.company?.address || 'MikuMantra Atelier, MG Road, Jaipur 302001',
+        email: invoiceSettingsDoc?.email || footerDoc?.company?.email || 'sushil@unictechnology.com',
+        phone: invoiceSettingsDoc?.phone || footerDoc?.company?.phone || '+918076108369',
+        website: invoiceSettingsDoc?.website || footerDoc?.company?.website || siteSettingsDoc?.siteUrl || 'https://mikumantra.vercel.app',
+        gstin: invoiceSettingsDoc?.gstin || footerDoc?.company?.gstin || '08AAACM1234F1Z5',
+        pan: invoiceSettingsDoc?.pan || footerDoc?.company?.pan || 'AAACM1234F',
+        cin: invoiceSettingsDoc?.cin || footerDoc?.company?.cin || 'U36910RJ2026PTC123456',
+        registeredAddress: invoiceSettingsDoc?.registeredAddress || footerDoc?.company?.registeredAddress || 'MikuMantra Atelier, MG Road, Jaipur 302001',
+        invoiceTerms: invoiceSettingsDoc?.invoiceTerms || footerDoc?.company?.invoiceTerms || 'All pieces are BIS Hallmarked and certified. Returns accepted within 15 days.',
+        invoicePrefix: invoiceSettingsDoc?.prefix || 'INV-',
+        notes: invoiceSettingsDoc?.notes !== undefined ? invoiceSettingsDoc.notes : 'Complimentary jewellery care consultation available at Jaipur atelier.',
+        bankDetails: invoiceSettingsDoc?.bankDetails || {
+          bankName: 'HDFC Bank Ltd.',
+          accountNumber: '50200012345678',
+          ifsc: 'HDFC0000123',
+          branch: 'C-Scheme Branch, Jaipur',
+          accountType: 'Current Account',
+          beneficiaryName: 'MikuMantra Fine Jewellery Pvt Ltd',
+          upiId: ''
+        },
+        signatoryCompany: invoiceSettingsDoc?.signatoryCompany || ('For ' + (invoiceSettingsDoc?.legalName || footerDoc?.company?.name || 'MikuMantra Fine Jewellery Pvt Ltd')),
+        authorizedSignatory: invoiceSettingsDoc?.authorizedSignatory || 'Authorized Signatory',
+        activeTemplate: invoiceSettingsDoc?.activeTemplate || 'classic_regal',
+        primaryColor: invoiceSettingsDoc?.primaryColor || '#9C6B30',
+        invoiceTitle: invoiceSettingsDoc?.invoiceTitle || 'TAX INVOICE',
+        invoiceSubtitle: invoiceSettingsDoc?.invoiceSubtitle || 'ORIGINAL FOR RECIPIENT',
+        showWatermark: invoiceSettingsDoc?.showWatermark !== false,
+        showHsn: invoiceSettingsDoc?.showHsn !== false,
+        hsnCode: invoiceSettingsDoc?.hsnCode || '7113',
+        showSku: invoiceSettingsDoc?.showSku !== false,
+        showBankDetails: invoiceSettingsDoc?.showBankDetails !== false,
+        showSignatory: invoiceSettingsDoc?.showSignatory !== false,
+        showTerms: invoiceSettingsDoc?.showTerms !== false
       };
+    }
 
+    if (route.startsWith('/orders/') && route.endsWith('/invoice') && method === 'GET') {
+      const u = await getCurrentUser(db, request); if (!u) return err('Not authenticated', 401);
+      const id = route.split('/')[2];
+      const order = await db.collection('orders').findOne({
+        $or: [{ id }, { orderNumber: id }]
+      });
+      if (!order) return err('Order not found', 404);
+      const isOwner = order.userId === u.id || (u.email && order.customerEmail && order.customerEmail.toLowerCase() === u.email.toLowerCase());
+      if (!isOwner && u.role !== 'admin') return err('Unauthorized', 403);
+
+      const companyConfig = await resolveInvoiceCompanyConfig(db);
       const pdf = await buildInvoicePDF(order, companyConfig);
       return handleCORS(new NextResponse(pdf, { status: 200, headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="Invoice-${order.orderNumber}.pdf"` } }));
     }
@@ -7846,6 +7875,543 @@ async function handleRoute(request, { params }) {
           order: clean(up),
           emailNotification: emailResult
         });
+      }
+
+      // ============ ADMIN SEND INVOICE EMAIL ============
+      if (sub.startsWith('orders/') && sub.endsWith('/send-invoice') && method === 'POST') {
+        if (!hasPermission(admin, 'orders.view') && !hasPermission(admin, 'orders.update')) {
+          return err('Permission denied: orders.view or orders.update required', 403);
+        }
+        const orderId = sub.split('/')[1];
+        const body = await request.json().catch(() => ({}));
+
+        const order = await db.collection('orders').findOne({
+          $or: [{ id: orderId }, { orderNumber: orderId }]
+        });
+        if (!order) return err('Order not found', 404);
+
+        let recipientEmail = (body.toEmail || '').trim().toLowerCase();
+        if (!recipientEmail) {
+          if (order.customerEmail) recipientEmail = order.customerEmail.toLowerCase().trim();
+          else if (order.guestEmail) recipientEmail = order.guestEmail.toLowerCase().trim();
+          else if (order.userId) {
+            const u = await db.collection('users').findOne({ id: order.userId });
+            if (u?.email) recipientEmail = u.email.toLowerCase().trim();
+          }
+        }
+
+        if (!recipientEmail || !recipientEmail.includes('@')) {
+          return err('No valid recipient customer email address on file for this order.', 400);
+        }
+
+        const companyConfig = await resolveInvoiceCompanyConfig(db);
+        const invoicePdf = await buildInvoicePDF(order, companyConfig);
+
+        const emailResult = await sendOrderInvoiceEmail({
+          toEmail: recipientEmail,
+          order,
+          invoicePdfBuffer: invoicePdf,
+          customMessage: (body.message || '').trim(),
+          db
+        });
+
+        try {
+          await logAdminActivity(db, {
+            admin,
+            action: 'INVOICE_SENT',
+            module: 'Orders',
+            targetId: order.id,
+            targetName: `Order #${order.orderNumber}`,
+            metadata: {
+              toEmail: recipientEmail,
+              invoiceNumber: order.invoiceNumber || `${companyConfig.invoicePrefix || 'INV-'}${order.orderNumber}`,
+              provider: emailResult.provider || 'default'
+            },
+            request
+          });
+        } catch (logErr) {
+          console.error('Failed to log admin invoice sent activity:', logErr);
+        }
+
+        return ok({
+          success: true,
+          message: `Official Tax Invoice successfully dispatched to ${recipientEmail}`,
+          emailResult
+        });
+      }
+
+      // ============ ADMIN INVOICES LIST & METRICS ============
+      if (sub === 'invoices' && method === 'GET') {
+        if (!hasPermission(admin, 'orders.view')) return err('Permission denied: orders.view required', 403);
+
+        const search = q.get('search')?.trim();
+        const statusFilter = q.get('status')?.trim();
+        const paymentFilter = q.get('paymentStatus')?.trim();
+        const startDate = q.get('startDate')?.trim();
+        const endDate = q.get('endDate')?.trim();
+        const page = Math.max(1, parseInt(q.get('page') || '1'));
+        const limit = Math.max(1, Math.min(200, parseInt(q.get('limit') || '50')));
+
+        let query = {};
+        const andConditions = [];
+
+        if (statusFilter && statusFilter !== 'ALL') {
+          andConditions.push({ status: statusFilter });
+        }
+
+        if (paymentFilter && paymentFilter !== 'ALL') {
+          if (paymentFilter === 'paid') {
+            andConditions.push({
+              $or: [
+                { paymentStatus: 'paid' },
+                { payment: 'razorpay' }
+              ]
+            });
+          } else if (paymentFilter === 'pending') {
+            andConditions.push({
+              $and: [
+                { paymentStatus: { $ne: 'paid' } },
+                { payment: { $ne: 'razorpay' } }
+              ]
+            });
+          } else {
+            andConditions.push({ paymentStatus: paymentFilter });
+          }
+        }
+
+        if (startDate || endDate) {
+          const dateRange = {};
+          if (startDate) {
+            const s = new Date(startDate);
+            s.setHours(0, 0, 0, 0);
+            dateRange.$gte = s;
+          }
+          if (endDate) {
+            const e = new Date(endDate);
+            e.setHours(23, 59, 59, 999);
+            dateRange.$lte = e;
+          }
+          andConditions.push({ placedAt: dateRange });
+        }
+
+        if (search) {
+          const escaped = search.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
+          const reg = { $regex: escaped, $options: 'i' };
+
+          const matchingUsers = await db.collection('users').find({
+            $or: [{ email: reg }, { name: reg }, { phone: reg }]
+          }).toArray();
+          const matchingUserIds = matchingUsers.map(u => u.id);
+
+          andConditions.push({
+            $or: [
+              { id: reg },
+              { orderNumber: reg },
+              { invoiceNumber: reg },
+              { 'address.fullName': reg },
+              { 'address.phone': reg },
+              { 'address.city': reg },
+              { 'address.state': reg },
+              { 'items.name': reg },
+              { guestEmail: reg },
+              { userId: { $in: matchingUserIds } }
+            ]
+          });
+        }
+
+        if (andConditions.length > 0) {
+          query = { $and: andConditions };
+        }
+
+        // Global stats calculation across all orders
+        const allOrders = await db.collection('orders').find({}).toArray();
+        let totalRevenue = 0;
+        let totalPaid = 0;
+        let totalPending = 0;
+
+        for (const o of allOrders) {
+          const amt = Number(o.amounts?.total || 0);
+          if (o.status !== 'cancelled') {
+            totalRevenue += amt;
+            const isPaid = o.paymentStatus === 'paid' || o.payment === 'razorpay';
+            if (isPaid) {
+              totalPaid += amt;
+            } else {
+              totalPending += amt;
+            }
+          }
+        }
+
+        const totalMatching = await db.collection('orders').countDocuments(query);
+        const list = await db.collection('orders')
+          .find(query)
+          .sort({ placedAt: -1 })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .toArray();
+
+        const userIds = [...new Set(list.map(o => o.userId).filter(Boolean))];
+        const users = userIds.length > 0
+          ? await db.collection('users').find({ id: { $in: userIds } }, { projection: { id: 1, email: 1, name: 1 } }).toArray()
+          : [];
+        const userMap = new Map(users.map(u => [u.id, u]));
+
+        const invoiceSettingsDoc = await db.collection('invoice_settings').findOne({ id: 'default' });
+        const invPrefix = invoiceSettingsDoc?.prefix || 'INV-';
+
+        const enriched = list.map(o => {
+          const userDoc = o.userId ? userMap.get(o.userId) : null;
+          const email = userDoc?.email || o.guestEmail || o.customerEmail || '';
+          const invoiceNumber = o.invoiceNumber || `${invPrefix}${o.orderNumber}`;
+          return {
+            ...clean(o),
+            invoiceNumber,
+            customerEmail: email
+          };
+        });
+
+        return ok({
+          invoices: enriched,
+          stats: {
+            totalInvoices: allOrders.length,
+            totalRevenue,
+            totalPaid,
+            totalPending
+          },
+          total: totalMatching,
+          page,
+          limit
+        });
+      }
+
+      // ============ ADMIN INVOICE SETTINGS ============
+      if (sub === 'invoice-settings') {
+        if (method === 'GET') {
+          if (!hasPermission(admin, 'settings.view') && !hasPermission(admin, 'orders.view')) {
+            return err('Permission denied: settings.view required', 403);
+          }
+
+          const invoiceDoc = await db.collection('invoice_settings').findOne({ id: 'default' });
+          const footerDoc = await db.collection('footer').findOne({ id: 'default' });
+          const siteSettingsDoc = await db.collection('site_settings').findOne({ id: 'default' });
+
+          const settings = {
+            legalName: invoiceDoc?.legalName || footerDoc?.company?.name || siteSettingsDoc?.siteName || 'MikuMantra Fine Jewellery Pvt Ltd',
+            gstin: invoiceDoc?.gstin || footerDoc?.company?.gstin || '08AAACM1234F1Z5',
+            pan: invoiceDoc?.pan || footerDoc?.company?.pan || 'AAACM1234F',
+            cin: invoiceDoc?.cin || footerDoc?.company?.cin || 'U36910RJ2026PTC123456',
+            registeredAddress: invoiceDoc?.registeredAddress || footerDoc?.company?.registeredAddress || 'MikuMantra Atelier, MG Road, Jaipur 302001',
+            address: invoiceDoc?.address || footerDoc?.company?.address || 'MikuMantra Atelier, MG Road, Jaipur 302001',
+            email: invoiceDoc?.email || footerDoc?.company?.email || 'sushil@unictechnology.com',
+            phone: invoiceDoc?.phone || footerDoc?.company?.phone || '+918076108369',
+            website: invoiceDoc?.website || footerDoc?.company?.website || siteSettingsDoc?.siteUrl || 'https://mikumantra.vercel.app',
+            prefix: invoiceDoc?.prefix || 'INV-',
+            invoiceTerms: invoiceDoc?.invoiceTerms || footerDoc?.company?.invoiceTerms || 'All pieces are BIS Hallmarked and certified. Returns accepted within 15 days.',
+            notes: invoiceDoc?.notes !== undefined ? invoiceDoc.notes : 'Complimentary jewellery care consultation available at Jaipur atelier.',
+            authorizedSignatory: invoiceDoc?.authorizedSignatory || 'Authorized Signatory',
+            signatoryCompany: invoiceDoc?.signatoryCompany || ('For ' + (invoiceDoc?.legalName || footerDoc?.company?.name || 'MikuMantra Fine Jewellery Pvt Ltd')),
+            bankDetails: invoiceDoc?.bankDetails || {
+              bankName: 'HDFC Bank Ltd.',
+              accountNumber: '50200012345678',
+              ifsc: 'HDFC0000123',
+              branch: 'C-Scheme Branch, Jaipur',
+              accountType: 'Current Account',
+              beneficiaryName: 'MikuMantra Fine Jewellery Pvt Ltd',
+              upiId: ''
+            },
+            activeTemplate: invoiceDoc?.activeTemplate || 'classic_regal',
+            primaryColor: invoiceDoc?.primaryColor || '#9C6B30',
+            invoiceTitle: invoiceDoc?.invoiceTitle || 'TAX INVOICE',
+            invoiceSubtitle: invoiceDoc?.invoiceSubtitle || 'ORIGINAL FOR RECIPIENT',
+            showWatermark: invoiceDoc?.showWatermark !== false,
+            showHsn: invoiceDoc?.showHsn !== false,
+            hsnCode: invoiceDoc?.hsnCode || '7113',
+            showSku: invoiceDoc?.showSku !== false,
+            showBankDetails: invoiceDoc?.showBankDetails !== false,
+            showSignatory: invoiceDoc?.showSignatory !== false,
+            showTerms: invoiceDoc?.showTerms !== false,
+            emailSubject: invoiceDoc?.emailSubject || 'Official Tax Invoice: #{invoiceNumber} for Order #{orderNumber} - {storeName}',
+            emailMessage: invoiceDoc?.emailMessage || '',
+            emailCtaText: invoiceDoc?.emailCtaText || 'View Invoice Online ↗'
+          };
+
+          return ok({ settings });
+        }
+
+        if (method === 'PUT' || method === 'POST') {
+          if (!hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied: settings.edit required', 403);
+          }
+
+          const body = await request.json().catch(() => ({}));
+          const cleanPrefix = (body.prefix || 'INV-').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+
+          const updateDoc = {
+            legalName: (body.legalName || 'MikuMantra Fine Jewellery Pvt Ltd').trim(),
+            gstin: (body.gstin || '').trim().toUpperCase(),
+            pan: (body.pan || '').trim().toUpperCase(),
+            cin: (body.cin || '').trim().toUpperCase(),
+            registeredAddress: (body.registeredAddress || '').trim(),
+            address: (body.address || '').trim(),
+            email: (body.email || '').trim(),
+            phone: (body.phone || '').trim(),
+            website: (body.website || '').trim(),
+            prefix: cleanPrefix || 'INV-',
+            invoiceTerms: (body.invoiceTerms || '').trim(),
+            notes: (body.notes !== undefined ? body.notes : '').trim(),
+            signatoryCompany: (body.signatoryCompany || '').trim(),
+            authorizedSignatory: (body.authorizedSignatory || '').trim(),
+            bankDetails: {
+              bankName: (body.bankDetails?.bankName || '').trim(),
+              accountNumber: (body.bankDetails?.accountNumber || '').trim(),
+              ifsc: (body.bankDetails?.ifsc || '').trim().toUpperCase(),
+              branch: (body.bankDetails?.branch || '').trim(),
+              accountType: (body.bankDetails?.accountType || 'Current Account').trim(),
+              beneficiaryName: (body.bankDetails?.beneficiaryName || '').trim(),
+              upiId: (body.bankDetails?.upiId || '').trim()
+            },
+            activeTemplate: body.activeTemplate || 'classic_regal',
+            primaryColor: body.primaryColor || '#9C6B30',
+            invoiceTitle: (body.invoiceTitle || 'TAX INVOICE').trim(),
+            invoiceSubtitle: (body.invoiceSubtitle || 'ORIGINAL FOR RECIPIENT').trim(),
+            showWatermark: body.showWatermark !== false,
+            showHsn: body.showHsn !== false,
+            hsnCode: (body.hsnCode || '7113').trim(),
+            showSku: body.showSku !== false,
+            showBankDetails: body.showBankDetails !== false,
+            showSignatory: body.showSignatory !== false,
+            showTerms: body.showTerms !== false,
+            emailSubject: body.emailSubject || 'Official Tax Invoice: #{invoiceNumber} for Order #{orderNumber} - {storeName}',
+            emailMessage: body.emailMessage || '',
+            emailCtaText: body.emailCtaText || 'View Invoice Online ↗',
+            updatedAt: new Date()
+          };
+
+          await db.collection('invoice_settings').updateOne(
+            { id: 'default' },
+            { $set: { id: 'default', ...updateDoc } },
+            { upsert: true }
+          );
+
+          // Synchronize back to footer.company to keep footer tax & contact fields completely in sync
+          const footerDoc = await db.collection('footer').findOne({ id: 'default' });
+          if (footerDoc) {
+            const currentCompany = footerDoc.company || {};
+            await db.collection('footer').updateOne(
+              { id: 'default' },
+              {
+                $set: {
+                  'company.gstin': updateDoc.gstin || currentCompany.gstin || '',
+                  'company.pan': updateDoc.pan || currentCompany.pan || '',
+                  'company.cin': updateDoc.cin || currentCompany.cin || '',
+                  'company.registeredAddress': updateDoc.registeredAddress || currentCompany.registeredAddress || '',
+                  'company.address': updateDoc.address || currentCompany.address || '',
+                  'company.email': updateDoc.email || currentCompany.email || '',
+                  'company.phone': updateDoc.phone || currentCompany.phone || '',
+                  'company.website': updateDoc.website || currentCompany.website || '',
+                  'company.invoiceTerms': updateDoc.invoiceTerms || currentCompany.invoiceTerms || '',
+                  'company.name': updateDoc.legalName || currentCompany.name || ''
+                }
+              }
+            );
+            _cache.delete('footer');
+            try { invalidateSiteDataCache('footer'); } catch (e) {}
+          }
+
+          try {
+            await logAdminActivity(db, {
+              admin,
+              action: 'INVOICE_SETTINGS_UPDATED',
+              module: 'Settings',
+              targetId: 'default',
+              targetName: 'Invoice Settings',
+              metadata: { updatedFields: Object.keys(updateDoc) },
+              request
+            });
+          } catch (logErr) {
+            console.error('Failed to log admin invoice settings activity:', logErr);
+          }
+
+          return ok({ ok: true, message: 'Invoice settings updated successfully.', settings: updateDoc });
+        }
+      }
+
+      // ============ ADMIN INVOICE TEMPLATES & SAMPLE PREVIEW ============
+      if (sub === 'invoice-templates' || sub.startsWith('invoice-templates/')) {
+        const INVOICE_TEMPLATES_CATALOG = [
+          {
+            id: 'classic_regal',
+            name: 'Classic Regal (Signature)',
+            description: 'Traditional Jaipur royal atelier aesthetic featuring warm gold borders, dual-column billing header, and formal statutory breakdown.',
+            recommendedColor: '#9C6B30',
+            badge: 'SIGNATURE'
+          },
+          {
+            id: 'modern_minimalist',
+            name: 'Modern Minimalist',
+            description: 'Contemporary high-fashion layout with clean monochromatic lines, shaded item table, and minimalist sans typography.',
+            recommendedColor: '#1A1A1A',
+            badge: 'MODERN'
+          },
+          {
+            id: 'b2b',
+            name: 'Corporate & B2B Fine Jewellery',
+            description: 'Commercial compliance with explicit HSN/SAC (7113) schedules, wire payment banking coordinates, and authorized signatory seal.',
+            recommendedColor: '#0F5132',
+            badge: 'B2B COMPLIANT'
+          },
+          {
+            id: 'boutique_atelier',
+            name: 'Boutique Atelier Slip',
+            description: 'Compact heirloom certificate invoice with burgundy rose accents, authenticity warranty seals, and concierge support footer.',
+            recommendedColor: '#722F37',
+            badge: 'BOUTIQUE'
+          }
+        ];
+
+        if (sub === 'invoice-templates/sample-pdf' && method === 'GET') {
+          const companyConfig = await resolveInvoiceCompanyConfig(db);
+          // Allow override with query params for live interactive testing
+          const qColor = q.get('primaryColor');
+          const qTitle = q.get('invoiceTitle');
+          const qSubtitle = q.get('invoiceSubtitle');
+          const qWatermark = q.get('showWatermark');
+          const qHsn = q.get('showHsn');
+
+          if (qColor) companyConfig.primaryColor = qColor;
+          if (qTitle) companyConfig.invoiceTitle = qTitle;
+          if (qSubtitle) companyConfig.invoiceSubtitle = qSubtitle;
+          if (qWatermark !== null && qWatermark !== undefined) companyConfig.showWatermark = qWatermark === 'true';
+          if (qHsn !== null && qHsn !== undefined) companyConfig.showHsn = qHsn === 'true';
+
+          if (q.get('legalName')) companyConfig.name = q.get('legalName');
+          if (q.get('address')) companyConfig.address = q.get('address');
+          if (q.get('email')) companyConfig.email = q.get('email');
+          if (q.get('phone')) companyConfig.phone = q.get('phone');
+          if (q.get('website')) companyConfig.website = q.get('website');
+          if (q.get('gstin')) companyConfig.gstin = q.get('gstin');
+          if (q.get('pan')) companyConfig.pan = q.get('pan');
+          if (q.get('cin')) companyConfig.cin = q.get('cin');
+          if (q.get('notes') !== null) companyConfig.notes = q.get('notes');
+          if (q.get('signatoryCompany')) companyConfig.signatoryCompany = q.get('signatoryCompany');
+          if (q.get('authorizedSignatory')) companyConfig.authorizedSignatory = q.get('authorizedSignatory');
+          if (q.get('invoiceTerms')) companyConfig.invoiceTerms = q.get('invoiceTerms');
+          if (q.get('prefix')) companyConfig.invoicePrefix = q.get('prefix');
+          if (q.get('showBankDetails') !== null) companyConfig.showBankDetails = q.get('showBankDetails') === 'true';
+          if (q.get('showSignatory') !== null) companyConfig.showSignatory = q.get('showSignatory') === 'true';
+          if (q.get('showTerms') !== null) companyConfig.showTerms = q.get('showTerms') === 'true';
+          if (q.get('showSku') !== null) companyConfig.showSku = q.get('showSku') === 'true';
+          if (q.get('hsnCode')) companyConfig.hsnCode = q.get('hsnCode');
+          if (q.get('bankName') || q.get('accountNumber') || q.get('ifsc') || q.get('branch')) {
+            companyConfig.bankDetails = {
+              ...companyConfig.bankDetails,
+              ...(q.get('bankName') ? { bankName: q.get('bankName') } : {}),
+              ...(q.get('accountNumber') ? { accountNumber: q.get('accountNumber') } : {}),
+              ...(q.get('ifsc') ? { ifsc: q.get('ifsc') } : {}),
+              ...(q.get('branch') ? { branch: q.get('branch') } : {})
+            };
+          }
+
+          const sampleOrder = {
+            id: 'sample-inv-order',
+            orderNumber: 'INV-MIK-62295639-159',
+            placedAt: new Date().toISOString(),
+            status: 'confirmed',
+            payment: 'cod',
+            paymentStatus: 'pending',
+            address: {
+              fullName: 'Karan Kumar',
+              phone: '+914141414141',
+              line1: 'bnm,fbcgmkdghjk',
+              line2: 'cmkhkmghk, cbkck',
+              city: 'Jaipur',
+              state: 'Rajasthan',
+              pincode: '222222'
+            },
+            items: [
+              {
+                id: 'item-1',
+                sku: 'RajwadaK',
+                name: 'Rajwada Kashmiri Heritage Earrings',
+                price: 939,
+                qty: 9
+              }
+            ],
+            amounts: {
+              subtotal: 8451,
+              discount: 0,
+              shipping: 0,
+              tax: 254,
+              giftWrap: 0,
+              total: 8705
+            }
+          };
+
+          const pdf = await buildInvoicePDF(sampleOrder, companyConfig);
+          return handleCORS(new NextResponse(pdf, {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/pdf',
+              'Content-Disposition': 'inline; filename="MikuMantra-Sample-Invoice.pdf"'
+            }
+          }));
+        }
+
+        if (sub === 'invoice-templates' && method === 'GET') {
+          if (!hasPermission(admin, 'settings.view') && !hasPermission(admin, 'orders.view')) {
+            return err('Permission denied', 403);
+          }
+
+          const invoiceDoc = await db.collection('invoice_settings').findOne({ id: 'default' });
+          const footerDoc = await db.collection('footer').findOne({ id: 'default' });
+          const siteSettingsDoc = await db.collection('site_settings').findOne({ id: 'default' });
+
+          const settings = {
+            legalName: invoiceDoc?.legalName || footerDoc?.company?.name || siteSettingsDoc?.siteName || 'MikuMantra Fine Jewellery Pvt Ltd',
+            address: invoiceDoc?.address || footerDoc?.company?.address || 'MikuMantra Atelier, MG Road, Jaipur 302001',
+            email: invoiceDoc?.email || footerDoc?.company?.email || 'sushil@unictechnology.com',
+            phone: invoiceDoc?.phone || footerDoc?.company?.phone || '+918076108369',
+            website: invoiceDoc?.website || footerDoc?.company?.website || siteSettingsDoc?.siteUrl || 'https://mikumantra.vercel.app',
+            gstin: invoiceDoc?.gstin || footerDoc?.company?.gstin || '08AAACM1234F1Z5',
+            pan: invoiceDoc?.pan || footerDoc?.company?.pan || 'AAACM1234F',
+            cin: invoiceDoc?.cin || footerDoc?.company?.cin || 'U36910RJ2026PTC123456',
+            registeredAddress: invoiceDoc?.registeredAddress || footerDoc?.company?.registeredAddress || 'MikuMantra Atelier, MG Road, Jaipur 302001',
+            prefix: invoiceDoc?.prefix || 'INV-',
+            activeTemplate: invoiceDoc?.activeTemplate || 'classic_regal',
+            primaryColor: invoiceDoc?.primaryColor || '#9C6B30',
+            invoiceTitle: invoiceDoc?.invoiceTitle || 'TAX INVOICE',
+            invoiceSubtitle: invoiceDoc?.invoiceSubtitle || 'ORIGINAL FOR RECIPIENT',
+            showWatermark: invoiceDoc?.showWatermark !== false,
+            showHsn: invoiceDoc?.showHsn !== false,
+            hsnCode: invoiceDoc?.hsnCode || '7113',
+            showSku: invoiceDoc?.showSku !== false,
+            showBankDetails: invoiceDoc?.showBankDetails !== false,
+            showSignatory: invoiceDoc?.showSignatory !== false,
+            signatoryCompany: invoiceDoc?.signatoryCompany || ('For ' + (invoiceDoc?.legalName || footerDoc?.company?.name || 'MikuMantra Fine Jewellery Pvt Ltd')),
+            showTerms: invoiceDoc?.showTerms !== false,
+            invoiceTerms: invoiceDoc?.invoiceTerms || footerDoc?.company?.invoiceTerms || 'All pieces are BIS Hallmarked and certified. Returns accepted within 15 days.',
+            notes: invoiceDoc?.notes !== undefined ? invoiceDoc.notes : 'Complimentary jewellery care consultation available at Jaipur atelier.',
+            authorizedSignatory: invoiceDoc?.authorizedSignatory || 'Authorized Signatory',
+            bankDetails: invoiceDoc?.bankDetails || {
+              bankName: 'HDFC Bank Ltd.',
+              accountNumber: '50200012345678',
+              ifsc: 'HDFC0000123',
+              branch: 'C-Scheme Branch, Jaipur',
+              accountType: 'Current Account',
+              beneficiaryName: 'MikuMantra Fine Jewellery Pvt Ltd',
+              upiId: ''
+            },
+            emailSubject: invoiceDoc?.emailSubject || 'Official Tax Invoice: #{invoiceNumber} for Order #{orderNumber} - {storeName}',
+            emailMessage: invoiceDoc?.emailMessage || '',
+            emailCtaText: invoiceDoc?.emailCtaText || 'View Invoice Online ↗'
+          };
+
+          return ok({
+            catalog: INVOICE_TEMPLATES_CATALOG,
+            activeTemplate: settings.activeTemplate,
+            settings
+          });
+        }
       }
 
       // Customers

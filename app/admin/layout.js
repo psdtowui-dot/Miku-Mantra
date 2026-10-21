@@ -8,7 +8,7 @@ import {
   Ticket, MessageSquare, Image as ImageIcon, LogOut, Loader2, Menu, X,
   History, Settings, ChevronDown, ChevronRight, Layout, SlidersHorizontal,
   Globe, RotateCcw, ShieldCheck, KeyRound, Eye, EyeOff, Shield, UserCheck,
-  Lock, ScrollText, CreditCard, Share2, Mail, Send, FileText, BarChart3, UploadCloud
+  Lock, ScrollText, CreditCard, Share2, Mail, Send, FileText, BarChart3, UploadCloud, ReceiptText
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -19,6 +19,8 @@ const NAV = [
   { href: '/admin/categories', label: 'Categories', icon: FolderTree, permission: 'products.view' },
   { href: '/admin/collections', label: 'Collections', icon: Sparkles, permission: 'products.view' },
   { href: '/admin/orders', label: 'Orders', icon: ShoppingCart, permission: 'orders.view' },
+  { href: '/admin/invoices', label: 'Invoices', icon: ReceiptText, permission: 'orders.view' },
+  { href: '/admin/invoices/templates', label: 'Invoice Templates & Info', icon: FileText, permission: 'orders.view' },
   { href: '/admin/returns', label: 'Return Requests', icon: RotateCcw, permission: 'orders.view' },
   { href: '/admin/delivered-history', label: 'Delivered History', icon: History, permission: 'orders.view' },
   { href: '/admin/customers', label: 'Customers', icon: Users, permission: 'customers.view' },
@@ -199,7 +201,8 @@ export default function AdminLayout({ children }) {
         </div>
         <nav className="flex-1 py-4 overflow-y-auto dark-scrollbar space-y-1">
           {NAV.filter(n => canAccess(user, n.permission)).map(n => {
-            const Active = pathname === n.href || (n.href !== '/admin' && pathname?.startsWith(n.href));
+            const hasMoreSpecificMatch = NAV.some(other => other.href !== n.href && other.href.startsWith(n.href) && pathname?.startsWith(other.href));
+            const Active = pathname === n.href || (!hasMoreSpecificMatch && n.href !== '/admin' && pathname?.startsWith(n.href));
             return (
               <Link
                 key={n.href}

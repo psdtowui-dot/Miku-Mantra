@@ -1,8 +1,9 @@
 'use client';
 import React from 'react';
-import { X, Download, Calendar, User, Mail, Phone, MapPin, Wallet, CreditCard, Clock, FileText, CheckCircle2, Package, Truck, Home } from 'lucide-react';
+import { X, Download, Calendar, User, Mail, Phone, MapPin, Wallet, CreditCard, Clock, FileText, CheckCircle2, Package, Truck, Home, Printer, Send, Loader2 } from 'lucide-react';
 import { formatINR } from '@/lib/products';
 import { getCancellationLabel, getCancellationActor } from '@/lib/utils';
+import { toast } from 'sonner';
 import ShippingSlip from './shipping-slip';
 
 const STEPS = [
@@ -14,6 +15,9 @@ const STEPS = [
 
 export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
   const [showShippingSlip, setShowShippingSlip] = React.useState(false);
+  const [sendingInvoice, setSendingInvoice] = React.useState(false);
+  const [showEmailPrompt, setShowEmailPrompt] = React.useState(false);
+  const [targetEmail, setTargetEmail] = React.useState(order?.customerEmail || order?.guestEmail || '');
   if (!order) return null;
 
   const address = order.address || {};
@@ -336,21 +340,97 @@ export default function OrderDetailModal({ order, onClose, onUpdateStatus }) {
 
           {/* Pricing Breakdown & PDF Download */}
           <div className="flex flex-col md:flex-row gap-6 justify-between items-start">
-            <div className="w-full md:w-auto flex flex-col sm:flex-row gap-3">
-              <a
-                href={`/api/orders/${order.id}/invoice`}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-[#FAF6EF] text-[#9C6B30] border border-[#9C6B30]/40 text-xs font-semibold tracking-widest uppercase rounded-lg hover:bg-[#9C6B30] hover:text-white transition-all shadow-xs w-full sm:w-auto text-center"
-              >
-                <Download size={14} /> Download PDF
-              </a>
-              <button
-                onClick={() => setShowShippingSlip(true)}
-                className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-[#9C6B30] text-white text-xs font-semibold tracking-widest uppercase rounded-lg hover:bg-[#855B29] transition-all shadow-xs w-full sm:w-auto text-center"
-              >
-                <FileText size={14} /> Generate Shipping Slip
-              </button>
+            <div className="w-full md:w-auto space-y-2">
+              <div className="flex flex-wrap gap-2 sm:gap-2.5">
+                <a
+                  href={`/api/orders/${order.id}/invoice`}
+                  target="_blank"
+                  rel="noreferrer"
+                  download={`Invoice-${order.orderNumber}.pdf`}
+                  className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-[#FAF6EF] text-[#9C6B30] border border-[#9C6B30]/40 text-xs font-semibold tracking-wider uppercase rounded-lg hover:bg-[#9C6B30] hover:text-white transition-all shadow-xs"
+                >
+                  <Download size={13} /> Download PDF
+                </a>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const pdfUrl = `/api/orders/${order.id}/invoice`;
+                    const w = window.open(pdfUrl, '_blank');
+                    if (w) {
+                      w.onload = () => {
+                        try { w.print(); } catch (e) {}
+                      };
+                    }
+                  }}
+                  className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-white text-neutral-700 border border-neutral-200 text-xs font-semibold tracking-wider uppercase rounded-lg hover:border-[#9C6B30] hover:text-[#9C6B30] transition-all shadow-xs"
+                  title="Print Tax Invoice"
+                >
+                  <Printer size={13} /> Print
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowEmailPrompt(!showEmailPrompt)}
+                  className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-[#1A1A1A] text-white text-xs font-semibold tracking-wider uppercase rounded-lg hover:bg-[#9C6B30] transition-all shadow-xs"
+                  title="Email Official Invoice to Customer"
+                >
+                  <Send size={12} /> Email Invoice
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowShippingSlip(true)}
+                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#9C6B30] text-white text-xs font-semibold tracking-wider uppercase rounded-lg hover:bg-[#855B29] transition-all shadow-xs"
+                >
+                  <FileText size={13} /> Shipping Slip
+                </button>
+              </div>
+
+              {showEmailPrompt && (
+                <div className="p-3 bg-white border border-[#D4AF37]/40 rounded-lg shadow-xs flex flex-col sm:flex-row items-center gap-2 text-xs">
+                  <span className="font-semibold text-neutral-700 shrink-0">Recipient:</span>
+                  <input
+                    type="email"
+                    value={targetEmail}
+                    onChange={e => setTargetEmail(e.target.value)}
+                    placeholder="customer@example.com"
+                    className="flex-1 w-full sm:w-auto px-2.5 py-1.5 border border-neutral-200 rounded text-xs focus:outline-none focus:border-[#9C6B30]"
+                  />
+                  <button
+                    type="button"
+                    disabled={sendingInvoice}
+                    onClick={async () => {
+                      const to = (targetEmail || order.customerEmail || order.guestEmail || '').trim();
+                      if (!to || !to.includes('@')) {
+                        toast.error('Valid recipient email address is required.');
+                        return;
+                      }
+                      setSendingInvoice(true);
+                      try {
+                        const res = await fetch(`/api/admin/orders/${order.id}/send-invoice`, {
+                          method: 'POST',
+                          credentials: 'include',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ toEmail: to })
+                        });
+                        const data = await res.json().catch(() => ({}));
+                        if (res.ok) {
+                          toast.success(data.message || `Tax invoice dispatched to ${to}`);
+                          setShowEmailPrompt(false);
+                        } else {
+                          toast.error(data.error || 'Failed to dispatch invoice.');
+                        }
+                      } catch (err) {
+                        toast.error('Network error sending invoice.');
+                      } finally {
+                        setSendingInvoice(false);
+                      }
+                    }}
+                    className="w-full sm:w-auto px-3.5 py-1.5 bg-[#9C6B30] hover:bg-[#855B29] text-white font-semibold rounded text-xs transition flex items-center justify-center gap-1.5 disabled:opacity-50"
+                  >
+                    {sendingInvoice ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                    <span>{sendingInvoice ? 'Sending...' : 'Send'}</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="bg-white rounded-xl border border-neutral-200 p-4 sm:p-5 w-full md:w-96 shadow-xs space-y-2 text-xs sm:text-sm">
