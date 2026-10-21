@@ -22,24 +22,29 @@ function normalizeTokens(str) {
 
 function isOptionSelected(selectedValue, optValue, optName) {
   if (!selectedValue || (!optValue && !optName)) return false;
-  const s1 = String(selectedValue).trim().toLowerCase();
-  const norm1 = s1.replace(/[^a-z0-9]/g, '');
-  if (!norm1) return false;
+  const selectedArr = Array.isArray(selectedValue)
+    ? selectedValue
+    : String(selectedValue).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
-  const targets = [optValue, optName].filter(Boolean);
-  for (const t of targets) {
-    const s2 = String(t).trim().toLowerCase();
-    if (s1 === s2) return true;
-    const norm2 = s2.replace(/[^a-z0-9]/g, '');
-    if (norm1 === norm2) return true;
-    // Singular / plural equality (e.g. bestseller / bestsellers, arrival / arrivals)
-    if (norm1 + 's' === norm2 || norm2 + 's' === norm1) return true;
+  const targets = [optValue, optName].filter(Boolean).map(t => String(t).trim().toLowerCase());
+
+  for (const s1 of selectedArr) {
+    const norm1 = s1.replace(/[^a-z0-9]/g, '');
+    if (!norm1) continue;
+
+    for (const s2 of targets) {
+      if (s1 === s2) return true;
+      const norm2 = s2.replace(/[^a-z0-9]/g, '');
+      if (norm1 === norm2) return true;
+      // Singular / plural equality (e.g. bestseller / bestsellers, arrival / arrivals)
+      if (norm1 + 's' === norm2 || norm2 + 's' === norm1) return true;
+    }
   }
 
   return false;
 }
 
-function matchesFilterValue(product, key, selectedVal, group) {
+function matchesSingleFilter(product, key, selectedVal, group) {
   if (!selectedVal) return true;
   const selValLower = String(selectedVal).trim().toLowerCase();
   const normSel = normalizeAlphaNum(selectedVal);
@@ -58,6 +63,9 @@ function matchesFilterValue(product, key, selectedVal, group) {
       product.brand,
       product.badge,
       product.description,
+      product.shortDesc,
+      product.longDesc,
+      ...(Array.isArray(product.meta) ? product.meta : []),
       ...(Array.isArray(product.tags) ? product.tags : [])
     ].filter(Boolean).map(v => String(v).toLowerCase()).join(' ');
 
@@ -80,49 +88,224 @@ function matchesFilterValue(product, key, selectedVal, group) {
     candidateValues.push(product[key]);
   }
 
-  // Related / alternate product properties
-  if (key === 'collection' && product.badge) candidateValues.push(product.badge);
-  if (key === 'category' && product.subcategory) candidateValues.push(product.subcategory);
-  if (key === 'metal' && product.metalComposition) candidateValues.push(product.metalComposition);
-  if (key === 'stone' && product.stoneDetails) candidateValues.push(product.stoneDetails);
-  if (key === 'purity' && product.goldPurity) candidateValues.push(product.goldPurity);
-  if (key === 'size' && product.productSize) candidateValues.push(product.productSize);
-  if (key === 'gender' && !product.gender && product.category) candidateValues.push(product.category);
-
   // Dynamic specifications array
   const specs = getNormalizedSpecs(product);
   const keyNorm = normalizeAlphaNum(key);
   const groupNameNorm = normalizeAlphaNum(group?.name || '');
+
   for (const s of specs) {
     const specKey = normalizeAlphaNum(s.id || '');
     const specLabel = normalizeAlphaNum(s.label || '');
+    const sVal = s.value;
+    if (sVal === undefined || sVal === null) continue;
+
     if (
       (keyNorm && (specKey === keyNorm || specLabel === keyNorm)) ||
       (groupNameNorm && (specKey === groupNameNorm || specLabel === groupNameNorm))
     ) {
-      if (s.value !== undefined && s.value !== null) {
-        candidateValues.push(s.value);
+      candidateValues.push(sVal);
+    }
+
+    // Key-specific spec mappings
+    if (key === 'metal') {
+      if (specLabel.includes('plating') || specLabel.includes('finish') || specLabel.includes('material') || specLabel.includes('metal')) {
+        candidateValues.push(sVal);
+      }
+    }
+    if (key === 'stone') {
+      if (specLabel.includes('stone') || specLabel.includes('gem') || specLabel.includes('crystal') || specLabel.includes('diamond')) {
+        candidateValues.push(sVal);
+      }
+    }
+    if (key === 'size') {
+      if (specLabel.includes('size') || specLabel.includes('dimension') || specLabel.includes('length')) {
+        candidateValues.push(sVal);
+      }
+    }
+    if (key === 'type' || key === 'subcategory') {
+      if (specLabel.includes('type')) {
+        candidateValues.push(sVal);
       }
     }
   }
 
+  // Related / alternate product properties
+  if (key === 'collection') {
+    if (product.badge) candidateValues.push(product.badge);
+    if (product.bestseller || product.isBestseller) candidateValues.push('best-sellers', 'bestseller', 'bestsellers');
+    if (product.newArrival || product.isNew) candidateValues.push('new-arrival', 'newarrival', 'new');
+    if (product.featured) candidateValues.push('editors-choice', 'editorschoice', 'featured');
+    if (Array.isArray(product.meta)) candidateValues.push(...product.meta);
+  }
+
+  if (key === 'category') {
+    if (product.subcategory) candidateValues.push(product.subcategory);
+    if (Array.isArray(product.categories)) candidateValues.push(...product.categories);
+    if (Array.isArray(product.tags)) candidateValues.push(...product.tags);
+    if (Array.isArray(product.meta)) candidateValues.push(...product.meta);
+  }
+
+  if (key === 'metal') {
+    if (product.metalComposition) candidateValues.push(product.metalComposition);
+    if (Array.isArray(product.meta)) {
+      product.meta.forEach(m => {
+        if (/gold|silver|platinum|rose|alloy|brass/i.test(m)) candidateValues.push(m);
+      });
+    }
+  }
+
+  if (key === 'stone') {
+    if (product.stoneDetails) candidateValues.push(product.stoneDetails);
+    if (Array.isArray(product.meta)) {
+      product.meta.forEach(m => {
+        if (/stone|crystal|diamond|pearl|emerald|ruby|polki|kundan|zircon|ad/i.test(m)) candidateValues.push(m);
+      });
+    }
+  }
+
+  if (key === 'gender') {
+    if (product.gender) candidateValues.push(product.gender);
+    if (Array.isArray(product.meta)) candidateValues.push(...product.meta);
+  }
+
   // Handle 'None' check
   if (isNoneQuery) {
-    const combinedStr = candidateValues
+    const vals = candidateValues
       .flat()
       .map(v => String(v || '').trim().toLowerCase())
-      .filter(Boolean)
-      .join(' ');
-    return !combinedStr || combinedStr === '—' || combinedStr === '-' || combinedStr === 'none' || combinedStr === 'n/a' || combinedStr === 'na';
+      .filter(Boolean);
+    if (vals.length === 0) return true;
+    return vals.every(v => v === 'none' || v === 'na' || v === 'n/a' || v === '-' || v === '—' || v === 'no');
   }
 
   // Gender strict equality (prevents 'women' matching 'men')
   if (key === 'gender') {
     for (const val of candidateValues.flat()) {
       if (!val) continue;
-      const valNorm = normalizeAlphaNum(val);
-      if (valNorm === normSel) return true;
+      const valStr = String(val).toLowerCase();
+      const valNorm = normalizeAlphaNum(valStr);
+      if (normSel === 'women' && (valNorm === 'women' || valStr.includes('women') || valStr.includes('girl'))) return true;
+      if (normSel === 'men' && (valNorm === 'men' || (/\bmen\b|\bman\b|\bboys?\b/.test(valStr)))) return true;
       if (valNorm === 'unisex' || valNorm === 'both' || valNorm === 'all') return true;
+    }
+    return false;
+  }
+
+  // Semantic category matching
+  if (key === 'category') {
+    if (normSel === 'men') {
+      if (product.gender === 'men' || product.gender === 'unisex') return true;
+      if (Array.isArray(product.tags) && product.tags.some(t => /\bmen\b|\bman\b|\bunisex\b/i.test(t))) return true;
+      return false;
+    }
+    if (normSel === 'women') {
+      if (product.gender === 'women' || product.gender === 'unisex' || !product.gender) return true;
+      if (Array.isArray(product.tags) && product.tags.some(t => /\bwomen\b|\bgirls?\b|\bunisex\b/i.test(t))) return true;
+      return false;
+    }
+
+    const directCat = normalizeAlphaNum(product.category || '');
+    if (directCat === normSel) return true;
+    if (product.subcategory && normalizeAlphaNum(product.subcategory) === normSel) return true;
+    if (Array.isArray(product.tags) && product.tags.some(t => normalizeAlphaNum(t) === normSel)) return true;
+
+    const combinedProductInfo = [
+      product.name,
+      product.shortDesc,
+      ...(Array.isArray(product.meta) ? product.meta : []),
+      ...candidateValues
+    ].join(' ').toLowerCase();
+
+    if (normSel === 'wedding') {
+      if (/\b(wedding|bridal|bride|reception|sangeet|mehendi|festiv\w*|traditional|heritage|rajwada)\b/i.test(combinedProductInfo)) {
+        return true;
+      }
+    } else if (normSel === 'dailywear' || normSel === 'daily') {
+      if (/\b(daily|minimal|everyday|casual|office|lightweight|daytime|stud|studs|delicate)\b/i.test(combinedProductInfo)) {
+        return true;
+      }
+    } else if (normSel === 'diamond') {
+      if (/\b(diamond|diamonds|\bad\b|american diamond|zircon|crystal|crystals|cz)\b/i.test(combinedProductInfo)) {
+        return true;
+      }
+    } else if (normSel === 'gold') {
+      if (/\b(gold|yellow gold|antique gold|gold finish|gold plated|gold-tone)\b/i.test(combinedProductInfo)) {
+        return true;
+      }
+    }
+  }
+
+  // Semantic metal matching
+  if (key === 'metal') {
+    const combinedMetalInfo = candidateValues.flat().join(' ').toLowerCase() + ' ' + (product.name || '').toLowerCase();
+    if (normSel === 'yellowgold' || normSel === 'gold') {
+      if (/\b(yellow gold|antique gold|luxury gold|premium gold|gold finish|gold plated|gold-tone|gold tone|gold-toned|gold)\b/i.test(combinedMetalInfo)) {
+        return true;
+      }
+    } else if (normSel === 'rosegold') {
+      if (/\b(rose gold|pink gold)\b/i.test(combinedMetalInfo)) return true;
+    } else if (normSel === 'whitegold' || normSel === 'silver') {
+      if (/\b(white gold|silver|rhodium)\b/i.test(combinedMetalInfo)) return true;
+    } else if (normSel === 'platinum') {
+      if (/\b(platinum|rhodium)\b/i.test(combinedMetalInfo)) return true;
+    }
+  }
+
+  // Semantic stone matching
+  if (key === 'stone') {
+    const combinedStoneInfo = candidateValues.flat().join(' ').toLowerCase() + ' ' + (product.name || '').toLowerCase();
+    if (normSel === 'diamond') {
+      if (/\b(diamond|diamonds|\bad\b|american diamond|crystal|crystals|zircon|cz)\b/i.test(combinedStoneInfo)) return true;
+    } else if (normSel === 'polki') {
+      if (/\b(polki|kundan)\b/i.test(combinedStoneInfo)) return true;
+    } else if (normSel === 'emerald') {
+      if (/\b(emerald|green stone|green crystal)\b/i.test(combinedStoneInfo)) return true;
+    } else if (normSel === 'pearl' || normSel === 'pearls') {
+      if (/\bpearls?\b/i.test(combinedStoneInfo)) return true;
+    } else if (normSel === 'ruby') {
+      if (/\bruby\b/i.test(combinedStoneInfo)) return true;
+    } else if (normSel === 'onyx') {
+      if (/\b(onyx|black crystal|black stone)\b/i.test(combinedStoneInfo)) return true;
+    }
+  }
+
+  // Semantic collection matching
+  if (key === 'collection') {
+    if (normSel === 'bestsellers' || normSel === 'bestseller') {
+      if (product.bestseller || product.isBestseller || (product.badge || '').toLowerCase().includes('bestseller')) return true;
+    } else if (normSel === 'newarrival' || normSel === 'newarrivals' || normSel === 'new') {
+      if (product.newArrival || product.isNew || (product.badge || '').toLowerCase().includes('new')) return true;
+    } else if (normSel === 'editorschoice' || normSel === 'featured') {
+      if (product.featured || (product.badge || '').toLowerCase().includes('editor') || (product.badge || '').toLowerCase().includes('pick')) return true;
+    } else if (normSel === 'trending') {
+      if (product.collection === 'trending' || (product.badge || '').toLowerCase().includes('trend')) return true;
+    } else if (normSel === 'royalheritage') {
+      const text = (product.name + ' ' + (product.meta || []).join(' ')).toLowerCase();
+      if (/royal heritage|rajwada/i.test(text)) return true;
+    } else if (normSel === 'bridalsets' || normSel === 'bridal') {
+      const text = (product.name + ' ' + (product.meta || []).join(' ')).toLowerCase();
+      if (/bridal|wedding set/i.test(text)) return true;
+    } else if (normSel === 'sangeet') {
+      const text = (product.name + ' ' + (product.meta || []).join(' ')).toLowerCase();
+      if (/sangeet/i.test(text)) return true;
+    }
+  }
+
+  // Type matching (from navbar links e.g. type=chain, type=ring)
+  if (key === 'type') {
+    const combinedTypeInfo = [
+      product.name,
+      ...candidateValues
+    ].join(' ').toLowerCase();
+
+    if (normSel === 'chain') {
+      return /\b(chain|chains|link chain|gold-tone chain|necklace)\b/i.test(combinedTypeInfo);
+    } else if (normSel === 'ring') {
+      return /\brings?\b/i.test(product.name) || specs.some(s => s.label === 'Ring Type' || /\bring type\b/i.test(s.label));
+    } else if (normSel === 'earring' || normSel === 'earrings') {
+      return /\b(earring|earrings|chandbali|jhumka|stud|studs)\b/i.test(combinedTypeInfo);
+    } else if (normSel === 'bracelet') {
+      return /\b(bracelet|bracelets|bangle|bangles|kada|cuff)\b/i.test(combinedTypeInfo);
     }
     return false;
   }
@@ -142,13 +325,22 @@ function matchesFilterValue(product, key, selectedVal, group) {
     if (candNorm + 's' === normSel || normSel + 's' === candNorm) return true;
 
     // Substring containment for multi-word attributes
-    if (candNorm.includes(normSel) || (normSel.length >= 4 && normSel.includes(candNorm))) return true;
+    if (normSel !== 'men' && (candNorm.includes(normSel) || (normSel.length >= 4 && candNorm.includes(normSel)))) return true;
 
     // Word token matching
     const candTokens = normalizeTokens(candStr);
     const selTokens = normalizeTokens(selValLower);
-    if (selTokens.length > 0 && selTokens.every(st => candTokens.includes(st))) return true;
-    if (candTokens.includes(normSel)) return true;
+    if (selTokens.length > 0 && selTokens.every(st => candTokens.includes(st))) {
+      if (normSel === 'men' && (candTokens.includes('women') || candTokens.includes('woman') || candTokens.includes('girls') || candTokens.includes('girl'))) {
+        // do not match women as men
+      } else {
+        return true;
+      }
+    }
+    if (normSel !== 'men' && candTokens.includes(normSel)) return true;
+    if (normSel === 'men' && candTokens.some(t => t === 'men' || t === 'man' || t === 'boys' || t === 'boy')) {
+      if (!candTokens.includes('women') && !candTokens.includes('woman')) return true;
+    }
   }
 
   // Fallback check against product tags
@@ -162,6 +354,18 @@ function matchesFilterValue(product, key, selectedVal, group) {
   }
 
   return false;
+}
+
+function matchesFilterValue(product, key, selectedVal, group) {
+  if (!selectedVal) return true;
+  if (typeof selectedVal === 'string' && selectedVal.includes(',')) {
+    const parts = selectedVal.split(',').map(s => s.trim()).filter(Boolean);
+    return parts.some(part => matchesSingleFilter(product, key, part, group));
+  }
+  if (Array.isArray(selectedVal)) {
+    return selectedVal.some(part => matchesSingleFilter(product, key, part, group));
+  }
+  return matchesSingleFilter(product, key, selectedVal, group);
 }
 
 function ShopInner({ initialProducts, initialFilterGroups = [] }) {
@@ -370,6 +574,8 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
     }
   };
 
+  const [userChangedPrice, setUserChangedPrice] = useState(false);
+
   // Sync activeParams with dynamic Range and Sort states
   useEffect(() => {
     const sortParam = activeParams.sort;
@@ -432,21 +638,82 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
     });
   };
 
+  // Toggle filter option helper - supports multi-select or single select
+  const toggleParam = (key, val) => {
+    setActiveParams(prev => {
+      const next = { ...prev };
+      const current = next[key];
+      if (!current) {
+        next[key] = val;
+      } else {
+        const parts = current.split(',').map(s => s.trim()).filter(Boolean);
+        const exists = parts.some(p => isOptionSelected(p, val, val));
+        if (exists) {
+          const remaining = parts.filter(p => !isOptionSelected(p, val, val));
+          if (remaining.length > 0) {
+            next[key] = remaining.join(',');
+          } else {
+            delete next[key];
+          }
+        } else {
+          next[key] = [...parts, val].join(',');
+        }
+      }
+      updateUrl(next);
+      return next;
+    });
+  };
+
+  // Remove specific active filter pill
+  const removeFilterParam = (key, valToRemove) => {
+    setActiveParams(prev => {
+      const next = { ...prev };
+      if (!valToRemove || key === 'min' || key === 'max' || key === 'price' || key === 'search' || key === 'q') {
+        delete next[key];
+        if (key === 'price' || key === 'min' || key === 'max') {
+          delete next.min;
+          delete next.max;
+          delete next.price;
+          setUserChangedPrice(false);
+          const pg = (activeFilterGroups || []).find(g => (g.type === 'price' || g.type === 'range' || g.key === 'price') && g.enabled !== false);
+          const minB = pg?.priceConfig?.min != null ? Number(pg.priceConfig.min) : 0;
+          const maxB = pg?.priceConfig?.max != null ? Number(pg.priceConfig.max) : (all.length ? Math.max(...all.map(p => p.price || 0)) : 1000000);
+          setRange([minB, maxB]);
+        }
+      } else {
+        const current = next[key];
+        if (current) {
+          const parts = current.split(',').map(s => s.trim()).filter(Boolean);
+          const remaining = parts.filter(p => !isOptionSelected(p, valToRemove, valToRemove));
+          if (remaining.length > 0) {
+            next[key] = remaining.join(',');
+          } else {
+            delete next[key];
+          }
+        }
+      }
+      updateUrl(next);
+      return next;
+    });
+  };
+
   // Clear All Filters helper - runs fully client side with replaceState
   const clearAll = () => {
     setActiveParams({});
+    setUserChangedPrice(false);
     if (typeof window !== 'undefined') {
       window.history.replaceState(null, '', '/shop');
     }
     const pg = (activeFilterGroups || []).find(g => (g.type === 'price' || g.type === 'range' || g.key === 'price') && g.enabled !== false);
-    const minB = pg?.priceConfig?.min != null ? Number(pg.priceConfig.min) : (pg?.min != null ? Number(pg.min) : 0);
-    const maxB = pg?.priceConfig?.max != null ? Number(pg.priceConfig.max) : (pg?.max != null ? Number(pg.max) : (all.length ? Math.max(...all.map(p => p.price || 0)) : 1000000));
+    const minB = pg?.priceConfig?.min != null ? Number(pg.priceConfig.min) : 0;
+    const maxB = pg?.priceConfig?.max != null ? Number(pg.priceConfig.max) : (all.length ? Math.max(...all.map(p => p.price || 0)) : 1000000);
     setRange([minB, maxB]);
     setSort('newest');
   };
 
   // Debounced URL sync when user slides price range (250ms debounce)
   useEffect(() => {
+    if (!userChangedPrice) return;
     const timer = setTimeout(() => {
       const pg = (activeFilterGroups || []).find(g => (g.type === 'price' || g.type === 'range' || g.key === 'price') && g.enabled !== false);
       const minBound = pg?.priceConfig?.min != null ? Number(pg.priceConfig.min) : (pg?.min != null ? Number(pg.min) : 0);
@@ -463,7 +730,7 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
       }
     }, 250);
     return () => clearTimeout(timer);
-  }, [range, activeFilterGroups, all]);
+  }, [range, userChangedPrice, activeFilterGroups, all]);
 
   // Fully dynamic product filtering engine
   const list = useMemo(() => {
@@ -548,24 +815,31 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
       return `Search: "${sQuery}"`;
     }
 
-    for (const g of activeFilterGroups || []) {
-      if (g.enabled === false) continue;
-      const val = activeParams[g.key];
-      if (val) {
-        const matchedOpt = (g.options || []).find(o => isOptionSelected(val, o.value, o.name));
-        const displayName = matchedOpt?.name || val.replace(/[-_]/g, ' ');
+    const titleParts = [];
+    const priorityKeys = ['gender', 'collection', 'category', 'metal', 'stone', 'type'];
+    for (const key of priorityKeys) {
+      const val = activeParams[key];
+      if (!val) continue;
 
-        if (g.key === 'collection') {
-          return displayName;
+      const group = (activeFilterGroups || []).find(g => g.key === key);
+      const parts = String(val).split(',').map(s => s.trim()).filter(Boolean);
+      for (const part of parts) {
+        const opt = group?.options?.find(o => isOptionSelected(part, o.value, o.name));
+        const name = opt?.name || part.replace(/[-_]/g, ' ');
+        if (key === 'gender') {
+          titleParts.push(`${name}'s`);
+        } else {
+          titleParts.push(name);
         }
-        if (g.key === 'gender') {
-          return `${displayName}'s Jewellery`;
-        }
-        if (g.key === 'category') {
-          return `${displayName} Jewellery`;
-        }
-        return `${displayName} ${g.name || 'Jewellery'}`;
       }
+    }
+
+    if (titleParts.length > 0) {
+      if (titleParts.length === 1 && activeParams.collection && !activeParams.gender && !activeParams.category) {
+        return titleParts[0];
+      }
+      const joined = titleParts.join(' ');
+      return joined.toLowerCase().includes('jewellery') ? joined : `${joined} Jewellery`;
     }
 
     for (const [key, val] of Object.entries(activeParams)) {
@@ -577,6 +851,62 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
 
     return 'All Jewellery';
   }, [activeFilterGroups, activeParams]);
+
+  // Active Filter Pills computation
+  const activePills = useMemo(() => {
+    const pills = [];
+    const reserved = new Set(['sort', 'page']);
+
+    // Price pill
+    const pg = (activeFilterGroups || []).find(g => (g.type === 'price' || g.type === 'range' || g.key === 'price') && g.enabled !== false);
+    const minB = pg?.priceConfig?.min != null ? Number(pg.priceConfig.min) : 0;
+    const maxB = pg?.priceConfig?.max != null ? Number(pg.priceConfig.max) : (all.length ? Math.max(...all.map(p => p.price || 0)) : 1000000);
+    const hasPriceParam = activeParams.min != null || activeParams.max != null || activeParams.price != null;
+    const isPriceDifferent = (range[0] > minB) || (range[1] < maxB);
+
+    if (hasPriceParam || isPriceDifferent) {
+      pills.push({
+        key: 'price',
+        val: 'price',
+        label: `₹${range[0].toLocaleString('en-IN')} – ₹${range[1].toLocaleString('en-IN')}`,
+        groupName: 'Price'
+      });
+    }
+
+    // Search pill
+    if (activeParams.search || activeParams.q) {
+      const q = activeParams.search || activeParams.q;
+      pills.push({
+        key: activeParams.search ? 'search' : 'q',
+        val: q,
+        label: `"${q}"`,
+        groupName: 'Search'
+      });
+    }
+
+    // Group / Option pills
+    for (const [key, rawVal] of Object.entries(activeParams)) {
+      if (reserved.has(key) || key === 'min' || key === 'max' || key === 'price' || key === 'search' || key === 'q') continue;
+      if (!rawVal) continue;
+
+      const group = (activeFilterGroups || []).find(g => g.key === key);
+      const groupName = group?.name || key.charAt(0).toUpperCase() + key.slice(1);
+      const parts = String(rawVal).split(',').map(s => s.trim()).filter(Boolean);
+
+      for (const part of parts) {
+        const opt = group?.options?.find(o => isOptionSelected(part, o.value, o.name));
+        const optLabel = opt?.name || part.replace(/[-_]/g, ' ');
+        pills.push({
+          key,
+          val: part,
+          label: optLabel,
+          groupName
+        });
+      }
+    }
+
+    return pills;
+  }, [activeParams, activeFilterGroups, range, all]);
 
   // Filters UI Component - 100% Dynamic rendering based on backend state
   const Filters = ({ animate = false }) => {
@@ -648,6 +978,7 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
                     step={stepVal}
                     value={currentMax}
                     onChange={e => {
+                      setUserChangedPrice(true);
                       const newMax = +e.target.value;
                       setRange([range[0], newMax]);
                     }}
@@ -662,6 +993,7 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
                           <li key={opt.id || opt.value}>
                             <button
                               onClick={() => {
+                                setUserChangedPrice(false);
                                 const newSel = isSelected ? '' : opt.value;
                                 setParam(group.key, newSel);
                                 if (newSel && newSel.includes('-')) {
@@ -708,7 +1040,7 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
                     return (
                       <li key={opt.id || opt.value}>
                         <button
-                          onClick={() => setParam(group.key, isSelected ? '' : opt.value)}
+                          onClick={() => toggleParam(group.key, opt.value)}
                           className={`text-sm capitalize transition-colors text-left flex items-center justify-between w-full group ${isSelected ? 'text-[#9C6B30] font-semibold' : 'text-neutral-600 hover:text-[#9C6B30]'
                             }`}
                         >
@@ -863,6 +1195,37 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
                 </div>
               </div>
             </div>
+
+            {/* Active Filter Pills Bar */}
+            {activePills.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 mb-6 p-3 bg-[#FAF6EF]/60 rounded-lg border border-[#E8E8E8]/70">
+                <span className="text-[11px] tracking-wider uppercase text-neutral-500 font-medium mr-1">
+                  Active Filters ({activePills.length}):
+                </span>
+                {activePills.map((pill, idx) => (
+                  <span
+                    key={`${pill.key}-${pill.val}-${idx}`}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-white border border-[#9C6B30]/30 text-[#1A1A1A] shadow-xs group"
+                  >
+                    <span className="text-neutral-500 text-[11px] font-medium">{pill.groupName}:</span>
+                    <span className="font-semibold text-[#9C6B30] capitalize">{pill.label}</span>
+                    <button
+                      onClick={() => removeFilterParam(pill.key, pill.val)}
+                      className="hover:text-red-600 text-neutral-400 p-0.5 ml-0.5 cursor-pointer rounded-full transition-colors"
+                      aria-label={`Remove filter ${pill.label}`}
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+                <button
+                  onClick={clearAll}
+                  className="text-[11px] tracking-wider uppercase text-[#9C6B30] hover:underline font-semibold ml-auto cursor-pointer"
+                >
+                  Clear all
+                </button>
+              </div>
+            )}
 
             {/* Product Cards Grid */}
             {loading && all.length === 0 ? (

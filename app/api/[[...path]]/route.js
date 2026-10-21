@@ -1421,7 +1421,9 @@ async function handleRoute(request, { params }) {
         id: 1, slug: 1, name: 1, sku: 1, price: 1, mrp: 1, category: 1, subcategory: 1,
         collection: 1, gender: 1, metal: 1, stone: 1, images: 1, image: 1, badge: 1,
         stock: 1, rating: 1, reviews: 1, featured: 1, bestseller: 1, newArrival: 1,
-        specifications: 1, productBenefits: 1, createdAt: 1
+        specifications: 1, productBenefits: 1, createdAt: 1,
+        meta: 1, description: 1, shortDesc: 1, tags: 1, isBestseller: 1, isNew: 1,
+        purity: 1, weight: 1, size: 1
       };
 
       const [list, total] = await Promise.all([
