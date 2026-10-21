@@ -38,16 +38,32 @@ def run_customer_return_tests():
         "phone": "+919876543299"
     })
     assert r.status_code == 200, f"Customer registration failed: {r.text}"
-    user = r.json()['user']
+    reg_json = r.json()
+    if reg_json.get('requiresVerification'):
+        from pymongo import MongoClient
+        direct_uri = "mongodb://akashsriv1984_db_user:2M5Edv773XLUmT15@ac-htqrxv1-shard-00-00.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-01.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-02.7szyylz.mongodb.net:27017/userPortal?ssl=true&replicaSet=atlas-1c5jr9-shard-0&authSource=admin&retryWrites=true&w=majority"
+        c = MongoClient(direct_uri, serverSelectionTimeoutMS=8000)
+        db_reg = c['userPortal']
+        ver_doc = db_reg.email_verifications.find_one({"email": cust_email.lower(), "used": False})
+        assert ver_doc is not None, "Verification code not found in DB"
+        r_ver = cust_sess.post(f"{BASE_URL}/auth/verify-registration", json={"email": cust_email, "code": ver_doc['code']})
+        assert r_ver.status_code == 200
+        user = r_ver.json()['user']
+    else:
+        user = reg_json['user']
     print(f"[OK] Registered Customer: {user['name']} ({cust_email})")
 
     # 3. Fetch products to purchase
-    r = requests.get(f"{BASE_URL}/products?limit=3")
+    r = requests.get(f"{BASE_URL}/products?limit=50")
     assert r.status_code == 200
     products = r.json()['products']
-    assert len(products) >= 2
-    prod1 = products[0]
-    prod2 = products[1]
+    in_stock = [p for p in products if p.get('stock', 0) >= 2]
+    if len(in_stock) < 2:
+        in_stock = products[:2]
+        c = MongoClient(direct_uri, serverSelectionTimeoutMS=8000)
+        c['userPortal'].products.update_many({"id": {"$in": [p['id'] for p in in_stock]}}, {"$set": {"stock": 100}})
+    prod1 = in_stock[0]
+    prod2 = in_stock[1]
     print(f"[OK] Selected Product 1: {prod1['name']} (Price: INR {prod1['price']})")
     print(f"[OK] Selected Product 2: {prod2['name']} (Price: INR {prod2['price']})")
 
@@ -140,20 +156,20 @@ def run_customer_return_tests():
     # Now we simulate an expired 30-minute window by updating deliveredAt directly via MongoDB or testing boundary
     try:
         import os
-        from pymongo import MongoClient
-        mongo_uri = "mongodb://localhost:27017/maneet-jwell"
-        # read MONGO_URI from .env if possible
+        direct_uri = "mongodb://akashsriv1984_db_user:2M5Edv773XLUmT15@ac-htqrxv1-shard-00-00.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-01.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-02.7szyylz.mongodb.net:27017/userPortal?ssl=true&replicaSet=atlas-1c5jr9-shard-0&authSource=admin&retryWrites=true&w=majority"
+        mongo_uri = direct_uri
         try:
             with open(".env", "r") as f:
                 for line in f:
                     if line.startswith("MONGODB_URI="):
-                        mongo_uri = line.strip().split("=", 1)[1].strip('"').strip("'")
+                        env_uri = line.strip().split("=", 1)[1].strip('"').strip("'")
+                        if "mongodb+srv://" not in env_uri:
+                            mongo_uri = env_uri
         except Exception:
             pass
 
-        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=2000)
-        db_name = mongo_uri.split('/')[-1].split('?')[0] or 'maneet-jwell'
-        db = client[db_name]
+        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=8000)
+        db = client['userPortal']
         expired_time = datetime.utcnow() - timedelta(minutes=40)
         db.orders.update_one({"id": order2['id']}, {"$set": {"deliveredAt": expired_time}})
         print(f"[OK] Manually set Order 2 deliveredAt to {expired_time.isoformat()} (40 minutes ago)")

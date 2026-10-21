@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { formatINR } from '@/lib/products';
-import { Loader2, Search, X, CheckCircle2, XCircle, RotateCcw, AlertTriangle, ShieldCheck, DollarSign, PackageCheck, History, Eye, EyeOff, Copy, ArrowRight, Camera, Image as ImageIcon, ExternalLink, CreditCard, Smartphone, Building2 } from 'lucide-react';
+import { Loader2, Search, X, CheckCircle2, XCircle, RotateCcw, AlertTriangle, ShieldCheck, DollarSign, PackageCheck, History, Eye, EyeOff, Copy, ArrowRight, Camera, Image as ImageIcon, ExternalLink, CreditCard, Smartphone, Building2, Clock, Settings } from 'lucide-react';
 import { toast } from 'sonner';
 
 const STATUS_FILTERS = [
@@ -34,6 +34,12 @@ export default function AdminReturns() {
   const [loadingAudit, setLoadingAudit] = useState(false);
   const [showFullAccountNumber, setShowFullAccountNumber] = useState(false);
 
+  // Return Window Policy State
+  const [returnPolicy, setReturnPolicy] = useState({ enabled: true, duration: 30, unit: 'minutes' });
+  const [showPolicyModal, setShowPolicyModal] = useState(false);
+  const [policyForm, setPolicyForm] = useState({ enabled: true, duration: 30, unit: 'minutes' });
+  const [savingPolicy, setSavingPolicy] = useState(false);
+
   // Sub-modal states
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -49,10 +55,20 @@ export default function AdminReturns() {
     setLoading(true);
     try {
       const url = `/api/admin/returns?status=${encodeURIComponent(statusFilter)}&search=${encodeURIComponent(search)}`;
-      const r = await fetch(url, { credentials: 'include', cache: 'no-store' });
+      const [r, policyRes] = await Promise.all([
+        fetch(url, { credentials: 'include', cache: 'no-store' }),
+        fetch('/api/admin/returns/policy', { credentials: 'include', cache: 'no-store' }).catch(() => null)
+      ]);
       const d = await r.json();
       const returns = d.returns || [];
       setList(returns);
+
+      if (policyRes && policyRes.ok) {
+        const pd = await policyRes.json();
+        if (pd.returnPolicy) {
+          setReturnPolicy(pd.returnPolicy);
+        }
+      }
 
       if (activeReturn) {
         const cur = returns.find(r => r.id === activeReturn.id);
@@ -63,6 +79,36 @@ export default function AdminReturns() {
       toast.error('Failed to load return requests');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSavePolicy = async () => {
+    const dur = Number(policyForm.duration);
+    if (isNaN(dur) || dur < 1) {
+      toast.error('Return window duration must be at least 1.');
+      return;
+    }
+    setSavingPolicy(true);
+    try {
+      const r = await fetch('/api/admin/returns/policy', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(policyForm)
+      });
+      const d = await r.json();
+      if (r.ok && d.returnPolicy) {
+        setReturnPolicy(d.returnPolicy);
+        setShowPolicyModal(false);
+        toast.success('Return policy window updated successfully.');
+      } else {
+        toast.error(d.error || 'Failed to update return policy.');
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Network error updating return policy.');
+    } finally {
+      setSavingPolicy(false);
     }
   };
 
@@ -270,6 +316,27 @@ export default function AdminReturns() {
         <div>
           <h1 className="font-display text-2xl xs:text-3xl sm:text-4xl text-[#1A1A1A]">Return Requests</h1>
           <div className="gold-line w-12 mt-2" />
+        </div>
+
+        {/* Policy Window Status & Quick Configuration */}
+        <div className="flex items-center gap-2.5 bg-white border border-[#EAE3D6] px-3.5 py-2 rounded-xl text-xs shadow-2xs">
+          <Clock size={16} className="text-[#9C6B30] shrink-0" />
+          <div>
+            <span className="text-neutral-400 text-[10px] uppercase tracking-wider block font-semibold leading-tight">Store Return Window</span>
+            <span className="font-semibold text-neutral-800">
+              {returnPolicy.enabled !== false ? `${returnPolicy.duration} ${returnPolicy.unit}` : 'Disabled'}
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              setPolicyForm({ ...returnPolicy });
+              setShowPolicyModal(true);
+            }}
+            className="ml-2 px-3 py-1.5 text-xs bg-[#FAF6EF] text-[#9C6B30] border border-[#9C6B30]/30 rounded-lg hover:bg-[#9C6B30] hover:text-white transition font-medium flex items-center gap-1.5 cursor-pointer"
+          >
+            <Settings size={12} />
+            <span>Configure</span>
+          </button>
         </div>
       </div>
 
@@ -924,6 +991,133 @@ export default function AdminReturns() {
               </button>
               <button disabled={submitting} onClick={handleInventoryClassification} className="px-5 py-2 bg-[#0F0F10] text-[#D4AF37] hover:bg-black text-xs font-semibold rounded-md cursor-pointer flex items-center gap-2">
                 {submitting && <Loader2 className="animate-spin" size={14} />} Save Classification
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dialog for Return Policy Window Configuration */}
+      {showPolicyModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs z-50 flex items-center justify-center p-4" onClick={() => !savingPolicy && setShowPolicyModal(false)}>
+          <div className="bg-white text-[#1A1A1A] rounded-xl max-w-lg w-full p-6 space-y-5 shadow-2xl border border-neutral-200" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+              <div>
+                <h3 className="font-display text-lg font-bold text-neutral-900 flex items-center gap-2">
+                  <RotateCcw size={18} className="text-[#9C6B30]" />
+                  Order Return Window &amp; Policy
+                </h3>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  Control return eligibility duration after an order is marked delivered.
+                </p>
+              </div>
+              <button disabled={savingPolicy} onClick={() => setShowPolicyModal(false)} className="text-neutral-400 hover:text-neutral-700 p-1 cursor-pointer">
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Toggle */}
+            <div className="flex items-center justify-between p-3.5 bg-neutral-50 rounded-xl border border-neutral-200">
+              <div>
+                <div className="text-xs font-semibold text-neutral-800">Accept Customer Returns</div>
+                <div className="text-[11px] text-neutral-500">Allow customers to submit return requests for delivered orders</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={policyForm.enabled !== false}
+                onChange={e => setPolicyForm(prev => ({ ...prev, enabled: e.target.checked }))}
+                className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer"
+              />
+            </div>
+
+            {/* Presets */}
+            <div>
+              <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider block mb-1.5">
+                Quick Presets
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: '30 Minutes', duration: 30, unit: 'minutes' },
+                  { label: '2 Hours', duration: 2, unit: 'hours' },
+                  { label: '24 Hours', duration: 24, unit: 'hours' },
+                  { label: '7 Days', duration: 7, unit: 'days' },
+                  { label: '15 Days', duration: 15, unit: 'days' },
+                  { label: '30 Days', duration: 30, unit: 'days' },
+                ].map(p => {
+                  const sel = Number(policyForm.duration) === p.duration && policyForm.unit === p.unit;
+                  return (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => setPolicyForm(prev => ({ ...prev, duration: p.duration, unit: p.unit }))}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border text-center transition cursor-pointer ${
+                        sel
+                          ? 'border-[#9C6B30] bg-[#FAF6EF] text-[#9C6B30] font-semibold ring-1 ring-[#9C6B30]/30'
+                          : 'border-neutral-200 hover:bg-neutral-50 text-neutral-700'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Custom Inputs */}
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-1">
+                  Duration Value *
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={policyForm.duration}
+                  onChange={e => {
+                    const val = e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value) || 1);
+                    setPolicyForm(prev => ({ ...prev, duration: val }));
+                  }}
+                  className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-xs focus:outline-none focus:border-[#9C6B30]"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-1">
+                  Time Unit *
+                </label>
+                <select
+                  value={policyForm.unit}
+                  onChange={e => setPolicyForm(prev => ({ ...prev, unit: e.target.value }))}
+                  className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-xs focus:outline-none focus:border-[#9C6B30]"
+                >
+                  <option value="minutes">Minutes</option>
+                  <option value="hours">Hours</option>
+                  <option value="days">Days</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Preview Box */}
+            <div className="p-3 bg-amber-50/60 border border-amber-200/80 rounded-lg text-xs text-neutral-700 flex items-start gap-2">
+              <Clock size={14} className="text-[#9C6B30] shrink-0 mt-0.5" />
+              <div>
+                {policyForm.enabled !== false ? (
+                  <span>
+                    Orders can be returned strictly within <strong className="text-amber-900">{policyForm.duration || 30} {policyForm.unit || 'minutes'}</strong> of delivery. The order tracking page displays a live countdown timer.
+                  </span>
+                ) : (
+                  <span className="text-red-700 font-medium">Customer return submissions are disabled.</span>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex justify-end gap-3 pt-2">
+              <button disabled={savingPolicy} onClick={() => setShowPolicyModal(false)} className="px-4 py-2 border border-neutral-300 text-xs rounded-md hover:bg-neutral-50 cursor-pointer">
+                Cancel
+              </button>
+              <button disabled={savingPolicy} onClick={handleSavePolicy} className="px-5 py-2 bg-[#0F0F10] text-[#D4AF37] hover:bg-black text-xs font-semibold rounded-md cursor-pointer flex items-center gap-2">
+                {savingPolicy && <Loader2 className="animate-spin" size={14} />} Save Policy
               </button>
             </div>
           </div>

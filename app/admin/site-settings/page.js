@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Globe, Upload, Save, Loader2, Image as ImageIcon, Link as LinkIcon, Check, Eye, Truck, Star, CreditCard, ArrowRight, RotateCcw, ZoomIn, Columns, Maximize2, Crosshair, Sparkles, CheckCircle2, Sliders } from 'lucide-react';
+import { Globe, Upload, Save, Loader2, Image as ImageIcon, Link as LinkIcon, Check, Eye, Truck, Star, CreditCard, ArrowRight, RotateCcw, ZoomIn, Columns, Maximize2, Crosshair, Sparkles, CheckCircle2, Sliders, Clock } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function AdminSiteSettings() {
@@ -27,6 +27,11 @@ export default function AdminSiteSettings() {
       freeShippingEnabled: true,
       freeShippingThreshold: 2000,
       standardShippingCharge: 500
+    },
+    returnWindow: {
+      enabled: true,
+      duration: 30,
+      unit: 'minutes'
     },
     zoomSettings: {
       enabled: true,
@@ -63,6 +68,11 @@ export default function AdminSiteSettings() {
             freeShippingEnabled: d.shipping?.freeShippingEnabled ?? true,
             freeShippingThreshold: d.shipping?.freeShippingThreshold ?? 2000,
             standardShippingCharge: d.shipping?.standardShippingCharge ?? 500
+          },
+          returnWindow: {
+            enabled: d.returnWindow?.enabled !== false,
+            duration: Number(d.returnWindow?.duration ?? d.returnWindow?.value) || 30,
+            unit: d.returnWindow?.unit || 'minutes'
           },
           zoomSettings: {
             enabled: d.zoomSettings?.enabled !== false,
@@ -186,6 +196,10 @@ export default function AdminSiteSettings() {
       const std = Number(form.shipping.standardShippingCharge);
       if (isNaN(thresh) || thresh < 0) return toast.error('Free shipping threshold must be a non-negative number');
       if (isNaN(std) || std < 0) return toast.error('Standard shipping charge must be a non-negative number');
+    }
+    if (form.returnWindow) {
+      const dur = Number(form.returnWindow.duration);
+      if (isNaN(dur) || dur < 0) return toast.error('Return window duration must be a non-negative number');
     }
     setSaving(true);
     try {
@@ -480,6 +494,136 @@ export default function AdminSiteSettings() {
                 <p className="text-[11px] text-neutral-400 mt-1">
                   Applied when order subtotal is below threshold or free shipping is disabled.
                 </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Section: Order Return Window & Policy */}
+          <div id="return-policy" className="bg-white p-4 xs:p-6 rounded-xl border border-neutral-200 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-100 pb-3">
+              <div>
+                <h2 className="text-xs sm:text-sm font-bold text-neutral-800 uppercase tracking-wider flex items-center gap-2">
+                  <RotateCcw className="text-[#9C6B30]" size={17} />
+                  Order Return Window &amp; Policy
+                </h2>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  Control return eligibility duration after an order is delivered. Enforced both on the client countdown and the backend submission API.
+                </p>
+              </div>
+              <label className="flex items-center gap-3 cursor-pointer bg-neutral-50 px-3 py-1.5 rounded-lg border border-neutral-200 hover:border-[#9C6B30] transition shrink-0">
+                <span className={`text-xs font-semibold ${form.returnWindow?.enabled !== false ? 'text-emerald-700' : 'text-neutral-500'}`}>
+                  Returns: {form.returnWindow?.enabled !== false ? 'ENABLED' : 'DISABLED'}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={form.returnWindow?.enabled !== false}
+                  onChange={e => setForm(prev => ({
+                    ...prev,
+                    returnWindow: { ...prev.returnWindow, enabled: e.target.checked }
+                  }))}
+                  className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer"
+                />
+              </label>
+            </div>
+
+            {/* Presets */}
+            <div>
+              <label className="text-[11px] font-bold text-neutral-600 uppercase tracking-wider block mb-2">
+                Quick Policy Presets
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+                {[
+                  { label: '30 Minutes', duration: 30, unit: 'minutes' },
+                  { label: '2 Hours', duration: 2, unit: 'hours' },
+                  { label: '24 Hours', duration: 24, unit: 'hours' },
+                  { label: '7 Days', duration: 7, unit: 'days' },
+                  { label: '15 Days', duration: 15, unit: 'days' },
+                  { label: '30 Days', duration: 30, unit: 'days' },
+                ].map(preset => {
+                  const isSelected = Number(form.returnWindow?.duration) === preset.duration && form.returnWindow?.unit === preset.unit;
+                  return (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => setForm(prev => ({
+                        ...prev,
+                        returnWindow: { ...prev.returnWindow, duration: preset.duration, unit: preset.unit }
+                      }))}
+                      className={`px-3 py-2 rounded-lg text-xs font-semibold border transition text-center cursor-pointer ${
+                        isSelected
+                          ? 'border-[#9C6B30] bg-[#FAF6EF] text-[#9C6B30] ring-2 ring-[#9C6B30]/20'
+                          : 'border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Custom Duration & Unit Inputs */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[11px] font-bold text-neutral-600 uppercase tracking-wider mb-1.5">
+                  Return Window Duration *
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={form.returnWindow?.duration ?? 30}
+                  onChange={e => {
+                    const val = e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value) || 1);
+                    setForm(prev => ({
+                      ...prev,
+                      returnWindow: { ...prev.returnWindow, duration: val }
+                    }));
+                  }}
+                  className="w-full px-3.5 py-2.5 border border-neutral-200 rounded-lg text-sm bg-white focus:outline-none focus:border-[#9C6B30]"
+                  placeholder="e.g. 30"
+                />
+                <p className="text-[11px] text-neutral-400 mt-1">
+                  Numeric length of the return policy window.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-neutral-600 uppercase tracking-wider mb-1.5">
+                  Time Unit *
+                </label>
+                <select
+                  value={form.returnWindow?.unit || 'minutes'}
+                  onChange={e => setForm(prev => ({
+                    ...prev,
+                    returnWindow: { ...prev.returnWindow, unit: e.target.value }
+                  }))}
+                  className="w-full px-3.5 py-2.5 border border-neutral-200 rounded-lg text-sm bg-white focus:outline-none focus:border-[#9C6B30]"
+                >
+                  <option value="minutes">Minutes</option>
+                  <option value="hours">Hours</option>
+                  <option value="days">Days</option>
+                </select>
+                <p className="text-[11px] text-neutral-400 mt-1">
+                  Choose minutes, hours, or calendar days.
+                </p>
+              </div>
+            </div>
+
+            {/* Policy Preview Summary Card */}
+            <div className="p-3.5 bg-neutral-50 rounded-lg border border-neutral-200 text-xs flex items-start gap-2.5">
+              <Clock className="text-[#9C6B30] shrink-0 mt-0.5" size={15} />
+              <div className="text-neutral-600">
+                <span className="font-semibold text-neutral-900">Current Rule Preview: </span>
+                {form.returnWindow?.enabled !== false ? (
+                  <span>
+                    Delivered orders can be returned strictly within <strong className="text-[#9C6B30]">{form.returnWindow?.duration || 30} {form.returnWindow?.unit || 'minutes'}</strong> of delivery. The customer order page will show a live countdown timer and automatically lock returns once this window expires.
+                  </span>
+                ) : (
+                  <span className="text-red-600 font-semibold">
+                    Customer returns are currently disabled. Customers will not be able to submit return requests for any delivered orders.
+                  </span>
+                )}
               </div>
             </div>
           </div>

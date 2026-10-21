@@ -16,6 +16,7 @@ export default function AccountPage() {
   const [tab, setTab] = useState('profile');
   const [addresses, setAddresses] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [returnWindowConfig, setReturnWindowConfig] = useState({ enabled: true, duration: 30, unit: 'minutes' });
   const [returnsList, setReturnsList] = useState([]);
   const [returnsLoading, setReturnsLoading] = useState(false);
   const [reviewsList, setReviewsList] = useState([]);
@@ -66,7 +67,7 @@ export default function AccountPage() {
   }, [user]);
 
   async function loadAddresses() { const r = await authFetch('/api/addresses'); const d = await r.json(); if (r.ok) setAddresses(d.addresses || []); }
-  async function loadOrders() { const r = await authFetch('/api/orders'); const d = await r.json(); if (r.ok) setOrders(d.orders || []); }
+  async function loadOrders() { const r = await authFetch('/api/orders'); const d = await r.json(); if (r.ok) { setOrders(d.orders || []); if (d.returnWindow) setReturnWindowConfig(d.returnWindow); } }
   async function loadReturns() {
     setReturnsLoading(true);
     try {
@@ -763,7 +764,12 @@ export default function AccountPage() {
                 <div className="space-y-4">
                   {orders.map(o => {
                     const delivAt = o.deliveredAt ? new Date(o.deliveredAt).getTime() : null;
-                    const isEligibleReturn = !o.returnStatus && o.status === 'delivered' && delivAt && (Date.now() - delivAt <= 30 * 60 * 1000);
+                    const returnWindowEnabled = returnWindowConfig?.enabled !== false;
+                    const returnDuration = Number(returnWindowConfig?.duration ?? returnWindowConfig?.value) || 30;
+                    const returnUnit = (returnWindowConfig?.unit || 'minutes').toLowerCase();
+                    const returnWindowMs = returnUnit === 'days' ? returnDuration * 86400000 : (returnUnit === 'hours' ? returnDuration * 3600000 : returnDuration * 60000);
+                    const returnBadgeLabel = returnUnit === 'days' ? `${returnDuration}d` : (returnUnit === 'hours' ? `${returnDuration}h` : `${returnDuration}m`);
+                    const isEligibleReturn = returnWindowEnabled && !o.returnStatus && o.status === 'delivered' && delivAt && (Date.now() - delivAt <= returnWindowMs);
 
                     return (
                       <Link
@@ -803,7 +809,7 @@ export default function AccountPage() {
                               )}
                               {isEligibleReturn && (
                                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-[9px] sm:text-[10px] font-semibold tracking-wider uppercase rounded-full bg-amber-50 text-amber-900 border border-amber-300">
-                                  <Clock size={10} className="text-[#9C6B30]" /> Return Eligible (30m)
+                                  <Clock size={10} className="text-[#9C6B30]" /> Return Eligible ({returnBadgeLabel})
                                 </span>
                               )}
                               {o.status === 'delivered' && (

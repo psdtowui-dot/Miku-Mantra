@@ -186,6 +186,11 @@ const DEFAULT_SITE_SETTINGS = {
       enabled: true
     }
   },
+  returnWindow: {
+    enabled: true,
+    duration: 30,
+    unit: 'minutes'
+  },
   customerReviewsEnabled: true
 };
 
@@ -1620,6 +1625,10 @@ async function handleRoute(request, { params }) {
           ...DEFAULT_SITE_SETTINGS.shipping,
           ...((settings && settings.shipping) || {})
         },
+        returnWindow: {
+          ...DEFAULT_SITE_SETTINGS.returnWindow,
+          ...((settings && settings.returnWindow) || {})
+        },
         couponHelperText: settings?.couponHelperText !== undefined ? settings.couponHelperText : (DEFAULT_SITE_SETTINGS.couponHelperText || ''),
         paymentSettings: {
           razorpay: {
@@ -2998,7 +3007,12 @@ async function handleRoute(request, { params }) {
           ...(u.email ? [{ customerEmail: u.email }] : [])
         ]
       }).sort({ placedAt: -1 }).toArray();
-      return ok({ orders: list.map(clean) });
+      const siteDoc = await db.collection('site_settings').findOne({ id: 'default' });
+      const returnWindow = {
+        ...DEFAULT_SITE_SETTINGS.returnWindow,
+        ...((siteDoc && siteDoc.returnWindow) || {})
+      };
+      return ok({ orders: list.map(clean), returnWindow });
     }
     async function resolveInvoiceCompanyConfig(db) {
       const footerDoc = await db.collection('footer').findOne({ id: 'default' });
@@ -3321,11 +3335,16 @@ async function handleRoute(request, { params }) {
       const orderReviews = await db.collection('reviews').find({ orderId: o.id }).toArray();
       const siteDoc = await db.collection('site_settings').findOne({ id: 'default' });
       const customerReviewsEnabled = siteDoc?.customerReviewsEnabled ?? true;
+      const returnWindow = {
+        ...DEFAULT_SITE_SETTINGS.returnWindow,
+        ...((siteDoc && siteDoc.returnWindow) || {})
+      };
       return ok({
         order: clean(o),
         returnRequest: clientReturnDoc,
         reviews: orderReviews.map(clean),
-        customerReviewsEnabled
+        customerReviewsEnabled,
+        returnWindow
       });
     }
 
@@ -3366,12 +3385,35 @@ async function handleRoute(request, { params }) {
         return err('Order delivery timestamp is missing. Cannot request return.', 400);
       }
 
+      // Retrieve return window settings from backend
+      const siteDoc = await db.collection('site_settings').findOne({ id: 'default' });
+      const returnConfig = {
+        ...DEFAULT_SITE_SETTINGS.returnWindow,
+        ...((siteDoc && siteDoc.returnWindow) || {})
+      };
+
+      if (returnConfig.enabled === false) {
+        return err('Return requests are currently disabled by store policy.', 400);
+      }
+
+      const duration = Number(returnConfig.duration ?? returnConfig.value) || 30;
+      const unit = (returnConfig.unit || 'minutes').toLowerCase();
+      let maxReturnWindowMs = duration * 60 * 1000;
+      let windowLabel = `${duration} minute${duration === 1 ? '' : 's'}`;
+
+      if (unit === 'hours') {
+        maxReturnWindowMs = duration * 60 * 60 * 1000;
+        windowLabel = `${duration} hour${duration === 1 ? '' : 's'}`;
+      } else if (unit === 'days') {
+        maxReturnWindowMs = duration * 24 * 60 * 60 * 1000;
+        windowLabel = `${duration} day${duration === 1 ? '' : 's'}`;
+      }
+
       const now = new Date();
       const diffMs = now.getTime() - deliveredAtTime;
-      const MAX_RETURN_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
 
-      if (diffMs > MAX_RETURN_WINDOW_MS) {
-        return err('Return window expired. Return requests must be submitted within 30 minutes of delivery.', 400);
+      if (diffMs > maxReturnWindowMs) {
+        return err(`Return window expired. Return requests must be submitted within ${windowLabel} of delivery.`, 400);
       }
 
       // Check existing active or completed return for duplicate prevention
@@ -5814,6 +5856,10 @@ async function handleRoute(request, { params }) {
               ...DEFAULT_SITE_SETTINGS.shipping,
               ...((settings && settings.shipping) || {})
             },
+            returnWindow: {
+              ...DEFAULT_SITE_SETTINGS.returnWindow,
+              ...((settings && settings.returnWindow) || {})
+            },
             paymentSettings: {
               razorpay: {
                 enabled: rawPay?.razorpay?.enabled !== false,
@@ -5845,6 +5891,38 @@ async function handleRoute(request, { params }) {
             if (!isNaN(standard) && standard < 0) {
               return err('Standard shipping charge cannot be negative', 400);
             }
+          }
+
+          if (updates.returnWindow) {
+            const rw = updates.returnWindow;
+            const dur = Number(rw.duration ?? rw.value);
+            if (isNaN(dur) || dur < 0) {
+              return err('Return window duration must be a valid positive number', 400);
+            }
+            const validUnits = ['minutes', 'hours', 'days'];
+            const unit = (rw.unit || 'minutes').toLowerCase();
+            if (!validUnits.includes(unit)) {
+              return err('Return window unit must be minutes, hours, or days', 400);
+            }
+            updates.returnWindow = {
+              enabled: rw.enabled !== false,
+              duration: dur,
+              unit
+            };
+
+            await logAdminActivity(db, {
+              admin,
+              action: 'RETURN_WINDOW_SETTINGS_UPDATED',
+              module: 'SITE_SETTINGS',
+              targetId: 'default',
+              targetName: 'Order Return Window Policy',
+              metadata: {
+                enabled: updates.returnWindow.enabled,
+                duration: dur,
+                unit
+              },
+              request
+            });
           }
 
           if (updates.paymentSettings) {
@@ -5985,6 +6063,10 @@ async function handleRoute(request, { params }) {
             shipping: {
               ...DEFAULT_SITE_SETTINGS.shipping,
               ...((updated && updated.shipping) || {})
+            },
+            returnWindow: {
+              ...DEFAULT_SITE_SETTINGS.returnWindow,
+              ...((updated && updated.returnWindow) || {})
             },
             paymentSettings: {
               razorpay: {
@@ -8727,6 +8809,53 @@ async function handleRoute(request, { params }) {
         });
 
         return ok({ returns: enriched.map(clean) });
+      }
+
+      if (sub === 'returns/policy') {
+        if (method === 'GET') {
+          const siteDoc = await db.collection('site_settings').findOne({ id: 'default' });
+          const returnPolicy = {
+            ...DEFAULT_SITE_SETTINGS.returnWindow,
+            ...((siteDoc && siteDoc.returnWindow) || {})
+          };
+          return ok({ returnPolicy });
+        }
+        if (method === 'PUT') {
+          const body = await request.json().catch(() => ({}));
+          const dur = Number(body.duration ?? body.value);
+          if (isNaN(dur) || dur < 0) {
+            return err('Return window duration must be a valid positive number', 400);
+          }
+          const validUnits = ['minutes', 'hours', 'days'];
+          const unit = (body.unit || 'minutes').toLowerCase();
+          if (!validUnits.includes(unit)) {
+            return err('Return window unit must be minutes, hours, or days', 400);
+          }
+          const updatedReturnWindow = {
+            enabled: body.enabled !== false,
+            duration: dur,
+            unit
+          };
+          await db.collection('site_settings').updateOne(
+            { id: 'default' },
+            { $set: { returnWindow: updatedReturnWindow, updatedAt: new Date() } },
+            { upsert: true }
+          );
+          _cache.delete('site_settings');
+          invalidateSiteDataCache('site_settings');
+
+          await logAdminActivity(db, {
+            admin,
+            action: 'RETURN_WINDOW_SETTINGS_UPDATED',
+            module: 'RETURNS',
+            targetId: 'default',
+            targetName: 'Order Return Window Policy',
+            metadata: updatedReturnWindow,
+            request
+          });
+
+          return ok({ message: 'Return policy updated successfully.', returnPolicy: updatedReturnWindow });
+        }
       }
 
       if (sub.startsWith('returns/') && method === 'POST') {

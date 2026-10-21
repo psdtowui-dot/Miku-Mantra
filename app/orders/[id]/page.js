@@ -90,6 +90,7 @@ function OrderInner() {
 
   const [order, setOrder] = useState(null);
   const [returnRequest, setReturnRequest] = useState(null);
+  const [returnWindowConfig, setReturnWindowConfig] = useState({ enabled: true, duration: 30, unit: 'minutes' });
   const [loading, setLoading] = useState(true);
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -728,6 +729,7 @@ function OrderInner() {
           setReturnRequest(d.returnRequest || null);
           setOrderReviews(d.reviews || []);
           setCustomerReviewsEnabled(d.customerReviewsEnabled ?? true);
+          if (d.returnWindow) setReturnWindowConfig(d.returnWindow);
         } else {
           if (r.status === 401) {
             router.push(`/login?redirect=/orders/${id}`);
@@ -759,13 +761,57 @@ function OrderInner() {
   })();
 
   const isDelivered = order?.status === 'delivered';
-  const RETURN_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
+  const returnWindowEnabled = returnWindowConfig?.enabled !== false;
+  const returnDuration = Number(returnWindowConfig?.duration ?? returnWindowConfig?.value) || 30;
+  const returnUnit = (returnWindowConfig?.unit || 'minutes').toLowerCase();
+
+  const RETURN_WINDOW_MS = (() => {
+    if (returnUnit === 'days') return returnDuration * 24 * 60 * 60 * 1000;
+    if (returnUnit === 'hours') return returnDuration * 60 * 60 * 1000;
+    return returnDuration * 60 * 1000;
+  })();
+
+  const policyLabel = (() => {
+    if (returnUnit === 'days') return `${returnDuration}-Day`;
+    if (returnUnit === 'hours') return `${returnDuration}-Hour`;
+    return `${returnDuration}-Minute`;
+  })();
+
+  const windowDurationText = (() => {
+    if (returnUnit === 'days') return `${returnDuration} day${returnDuration === 1 ? '' : 's'}`;
+    if (returnUnit === 'hours') return `${returnDuration} hour${returnDuration === 1 ? '' : 's'}`;
+    return `${returnDuration} minute${returnDuration === 1 ? '' : 's'}`;
+  })();
+
   const msRemaining = deliveredTime ? Math.max(0, (deliveredTime + RETURN_WINDOW_MS) - nowTime) : 0;
-  const isReturnWindowOpen = isDelivered && deliveredTime && msRemaining > 0;
-  const isReturnWindowExpired = isDelivered && deliveredTime && msRemaining <= 0;
+  const isReturnWindowOpen = returnWindowEnabled && isDelivered && deliveredTime && msRemaining > 0;
+  const isReturnWindowExpired = returnWindowEnabled && isDelivered && deliveredTime && msRemaining <= 0;
 
   const hasActiveReturn = !!returnRequest && ['REQUESTED', 'RETURN_REQUESTED', 'APPROVED', 'RETURN_APPROVED', 'REFUND_DETAILS_SUBMITTED', 'PROCESSING', 'REFUND_INITIATED', 'REFUNDED'].includes(returnRequest.returnStatus);
-  const canRequestReturn = isDelivered && isReturnWindowOpen && !hasActiveReturn;
+  const canRequestReturn = returnWindowEnabled && isDelivered && isReturnWindowOpen && !hasActiveReturn;
+
+  const countdownFormatted = (() => {
+    if (msRemaining <= 0) return '0m 00s';
+    const days = Math.floor(msRemaining / (24 * 60 * 60 * 1000));
+    const hours = Math.floor((msRemaining % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+    const mins = Math.floor((msRemaining % (60 * 60 * 1000)) / 60000);
+    const secs = Math.floor((msRemaining % 60000) / 1000);
+
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${mins}m`;
+    return `${mins}m ${secs < 10 ? '0' : ''}${secs}s`;
+  })();
+
+  const buttonCountdown = (() => {
+    if (msRemaining <= 0) return '0m left';
+    const days = Math.floor(msRemaining / (24 * 60 * 60 * 1000));
+    const hours = Math.floor((msRemaining % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+    const mins = Math.floor((msRemaining % (60 * 60 * 1000)) / 60000);
+
+    if (days > 0) return `${days}d ${hours}h left`;
+    if (hours > 0) return `${hours}h ${mins}m left`;
+    return `${mins}m left`;
+  })();
 
   const minutesLeft = Math.floor(msRemaining / 60000);
   const secondsLeft = Math.floor((msRemaining % 60000) / 1000);
@@ -1230,22 +1276,22 @@ function OrderInner() {
             </div>
           )}
 
-          {/* 30-Minute Return Window Alert Banner (When Delivered & Eligible) */}
+          {/* Return Window Alert Banner (When Delivered & Eligible) */}
           {canRequestReturn && (
             <div className="mb-6 p-4 sm:p-5 bg-gradient-to-r from-amber-50/90 via-[#FAF6EF] to-white border border-amber-200 rounded-xl">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <div className="flex items-center gap-2 text-amber-900 font-semibold text-sm">
                     <Clock size={17} className="text-[#9C6B30] animate-pulse" />
-                    <span>30-Minute Return Policy Active</span>
+                    <span>{policyLabel} Return Policy Active</span>
                   </div>
                   <p className="text-neutral-600 text-xs mt-1">
                     Your order was delivered at {new Date(deliveredTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}.
-                    In accordance with store policy, return requests are accepted strictly within 30 minutes of delivery.
+                    In accordance with store policy, return requests are accepted strictly within {windowDurationText} of delivery.
                   </p>
                   <div className="mt-2.5 inline-flex items-center gap-2 px-3 py-1 bg-amber-100/90 text-amber-900 rounded-md font-mono text-xs font-semibold">
                     <span className="text-[10px] tracking-wider uppercase text-neutral-600 font-sans">Window Closes In:</span>
-                    <span className="text-[#9C6B30] text-sm">{minutesLeft}m {secondsLeft < 10 ? '0' : ''}{secondsLeft}s</span>
+                    <span className="text-[#9C6B30] text-sm">{countdownFormatted}</span>
                   </div>
                 </div>
                 <button
@@ -1263,7 +1309,7 @@ function OrderInner() {
             <div className="mb-6 p-3.5 sm:p-4 bg-neutral-50 border border-neutral-200 rounded-xl flex items-center gap-3 text-xs text-neutral-600">
               <Clock size={16} className="text-neutral-400 shrink-0" />
               <div>
-                <span className="font-medium text-neutral-800">Return Window Closed:</span> Returns are accepted strictly within 30 minutes of delivery. The 30-minute window for this order has now ended.
+                <span className="font-medium text-neutral-800">Return Window Closed:</span> Returns are accepted strictly within {windowDurationText} of delivery. The {policyLabel.toLowerCase()} window for this order has now ended.
               </div>
             </div>
           )}
@@ -1482,7 +1528,7 @@ function OrderInner() {
                 onClick={openReturnModal}
                 className="px-4 sm:px-8 py-2.5 sm:py-3 border border-[#9C6B30] text-[#9C6B30] text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] uppercase rounded-md hover:bg-[#9C6B30] hover:text-white transition font-semibold flex items-center gap-2 cursor-pointer"
               >
-                <RotateCcw size={14} /> Return Order ({minutesLeft}m left)
+                <RotateCcw size={14} /> Return Order ({buttonCountdown})
               </button>
             )}
             {isCancellable && (
@@ -1623,10 +1669,10 @@ function OrderInner() {
             {/* Policy countdown header inside modal */}
             <div className="bg-[#FAF6EF] px-4 sm:px-6 py-2.5 border-b border-[#E8E8E8] flex items-center justify-between text-xs text-neutral-600">
               <span className="flex items-center gap-1.5 font-medium text-amber-900">
-                <Clock size={13} className="text-[#9C6B30]" /> 30-Minute Policy Window
+                <Clock size={13} className="text-[#9C6B30]" /> {policyLabel} Policy Window
               </span>
               <span className="font-mono font-semibold text-[#9C6B30]">
-                {minutesLeft}m {secondsLeft < 10 ? '0' : ''}{secondsLeft}s remaining
+                {countdownFormatted} remaining
               </span>
             </div>
 
@@ -1819,7 +1865,7 @@ function OrderInner() {
                 <div className="p-4 bg-[#FAF6EF]/60 border border-[#E8E8E8] rounded-lg space-y-3 text-xs sm:text-sm">
                   <div className="font-semibold text-neutral-900 text-sm">Review & Confirm Return</div>
                   <p className="text-neutral-600 text-xs">
-                    Please confirm the details below. Return requests are accepted within 30 minutes of delivery.
+                    Please confirm the details below. Return requests are accepted within {windowDurationText} of delivery.
                   </p>
 
                   <div className="pt-2 border-t border-[#E8E8E8] space-y-2 text-xs">
