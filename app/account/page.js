@@ -5,12 +5,12 @@ import Link from 'next/link';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { useWishlist } from '@/lib/cart-store';
 import { formatINR, formatRating } from '@/lib/products';
-import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound, RotateCcw, Clock, Star, Sparkles, CheckCircle2, Pencil } from 'lucide-react';
+import { User, MapPin, Package, Heart, LogOut, Loader2, Plus, Trash2, ChevronRight, ShieldCheck, Lock, Eye, EyeOff, KeyRound, RotateCcw, Clock, Star, Sparkles, CheckCircle2, Pencil, X, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { getCancellationLabel } from '@/lib/utils';
 
 export default function AccountPage() {
-  const { user, loading, logout, refresh, changePassword } = useAuth();
+  const { user, loading, logout, refresh, changePassword, deleteAccount } = useAuth();
   const router = useRouter();
   const { ids } = useWishlist();
   const [tab, setTab] = useState('profile');
@@ -37,6 +37,14 @@ export default function AccountPage() {
   const [showCurrentPwd, setShowCurrentPwd] = useState(false);
   const [showNewPwd, setShowNewPwd] = useState(false);
   const [showConfirmPwd, setShowConfirmPwd] = useState(false);
+
+  // Delete Account Modal State
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [deleteSaving, setDeleteSaving] = useState(false);
+  const [showDeletePwdEye, setShowDeletePwdEye] = useState(false);
 
   useEffect(() => { if (!loading && !user) router.push('/login?redirect=/account'); }, [loading, user, router]);
   useEffect(() => {
@@ -324,6 +332,32 @@ export default function AccountPage() {
       }
     } finally {
       setPwdSaving(false);
+    }
+  };
+
+  const handleDeleteAccountSubmit = async (e) => {
+    e.preventDefault();
+    setDeleteError('');
+    if (user?.hasPassword && !deletePassword) {
+      setDeleteError('Please enter your password to confirm account deletion.');
+      return;
+    }
+    if (!user?.hasPassword && deleteConfirmText.trim().toUpperCase() !== 'DELETE' && deleteConfirmText.trim().toLowerCase() !== user?.email?.toLowerCase()) {
+      setDeleteError('Please type DELETE or your email to confirm deletion.');
+      return;
+    }
+
+    setDeleteSaving(true);
+    try {
+      await deleteAccount({ password: deletePassword, confirmationText: deleteConfirmText });
+      toast.success('Your account has been deleted successfully.');
+      setShowDeleteModal(false);
+      router.push('/');
+    } catch (err) {
+      setDeleteError(err.message || 'Failed to delete account. Please try again.');
+      toast.error(err.message || 'Failed to delete account');
+    } finally {
+      setDeleteSaving(false);
     }
   };
 
@@ -660,6 +694,41 @@ export default function AccountPage() {
                   </button>
                 </div>
               </form>
+
+              {/* Danger Zone: Delete Account */}
+              <div className="mt-10 pt-8 border-t border-[#EAE3D6]">
+                <div className="rounded-2xl border border-red-200/80 bg-gradient-to-br from-red-50/40 via-white to-red-50/20 p-5 sm:p-7">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-serif-luxe text-xl text-neutral-900 font-normal">
+                          Delete Account
+                        </span>
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-red-100/70 text-red-700 text-[9px] tracking-[0.2em] uppercase font-bold border border-red-200">
+                          Permanent
+                        </span>
+                      </div>
+                      <p className="text-xs text-neutral-500 mt-1 max-w-lg leading-relaxed font-light">
+                        Permanently close your MikuMantra account, erase personal information, and remove saved delivery addresses. Active order records are retained only for statutory accounting and warranty compliance.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowDeleteModal(true);
+                        setDeletePassword('');
+                        setDeleteConfirmText('');
+                        setDeleteError('');
+                      }}
+                      className="shrink-0 inline-flex items-center justify-center gap-2 px-5 py-3 border border-red-300 text-red-700 hover:bg-red-600 hover:text-white text-xs tracking-wider uppercase font-medium rounded-xl transition duration-200 cursor-pointer shadow-xs"
+                    >
+                      <Trash2 size={14} />
+                      <span>Delete My Account</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -1270,6 +1339,107 @@ export default function AccountPage() {
           )}
         </section>
       </div>
+
+      {/* Delete Account Confirmation Modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white border border-[#E8E8E8] rounded-2xl w-full max-w-md p-6 sm:p-8 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200 my-auto">
+            <button
+              type="button"
+              onClick={() => {
+                if (!deleteSaving) setShowDeleteModal(false);
+              }}
+              className="absolute top-4 right-4 p-1.5 text-neutral-400 hover:text-neutral-800 rounded-full hover:bg-neutral-100 transition"
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+
+            <div className="text-center mb-5">
+              <div className="w-14 h-14 rounded-full bg-red-50 border border-red-200 text-red-600 flex items-center justify-center mx-auto mb-3.5 shadow-sm">
+                <Trash2 size={24} />
+              </div>
+              <h3 className="font-serif-luxe text-2xl text-[#1A1A1A] font-light">
+                Delete Your Account?
+              </h3>
+              <p className="text-xs text-neutral-500 mt-2 leading-relaxed font-light">
+                This action is <span className="font-semibold text-red-600">permanent and irreversible</span>. All your profile details, session tokens, and saved addresses will be erased.
+              </p>
+            </div>
+
+            <form onSubmit={handleDeleteAccountSubmit} className="space-y-4" noValidate>
+              {user?.hasPassword ? (
+                <div>
+                  <label className="block text-[11px] tracking-[0.15em] uppercase font-medium text-neutral-700 mb-1.5">
+                    Enter your current password to confirm:
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showDeletePwdEye ? 'text' : 'password'}
+                      value={deletePassword}
+                      onChange={e => {
+                        setDeletePassword(e.target.value);
+                        if (deleteError) setDeleteError('');
+                      }}
+                      placeholder="Your current password"
+                      className="w-full pr-11 px-4 py-3 bg-[#FAF8F5]/60 hover:bg-white focus:bg-white border border-[#E2DBD1] focus:border-red-500 rounded-xl text-sm text-[#1A1A1A] transition focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowDeletePwdEye(!showDeletePwdEye)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700 transition"
+                      tabIndex={-1}
+                    >
+                      {showDeletePwdEye ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-[11px] tracking-[0.15em] uppercase font-medium text-neutral-700 mb-1.5">
+                    Type <span className="font-mono font-bold text-red-600">DELETE</span> to confirm:
+                  </label>
+                  <input
+                    type="text"
+                    value={deleteConfirmText}
+                    onChange={e => {
+                      setDeleteConfirmText(e.target.value);
+                      if (deleteError) setDeleteError('');
+                    }}
+                    placeholder="DELETE"
+                    className="w-full px-4 py-3 bg-[#FAF8F5]/60 hover:bg-white focus:bg-white border border-[#E2DBD1] focus:border-red-500 rounded-xl text-sm text-[#1A1A1A] transition focus:outline-none"
+                  />
+                </div>
+              )}
+
+              {deleteError && (
+                <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-600 font-medium">
+                  {deleteError}
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteModal(false)}
+                  disabled={deleteSaving}
+                  className="flex-1 py-3 px-4 border border-[#E2DBD1] hover:bg-neutral-50 text-neutral-700 text-xs tracking-wider uppercase font-medium rounded-xl transition cursor-pointer disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={deleteSaving}
+                  className="flex-1 py-3 px-4 bg-red-600 hover:bg-red-700 text-white text-xs tracking-wider uppercase font-medium rounded-xl transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 shadow-sm"
+                >
+                  {deleteSaving ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                  <span>{deleteSaving ? 'Deleting…' : 'Delete Account'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

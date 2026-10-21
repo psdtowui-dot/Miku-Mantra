@@ -22,6 +22,7 @@ import {
 import { generateTrackingUrl } from '@/lib/courier'
 import {
   sendPasswordResetEmail,
+  sendAccountVerificationEmail,
   checkEmailProviderStatus,
   sendTestCampaignEmail,
   getAllEmailTemplates,
@@ -1706,6 +1707,33 @@ async function handleRoute(request, { params }) {
         return err('This account has been disabled. Please contact a Super Administrator.', 403)
       }
 
+      if (u.isEmailVerified === false) {
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+        await db.collection('email_verifications').deleteMany({ email: em, type: 'register' });
+        await db.collection('email_verifications').insertOne({
+          id: uuidv4(),
+          email: em,
+          code,
+          type: 'register',
+          expiresAt,
+          used: false,
+          createdAt: new Date()
+        });
+        const emailResult = await sendAccountVerificationEmail({
+          toEmail: em,
+          code,
+          name: u.name,
+          db
+        });
+        return ok({
+          requiresVerification: true,
+          email: em,
+          message: 'Please verify your email address to complete registration. A 6-digit verification code has been sent to your email.',
+          devCode: !emailResult.sent ? code : undefined
+        });
+      }
+
       // Self-healing: if logged in as admin email from .env or DB, enforce role is 'admin'
       if (isAdmin && u.role !== 'admin') {
         await db.collection('users').updateOne({ id: u.id }, { $set: { role: 'admin' } });
@@ -1721,50 +1749,227 @@ async function handleRoute(request, { params }) {
       const token = uuidv4(); const expiresAt = new Date(Date.now() + SESSION_DAYS * 86400 * 1000)
       await db.collection('sessions').insertOne({ token, userId: u.id, expiresAt, createdAt: new Date() })
       try { const store = await cookies(); store.set(SESSION_COOKIE, token, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: SESSION_DAYS * 86400, secure: false }); } catch (e) {}
-      return ok({ user: { id: u.id, name: u.name, email: u.email, phone: u.phone || '', role: u.role || 'user', roleKey, status, permissions, hasPassword: !!u.passwordHash }, token })
+      return ok({
+        user: {
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          phone: u.phone || '',
+          role: u.role || 'user',
+          roleKey,
+          status,
+          permissions,
+          isEmailVerified: u.isEmailVerified !== false,
+          hasPassword: !!u.passwordHash
+        },
+        token
+      })
     }
     if (route === '/auth/register' && method === 'POST') {
       const { name, email, password, phone } = await request.json()
       if (!name || !email || !password) return err('Name, email and password are required.')
       const em = email.trim().toLowerCase()
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(em)) {
+        return err('Please enter a valid email address.', 400);
+      }
+      if (password.length < 6) {
+        return err('Password must be at least 6 characters.', 400);
+      }
+
       const existing = await db.collection('users').findOne({ email: em })
-      if (existing) return err('User with this email already exists.', 409)
+      if (existing && existing.isEmailVerified !== false) {
+        return err('User with this email already exists.', 409)
+      }
 
       const envAdmins = getEnvAdminEmails()
       const role = envAdmins.includes(em) ? 'admin' : 'user'
 
       const { salt, hash } = hashPassword(password)
-      const userId = uuidv4()
-      const newUser = {
-        id: userId,
-        name: name.trim(),
-        email: em,
-        phone: phone ? phone.trim() : '',
-        role,
-        passwordSalt: salt,
-        passwordHash: hash,
-        createdAt: new Date()
+      let userId = existing?.id;
+
+      if (existing && existing.isEmailVerified === false) {
+        await db.collection('users').updateOne(
+          { id: existing.id },
+          {
+            $set: {
+              name: name.trim(),
+              phone: phone ? phone.trim() : '',
+              passwordSalt: salt,
+              passwordHash: hash,
+              updatedAt: new Date()
+            }
+          }
+        );
+      } else {
+        userId = uuidv4()
+        const newUser = {
+          id: userId,
+          name: name.trim(),
+          email: em,
+          phone: phone ? phone.trim() : '',
+          role,
+          passwordSalt: salt,
+          passwordHash: hash,
+          isEmailVerified: false,
+          createdAt: new Date()
+        }
+        await db.collection('users').insertOne(newUser)
       }
 
-      await db.collection('users').insertOne(newUser)
+      // Generate 6-digit verification code
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+      await db.collection('email_verifications').deleteMany({ email: em, type: 'register' });
+      await db.collection('email_verifications').insertOne({
+        id: uuidv4(),
+        email: em,
+        code,
+        type: 'register',
+        expiresAt,
+        used: false,
+        createdAt: new Date()
+      });
 
-      const token = uuidv4()
-      const expiresAt = new Date(Date.now() + SESSION_DAYS * 86400 * 1000)
-      await db.collection('sessions').insertOne({ token, userId, expiresAt, createdAt: new Date() })
+      console.log(`[ACCOUNT VERIFICATION] Code for ${em}: ${code} (expires in 15 mins)`);
 
-      try { const store = await cookies(); store.set(SESSION_COOKIE, token, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: SESSION_DAYS * 86400, secure: false }); } catch (e) {}
+      const emailResult = await sendAccountVerificationEmail({
+        toEmail: em,
+        code,
+        name: name.trim(),
+        db
+      });
+
+      let message = `A 6-digit verification code has been sent to ${em}. Please check your Gmail or email inbox (and spam folder) to complete registration.`;
+      if (!emailResult.sent && emailResult.reason === 'SMTP_NOT_CONFIGURED') {
+        message = `Verification code generated for ${em}. To deliver directly to your Gmail inbox, please configure SMTP_USER and SMTP_PASS in .env.`;
+      }
 
       return ok({
+        requiresVerification: true,
+        email: em,
+        message,
+        devCode: !emailResult.sent ? code : undefined
+      });
+    }
+
+    if (route === '/auth/verify-registration' && method === 'POST') {
+      const { email, code } = await request.json();
+      if (!email || !code) return err('Email and verification code are required.', 400);
+      const em = email.trim().toLowerCase();
+      const cleanCode = code.toString().trim();
+
+      const record = await db.collection('email_verifications').findOne({
+        email: em,
+        code: cleanCode,
+        type: 'register',
+        used: false,
+        expiresAt: { $gt: new Date() }
+      });
+
+      if (!record) {
+        return err('Invalid or expired verification code. Please request a new code.', 400);
+      }
+
+      const u = await db.collection('users').findOne({ email: em });
+      if (!u) {
+        return err('User account not found.', 404);
+      }
+
+      await db.collection('email_verifications').updateOne(
+        { id: record.id },
+        { $set: { used: true, usedAt: new Date() } }
+      );
+
+      await db.collection('users').updateOne(
+        { id: u.id },
+        { $set: { isEmailVerified: true, emailVerifiedAt: new Date() } }
+      );
+
+      const roleKey = u.roleKey || (u.role === 'admin' ? 'SUPER_ADMIN' : 'USER');
+      const status = u.status || 'active';
+      const permissions = u.role === 'admin' ? await resolveUserPermissions(db, { ...u, roleKey }) : [];
+
+      const token = uuidv4();
+      const expiresAt = new Date(Date.now() + SESSION_DAYS * 86400 * 1000);
+      await db.collection('sessions').insertOne({ token, userId: u.id, expiresAt, createdAt: new Date() });
+
+      try {
+        const store = await cookies();
+        store.set(SESSION_COOKIE, token, {
+          httpOnly: true,
+          sameSite: 'lax',
+          path: '/',
+          maxAge: SESSION_DAYS * 86400,
+          secure: process.env.NODE_ENV === 'production' || request.url.startsWith('https')
+        });
+      } catch (e) {}
+
+      return ok({
+        success: true,
+        message: 'Account verified successfully!',
         user: {
-          id: userId,
-          name: newUser.name,
-          email: newUser.email,
-          phone: newUser.phone,
-          role: newUser.role,
-          hasPassword: true
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          phone: u.phone || '',
+          role: u.role || 'user',
+          roleKey,
+          status,
+          permissions,
+          isEmailVerified: true,
+          hasPassword: !!u.passwordHash
         },
         token
-      })
+      });
+    }
+
+    if (route === '/auth/resend-verification' && method === 'POST') {
+      const { email } = await request.json();
+      if (!email) return err('Email address is required.', 400);
+      const em = email.trim().toLowerCase();
+
+      const u = await db.collection('users').findOne({ email: em });
+      if (!u) {
+        return err('No account found with this email address.', 404);
+      }
+      if (u.isEmailVerified !== false) {
+        return err('This account has already been verified. You can sign in directly.', 400);
+      }
+
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+      await db.collection('email_verifications').deleteMany({ email: em, type: 'register' });
+      await db.collection('email_verifications').insertOne({
+        id: uuidv4(),
+        email: em,
+        code,
+        type: 'register',
+        expiresAt,
+        used: false,
+        createdAt: new Date()
+      });
+
+      console.log(`[RESEND VERIFICATION] New code for ${em}: ${code}`);
+
+      const emailResult = await sendAccountVerificationEmail({
+        toEmail: em,
+        code,
+        name: u.name,
+        db
+      });
+
+      let message = `A new 6-digit verification code has been sent to ${em}.`;
+      if (!emailResult.sent && emailResult.reason === 'SMTP_NOT_CONFIGURED') {
+        message = `New verification code generated for ${em}.`;
+      }
+
+      return ok({
+        success: true,
+        message,
+        devCode: !emailResult.sent ? code : undefined
+      });
     }
     if (route === '/auth/google' && method === 'POST') {
       const { credential, accessToken, requireAdmin } = await request.json()
@@ -1833,6 +2038,8 @@ async function handleRoute(request, { params }) {
           avatar,
           googleId,
           provider: 'google',
+          isEmailVerified: true,
+          emailVerifiedAt: new Date(),
           createdAt: new Date()
         }
         await db.collection('users').insertOne(newUser)
@@ -1845,6 +2052,10 @@ async function handleRoute(request, { params }) {
         if (!u.googleId) updateFields.googleId = googleId
         if (!u.avatar && avatar) updateFields.avatar = avatar
         if (isAdmin && u.role !== 'admin') updateFields.role = 'admin'
+        if (u.isEmailVerified === false) {
+          updateFields.isEmailVerified = true
+          updateFields.emailVerifiedAt = new Date()
+        }
         if (Object.keys(updateFields).length > 0) {
           await db.collection('users').updateOne({ id: u.id }, { $set: updateFields })
           u = { ...u, ...updateFields }
@@ -1883,6 +2094,7 @@ async function handleRoute(request, { params }) {
           status,
           permissions,
           avatar: u.avatar || avatar,
+          isEmailVerified: true,
           hasPassword: !!u.passwordHash
         },
         token
@@ -2129,6 +2341,70 @@ async function handleRoute(request, { params }) {
       return ok({
         success: true,
         message: 'Password has been reset successfully. You can now log in.'
+      });
+    }
+
+    if ((route === '/auth/delete-account' || route === '/auth/account') && (method === 'POST' || method === 'DELETE')) {
+      const u = await getCurrentUser(db, request);
+      if (!u) return err('Not authenticated.', 401);
+
+      const envAdmins = getEnvAdminEmails();
+      if (u.email && envAdmins.includes(u.email.toLowerCase())) {
+        return err('Primary system administrator accounts configured in .env cannot be deleted.', 403);
+      }
+      if (u.role === 'admin' && (u.roleKey === 'SUPER_ADMIN' || u.roleId === 'role_super_admin')) {
+        return err('Super Administrator accounts cannot be deleted through customer self-service.', 403);
+      }
+
+      const fullUser = await db.collection('users').findOne({ id: u.id });
+      if (!fullUser) return err('User account not found.', 404);
+
+      const body = await request.json().catch(() => ({}));
+      const { password, confirmationText } = body;
+
+      if (fullUser.passwordHash) {
+        if (!password) {
+          return err('Current password is required to confirm account deletion.', 400);
+        }
+        const isValid = verifyPassword(password, fullUser.passwordSalt, fullUser.passwordHash);
+        if (!isValid) {
+          return err('Incorrect password. Account deletion cancelled.', 400);
+        }
+      } else {
+        const text = (confirmationText || '').trim().toUpperCase();
+        const emailMatch = (confirmationText || '').trim().toLowerCase() === fullUser.email.toLowerCase();
+        if (text !== 'DELETE' && !emailMatch) {
+          return err('Please type "DELETE" or your email address to confirm account deletion.', 400);
+        }
+      }
+
+      // Cascading deletion of customer records
+      await db.collection('sessions').deleteMany({ userId: fullUser.id });
+      await db.collection('addresses').deleteMany({ userId: fullUser.id });
+      await db.collection('email_verifications').deleteMany({ email: fullUser.email });
+      await db.collection('password_resets').deleteMany({ email: fullUser.email });
+      await db.collection('cart').deleteMany({ userId: fullUser.id });
+      await db.collection('wishlist').deleteMany({ userId: fullUser.id });
+      await db.collection('users').deleteOne({ id: fullUser.id });
+
+      invalidateUserSessionCache(fullUser.id);
+      let t = request.headers.get('x-auth-token') || request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+      if (!t) {
+        try {
+          const store = await cookies();
+          t = store.get(SESSION_COOKIE)?.value;
+        } catch (e) {}
+      }
+      if (t) invalidateUserSessionCache(t);
+
+      try {
+        const store = await cookies();
+        store.delete(SESSION_COOKIE);
+      } catch (e) {}
+
+      return ok({
+        success: true,
+        message: 'Your account and personal data have been deleted successfully.'
       });
     }
 
@@ -7593,6 +7869,27 @@ async function handleRoute(request, { params }) {
         
         const list = await db.collection('users').find(query).sort({ createdAt: -1 }).toArray();
         return ok({ customers: list.map(clean) })
+      }
+
+      if ((sub === 'customers' || sub.startsWith('customers/')) && method === 'DELETE') {
+        if (!hasPermission(admin, 'customers.delete')) return err('Permission denied: customers.delete required', 403);
+        const targetId = path[2] || sub.split('/')[1];
+        if (!targetId) return err('Customer ID is required', 400);
+
+        const targetUser = await db.collection('users').findOne({ id: targetId });
+        if (!targetUser) return err('Customer account not found', 404);
+        if (targetUser.role === 'admin') return err('Administrator accounts cannot be deleted from customer manager.', 403);
+
+        await db.collection('sessions').deleteMany({ userId: targetUser.id });
+        await db.collection('addresses').deleteMany({ userId: targetUser.id });
+        await db.collection('email_verifications').deleteMany({ email: targetUser.email });
+        await db.collection('password_resets').deleteMany({ email: targetUser.email });
+        await db.collection('cart').deleteMany({ userId: targetUser.id });
+        await db.collection('wishlist').deleteMany({ userId: targetUser.id });
+        await db.collection('users').deleteOne({ id: targetUser.id });
+        invalidateUserSessionCache(targetUser.id);
+
+        return ok({ success: true, message: `Customer account ${targetUser.email} deleted successfully.` });
       }
 
       // Reviews admin

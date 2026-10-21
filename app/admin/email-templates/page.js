@@ -74,6 +74,13 @@ const TEMPLATE_TABS = [
     category: 'Security'
   },
   {
+    id: 'account_verification',
+    label: 'Account Verification',
+    sublabel: 'Customer signup OTP code',
+    icon: ShieldCheck,
+    category: 'Security'
+  },
+  {
     id: 'welcome_email',
     label: 'Welcome Circle',
     sublabel: 'Newsletter automation',

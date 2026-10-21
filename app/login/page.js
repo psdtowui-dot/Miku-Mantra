@@ -19,11 +19,14 @@ function GoogleIcon({ className = "w-5 h-5" }) {
 }
 
 function LoginInner(){
-  const { user, loading, login, register, loginWithGoogle, forgotPassword, resetPassword } = useAuth();
+  const { user, loading, login, register, verifyRegistration, resendVerification, loginWithGoogle, forgotPassword, resetPassword } = useAuth();
   const router = useRouter();
   const sp = useSearchParams();
   const redirect = sp.get('redirect') || '/account';
-  const [mode, setMode] = useState(sp.get('mode') === 'register' ? 'register' : 'login');
+  const initialModeParam = sp.get('mode');
+  const [mode, setMode] = useState(
+    initialModeParam === 'verify' ? 'register_verify' : (initialModeParam === 'register' ? 'register' : 'login')
+  );
   const [busy, setBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
   const [googleRendered, setGoogleRendered] = useState(false);
@@ -32,6 +35,16 @@ function LoginInner(){
   const [form, setForm] = useState({ name:'', email:'', password:'' });
   const [fieldErrors, setFieldErrors] = useState({ name: '', email: '', password: '' });
   const [err, setErr] = useState('');
+
+  // Account Email Verification State
+  const [showVerifyModal, setShowVerifyModal] = useState(initialModeParam === 'verify');
+  const [verifyEmail, setVerifyEmail] = useState(sp.get('email') || '');
+  const [verifyCode, setVerifyCode] = useState('');
+  const [verifyDevCode, setVerifyDevCode] = useState('');
+  const [verifyError, setVerifyError] = useState('');
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [resending, setResending] = useState(false);
 
   // Forgot Password Modal State
   const [showForgotModal, setShowForgotModal] = useState(false);
@@ -274,6 +287,13 @@ function LoginInner(){
     return isValid;
   };
 
+  useEffect(() => {
+    if (resendCooldown > 0) {
+      const timer = setTimeout(() => setResendCooldown(resendCooldown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [resendCooldown]);
+
   const submit = async (e) => {
     e.preventDefault();
     setErr('');
@@ -284,15 +304,39 @@ function LoginInner(){
     try {
       if (mode === 'login') {
         const u = await login(cleanEmail, form.password);
+        if (u?.requiresVerification) {
+          setVerifyEmail(cleanEmail);
+          setVerifyCode('');
+          setVerifyDevCode(u.devCode || '');
+          setVerifyError('');
+          setResendCooldown(30);
+          setMode('register_verify');
+          setShowVerifyModal(true);
+          if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+          toast.info(u.message || 'Please verify your email address to continue.');
+          return;
+        }
         toast.success(`Welcome back${u?.name ? `, ${u.name}` : ''}!`);
         if (u?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
           router.push('/admin');
           return;
         }
       } else {
-        const u = await register(form.name.trim(), cleanEmail, form.password);
+        const res = await register(form.name.trim(), cleanEmail, form.password);
+        if (res?.requiresVerification) {
+          setVerifyEmail(cleanEmail);
+          setVerifyCode('');
+          setVerifyDevCode(res.devCode || '');
+          setVerifyError('');
+          setResendCooldown(30);
+          setMode('register_verify');
+          setShowVerifyModal(true);
+          if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+          toast.success(res.message || 'Verification code sent to your email.');
+          return;
+        }
         toast.success('Account created successfully');
-        if (u?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
+        if (res?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
           router.push('/admin');
           return;
         }
@@ -303,6 +347,51 @@ function LoginInner(){
       toast.error(ex.message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleVerifySubmit = async (e) => {
+    e.preventDefault();
+    setVerifyError('');
+    const cleanCode = (verifyCode || '').trim();
+    if (!cleanCode || cleanCode.length < 6) {
+      setVerifyError('Please enter the 6-digit verification code');
+      return;
+    }
+    setVerifyBusy(true);
+    try {
+      const u = await verifyRegistration(verifyEmail, cleanCode);
+      setShowVerifyModal(false);
+      toast.success('Email verified successfully! Welcome to MikuMantra.');
+      if (u?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
+        router.push('/admin');
+      } else {
+        router.push(redirect);
+      }
+    } catch (err) {
+      setVerifyError(err.message || 'Verification failed. Please check the code.');
+      toast.error(err.message || 'Verification failed');
+    } finally {
+      setVerifyBusy(false);
+    }
+  };
+
+  const handleResendCode = async () => {
+    if (resendCooldown > 0 || resending) return;
+    setResending(true);
+    setVerifyError('');
+    try {
+      const res = await resendVerification(verifyEmail);
+      toast.success(res.message || 'A new verification code has been sent!');
+      if (res.devCode) {
+        setVerifyDevCode(res.devCode);
+      }
+      setResendCooldown(30);
+    } catch (err) {
+      toast.error(err.message || 'Failed to resend code');
+      setVerifyError(err.message || 'Failed to resend code');
+    } finally {
+      setResending(false);
     }
   };
 
@@ -427,201 +516,433 @@ function LoginInner(){
         </div>
 
         <div className="border border-[#E8E8E8] rounded-2xl p-6 sm:p-10 luxe-shadow bg-white">
-          <div className="flex gap-2 mb-6 sm:mb-8 p-1 bg-[#FAF6EF] rounded-full w-fit mx-auto max-w-full overflow-x-auto">
-            <button
-              type="button"
-              onClick={() => { setMode('login'); setFieldErrors({}); setErr(''); }}
-              className={`px-5 sm:px-7 py-2 rounded-full text-[11px] tracking-[0.2em] uppercase font-medium transition shrink-0 cursor-pointer ${mode === 'login' ? 'bg-[#1A1A1A] text-white shadow-xs' : 'text-neutral-500 hover:text-neutral-800'}`}
-            >
-              SIGN IN
-            </button>
-            <button
-              type="button"
-              onClick={() => { setMode('register'); setFieldErrors({}); setErr(''); }}
-              className={`px-5 sm:px-7 py-2 rounded-full text-[11px] tracking-[0.2em] uppercase font-medium transition shrink-0 cursor-pointer ${mode === 'register' ? 'bg-[#1A1A1A] text-white shadow-xs' : 'text-neutral-500 hover:text-neutral-800'}`}
-            >
-              CREATE ACCOUNT
-            </button>
-          </div>
-
-          <h2 className="font-display text-3xl sm:text-4xl text-center text-[#1A1A1A] font-light break-words">
-            {mode === 'login' ? 'Welcome back' : 'Join MikuMantra'}
-          </h2>
-          <div className="gold-line w-12 mx-auto my-3 sm:my-4" />
-          <p className="text-center text-xs sm:text-sm text-neutral-500 mb-6 sm:mb-8">
-            {mode === 'login' ? 'Sign in to continue your journey.' : 'Create your account in seconds.'}
-          </p>
-
-          {/* Google Sign In Button */}
-          <div className="mb-5 sm:mb-6">
-            <div className="w-full flex flex-col items-center justify-center min-h-[44px]">
-              <div
-                ref={googleBtnContainerRef}
-                className={`w-full flex justify-center ${googleRendered && !googleBusy ? 'block' : 'hidden'}`}
-              />
-
-              {(!googleRendered || googleBusy) && (
-                <button
-                  type="button"
-                  onClick={handleManualGoogleClick}
-                  disabled={googleBusy || busy}
-                  className="w-full py-3 px-4 border border-[#E8E8E8] rounded-full text-sm font-medium text-neutral-800 hover:bg-[#FAF6EF]/60 hover:border-[#9C6B30]/40 transition flex items-center justify-center gap-3 shadow-2xs cursor-pointer disabled:opacity-60 bg-white"
-                >
-                  {googleBusy ? (
-                    <Loader2 size={18} className="animate-spin text-[#9C6B30]" />
-                  ) : (
-                    <GoogleIcon className="w-5 h-5 shrink-0" />
-                  )}
-                  <span>{mode === 'login' ? 'Sign in with Google' : 'Sign up with Google'}</span>
-                </button>
-              )}
-            </div>
-
-            <div className="relative my-5 sm:my-6 text-center">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-[#E8E8E8]" />
-              </div>
-              <span className="relative bg-white px-3 sm:px-4 text-[10px] sm:text-[11px] tracking-[0.2em] sm:tracking-[0.25em] uppercase text-neutral-400 font-medium select-none">
-                {mode === 'login' ? 'OR SIGN IN WITH PASSWORD' : 'OR SIGN UP WITH PASSWORD'}
-              </span>
-            </div>
-          </div>
-
-          <form onSubmit={submit} className="space-y-4" noValidate>
-            {mode === 'register' && (
-              <div>
-                <div className="relative">
-                  <UserIcon size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" />
-                  <input
-                    value={form.name}
-                    onChange={e => {
-                      setForm({ ...form, name: e.target.value });
-                      if (fieldErrors.name) setFieldErrors(prev => ({ ...prev, name: '' }));
-                    }}
-                    placeholder="Full name"
-                    className={`w-full pl-11 pr-4 py-3 sm:py-3.5 border ${fieldErrors.name ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-full text-sm text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:border-[#9C6B30] transition`}
-                  />
+          {mode === 'register_verify' ? (
+            <div className="animate-in fade-in duration-200">
+              <div className="text-center mb-6">
+                <div className="w-14 h-14 rounded-full bg-[#FAF5EB] border border-[#9C6B30]/30 text-[#9C6B30] flex items-center justify-center mx-auto mb-4 shadow-[0_4px_16px_rgba(156,107,48,0.12)]">
+                  <ShieldCheck size={28} />
                 </div>
-                {fieldErrors.name && <p className="text-xs text-red-500 mt-1 pl-4">{fieldErrors.name}</p>}
+                <h2 className="font-display text-2xl sm:text-3xl text-[#1A1A1A] font-light">
+                  Verify Your Email
+                </h2>
+                <div className="gold-line w-12 mx-auto my-3" />
+                <p className="text-xs sm:text-sm text-neutral-500 max-w-sm mx-auto leading-relaxed">
+                  We've sent a 6-digit verification code to
+                </p>
+                <div className="mt-2 inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-[#FAF5EB] text-[#9C6B30] font-medium text-xs border border-[#9C6B30]/20">
+                  <Mail size={13} />
+                  <span>{verifyEmail}</span>
+                </div>
               </div>
-            )}
 
-            <div>
-              <div className="relative">
-                <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" />
-                <input
-                  type="email"
-                  value={form.email}
-                  onChange={e => {
-                    setForm({ ...form, email: e.target.value });
-                    if (fieldErrors.email) setFieldErrors(prev => ({ ...prev, email: '' }));
-                  }}
-                  placeholder="Gmail or Email (e.g. yourname@gmail.com)"
-                  className={`w-full pl-11 pr-4 py-3 sm:py-3.5 border ${fieldErrors.email ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-full text-sm text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:border-[#9C6B30] transition`}
-                />
-              </div>
-              {fieldErrors.email && <p className="text-xs text-red-500 mt-1 pl-4">{fieldErrors.email}</p>}
-            </div>
-
-            <div>
-              <div className="relative">
-                <Lock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" />
-                <input
-                  type="password"
-                  value={form.password}
-                  onChange={e => {
-                    setForm({ ...form, password: e.target.value });
-                    if (fieldErrors.password) setFieldErrors(prev => ({ ...prev, password: '' }));
-                  }}
-                  placeholder={mode === 'login' ? 'Password' : 'Create password (min 6 characters)'}
-                  className={`w-full pl-11 pr-4 py-3 sm:py-3.5 border ${fieldErrors.password ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-full text-sm text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:border-[#9C6B30] transition`}
-                />
-              </div>
-              <div className="flex items-center justify-between mt-1.5 px-2">
-                {fieldErrors.password ? (
-                  <p className="text-xs text-red-500">{fieldErrors.password}</p>
-                ) : <div />}
-                {mode === 'login' && (
+              {verifyDevCode && (
+                <div className="mb-5 p-3 rounded-xl bg-amber-50 border border-amber-200/80 text-center">
+                  <div className="text-[11px] text-amber-800 font-medium">
+                    Test Mode / Quick Fill:
+                  </div>
                   <button
                     type="button"
-                    data-testid="login-forgot-password-link"
                     onClick={() => {
-                      setForgotEmail(form.email || '');
-                      setForgotStep('request');
-                      setForgotErrors({ email: '', code: '', newPassword: '', confirmPassword: '' });
-                      setShowForgotModal(true);
+                      setVerifyCode(verifyDevCode);
+                      setVerifyError('');
                     }}
-                    className="text-xs text-[#9C6B30] hover:underline font-medium cursor-pointer ml-auto"
+                    className="mt-1 text-xs font-mono font-bold tracking-widest text-amber-900 bg-amber-100 hover:bg-amber-200 px-3 py-1 rounded-md transition cursor-pointer"
                   >
-                    Forgot password?
+                    Fill Code: {verifyDevCode}
                   </button>
-                )}
+                </div>
+              )}
+
+              <form onSubmit={handleVerifySubmit} className="space-y-5" noValidate>
+                <div>
+                  <label className="block text-[10px] tracking-[0.2em] uppercase font-semibold text-neutral-500 text-center mb-2">
+                    Enter 6-Digit Verification Code
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    value={verifyCode}
+                    onChange={e => {
+                      const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 6);
+                      setVerifyCode(val);
+                      if (verifyError) setVerifyError('');
+                    }}
+                    placeholder="••••••"
+                    className={`w-full py-3.5 px-4 border text-center font-mono text-2xl tracking-[0.35em] text-[#1A1A1A] bg-[#FAF8F5]/60 focus:bg-white rounded-xl focus:outline-none transition ${
+                      verifyError ? 'border-red-400 bg-red-50/20' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
+                    }`}
+                  />
+                  {verifyError && (
+                    <p className="text-xs text-red-500 mt-2 text-center font-light">
+                      {verifyError}
+                    </p>
+                  )}
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={verifyBusy || verifyCode.length < 6}
+                  className="w-full py-3.5 sm:py-4 bg-[#1A1A1A] hover:bg-[#9C6B30] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase transition rounded-full flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer font-medium shadow-[0_4px_16px_rgba(26,26,26,0.12)] hover:shadow-[0_6px_22px_rgba(156,107,48,0.28)]"
+                >
+                  {verifyBusy && <Loader2 size={14} className="animate-spin" />}
+                  <span>VERIFY &amp; ACTIVATE ACCOUNT</span>
+                </button>
+              </form>
+
+              <div className="mt-6 pt-5 border-t border-[#EAE3D6] text-center space-y-3">
+                <div className="text-xs text-neutral-500">
+                  Didn't receive the email?{' '}
+                  <button
+                    type="button"
+                    onClick={handleResendCode}
+                    disabled={resendCooldown > 0 || resending}
+                    className="text-[#9C6B30] font-medium hover:underline disabled:text-neutral-400 disabled:no-underline cursor-pointer"
+                  >
+                    {resending
+                      ? 'Sending...'
+                      : resendCooldown > 0
+                      ? `Resend code in ${resendCooldown}s`
+                      : 'Resend code'}
+                  </button>
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode('register');
+                      setVerifyError('');
+                      setVerifyCode('');
+                    }}
+                    className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-800 transition cursor-pointer"
+                  >
+                    <ArrowLeft size={13} />
+                    <span>Change email / Back to registration</span>
+                  </button>
+                </div>
               </div>
             </div>
-
-            {err && (
-              <div className="text-center py-1">
-                <p className="text-xs text-red-600 font-medium">{err}</p>
-                {mode === 'login' && err.toLowerCase().includes('invalid') && (
-                  <button
-                    type="button"
-                    onClick={() => { setMode('register'); setErr(''); }}
-                    className="text-xs text-[#9C6B30] hover:underline font-medium mt-1 inline-block"
-                  >
-                    First time here? Create your account with this Gmail →
-                  </button>
-                )}
-                {mode === 'register' && err.toLowerCase().includes('already exists') && (
-                  <button
-                    type="button"
-                    onClick={() => { setMode('login'); setErr(''); }}
-                    className="text-xs text-[#9C6B30] hover:underline font-medium mt-1 inline-block"
-                  >
-                    Already have an account? Sign In here →
-                  </button>
-                )}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={busy}
-              className="w-full py-3.5 sm:py-4 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase hover:bg-[#9C6B30] transition rounded-full flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer font-medium"
-            >
-              {busy && <Loader2 size={14} className="animate-spin" />}
-              {mode === 'login' ? 'SIGN IN WITH GMAIL / EMAIL' : 'CREATE ACCOUNT WITH GMAIL / EMAIL'}
-            </button>
-          </form>
-
-          <div className="text-center mt-6 text-xs sm:text-sm text-neutral-500">
-            {mode === 'login' ? (
-              <>
-                New to MikuMantra?{' '}
-                <button
-                  type="button"
-                  onClick={() => { setMode('register'); setFieldErrors({}); setErr(''); }}
-                  className="text-[#9C6B30] hover:underline font-medium cursor-pointer"
-                >
-                  Create an account
-                </button>
-              </>
-            ) : (
-              <>
-                Already a member?{' '}
+          ) : (
+            <>
+              <div className="flex gap-2 mb-6 sm:mb-8 p-1 bg-[#FAF6EF] rounded-full w-fit mx-auto max-w-full overflow-x-auto">
                 <button
                   type="button"
                   onClick={() => { setMode('login'); setFieldErrors({}); setErr(''); }}
-                  className="text-[#9C6B30] hover:underline font-medium cursor-pointer"
+                  className={`px-5 sm:px-7 py-2 rounded-full text-[11px] tracking-[0.2em] uppercase font-medium transition shrink-0 cursor-pointer ${mode === 'login' ? 'bg-[#1A1A1A] text-white shadow-xs' : 'text-neutral-500 hover:text-neutral-800'}`}
                 >
-                  Sign in
+                  SIGN IN
                 </button>
-              </>
-            )}
-          </div>
+                <button
+                  type="button"
+                  onClick={() => { setMode('register'); setFieldErrors({}); setErr(''); }}
+                  className={`px-5 sm:px-7 py-2 rounded-full text-[11px] tracking-[0.2em] uppercase font-medium transition shrink-0 cursor-pointer ${mode === 'register' ? 'bg-[#1A1A1A] text-white shadow-xs' : 'text-neutral-500 hover:text-neutral-800'}`}
+                >
+                  CREATE ACCOUNT
+                </button>
+              </div>
 
-          
+              <h2 className="font-display text-3xl sm:text-4xl text-center text-[#1A1A1A] font-light break-words">
+                {mode === 'login' ? 'Welcome back' : 'Join MikuMantra'}
+              </h2>
+              <div className="gold-line w-12 mx-auto my-3 sm:my-4" />
+              <p className="text-center text-xs sm:text-sm text-neutral-500 mb-6 sm:mb-8">
+                {mode === 'login' ? 'Sign in to continue your journey.' : 'Create your account in seconds.'}
+              </p>
+
+              {/* Google Sign In Button */}
+              <div className="mb-5 sm:mb-6">
+                <div className="w-full flex flex-col items-center justify-center min-h-[44px]">
+                  <div
+                    ref={googleBtnContainerRef}
+                    className={`w-full flex justify-center ${googleRendered && !googleBusy ? 'block' : 'hidden'}`}
+                  />
+
+                  {(!googleRendered || googleBusy) && (
+                    <button
+                      type="button"
+                      onClick={handleManualGoogleClick}
+                      disabled={googleBusy || busy}
+                      className="w-full py-3 px-4 border border-[#E8E8E8] rounded-full text-sm font-medium text-neutral-800 hover:bg-[#FAF6EF]/60 hover:border-[#9C6B30]/40 transition flex items-center justify-center gap-3 shadow-2xs cursor-pointer disabled:opacity-60 bg-white"
+                    >
+                      {googleBusy ? (
+                        <Loader2 size={18} className="animate-spin text-[#9C6B30]" />
+                      ) : (
+                        <GoogleIcon className="w-5 h-5 shrink-0" />
+                      )}
+                      <span>{mode === 'login' ? 'Sign in with Google' : 'Sign up with Google'}</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="relative my-5 sm:my-6 text-center">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-[#E8E8E8]" />
+                  </div>
+                  <span className="relative bg-white px-3 sm:px-4 text-[10px] sm:text-[11px] tracking-[0.2em] sm:tracking-[0.25em] uppercase text-neutral-400 font-medium select-none">
+                    {mode === 'login' ? 'OR SIGN IN WITH PASSWORD' : 'OR SIGN UP WITH PASSWORD'}
+                  </span>
+                </div>
+              </div>
+
+              <form onSubmit={submit} className="space-y-4" noValidate>
+                {mode === 'register' && (
+                  <div>
+                    <div className="relative">
+                      <UserIcon size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" />
+                      <input
+                        value={form.name}
+                        onChange={e => {
+                          setForm({ ...form, name: e.target.value });
+                          if (fieldErrors.name) setFieldErrors(prev => ({ ...prev, name: '' }));
+                        }}
+                        placeholder="Full name"
+                        className={`w-full pl-11 pr-4 py-3 sm:py-3.5 border ${fieldErrors.name ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-full text-sm text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:border-[#9C6B30] transition`}
+                      />
+                    </div>
+                    {fieldErrors.name && <p className="text-xs text-red-500 mt-1 pl-4">{fieldErrors.name}</p>}
+                  </div>
+                )}
+
+                <div>
+                  <div className="relative">
+                    <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" />
+                    <input
+                      type="email"
+                      value={form.email}
+                      onChange={e => {
+                        setForm({ ...form, email: e.target.value });
+                        if (fieldErrors.email) setFieldErrors(prev => ({ ...prev, email: '' }));
+                      }}
+                      placeholder="Gmail or Email (e.g. yourname@gmail.com)"
+                      className={`w-full pl-11 pr-4 py-3 sm:py-3.5 border ${fieldErrors.email ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-full text-sm text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:border-[#9C6B30] transition`}
+                    />
+                  </div>
+                  {fieldErrors.email && <p className="text-xs text-red-500 mt-1 pl-4">{fieldErrors.email}</p>}
+                </div>
+
+                <div>
+                  <div className="relative">
+                    <Lock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" />
+                    <input
+                      type="password"
+                      value={form.password}
+                      onChange={e => {
+                        setForm({ ...form, password: e.target.value });
+                        if (fieldErrors.password) setFieldErrors(prev => ({ ...prev, password: '' }));
+                      }}
+                      placeholder={mode === 'login' ? 'Password' : 'Create password (min 6 characters)'}
+                      className={`w-full pl-11 pr-4 py-3 sm:py-3.5 border ${fieldErrors.password ? 'border-red-500 bg-red-50/20' : 'border-[#E8E8E8]'} rounded-full text-sm text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:border-[#9C6B30] transition`}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between mt-1.5 px-2">
+                    {fieldErrors.password ? (
+                      <p className="text-xs text-red-500">{fieldErrors.password}</p>
+                    ) : <div />}
+                    {mode === 'login' && (
+                      <button
+                        type="button"
+                        data-testid="login-forgot-password-link"
+                        onClick={() => {
+                          setForgotEmail(form.email || '');
+                          setForgotStep('request');
+                          setForgotErrors({ email: '', code: '', newPassword: '', confirmPassword: '' });
+                          setShowForgotModal(true);
+                        }}
+                        className="text-xs text-[#9C6B30] hover:underline font-medium cursor-pointer ml-auto"
+                      >
+                        Forgot password?
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {err && (
+                  <div className="text-center py-1">
+                    <p className="text-xs text-red-600 font-medium">{err}</p>
+                    {mode === 'login' && err.toLowerCase().includes('invalid') && (
+                      <button
+                        type="button"
+                        onClick={() => { setMode('register'); setErr(''); }}
+                        className="text-xs text-[#9C6B30] hover:underline font-medium mt-1 inline-block"
+                      >
+                        First time here? Create your account with this Gmail →
+                      </button>
+                    )}
+                    {mode === 'register' && err.toLowerCase().includes('already exists') && (
+                      <button
+                        type="button"
+                        onClick={() => { setMode('login'); setErr(''); }}
+                        className="text-xs text-[#9C6B30] hover:underline font-medium mt-1 inline-block"
+                      >
+                        Already have an account? Sign In here →
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="w-full py-3.5 sm:py-4 bg-[#1A1A1A] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase hover:bg-[#9C6B30] transition rounded-full flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer font-medium"
+                >
+                  {busy && <Loader2 size={14} className="animate-spin" />}
+                  {mode === 'login' ? 'SIGN IN WITH GMAIL / EMAIL' : 'CREATE ACCOUNT WITH GMAIL / EMAIL'}
+                </button>
+              </form>
+
+              <div className="text-center mt-6 text-xs sm:text-sm text-neutral-500">
+                {mode === 'login' ? (
+                  <>
+                    New to MikuMantra?{' '}
+                    <button
+                      type="button"
+                      onClick={() => { setMode('register'); setFieldErrors({}); setErr(''); }}
+                      className="text-[#9C6B30] hover:underline font-medium cursor-pointer"
+                    >
+                      Create an account
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    Already a member?{' '}
+                    <button
+                      type="button"
+                      onClick={() => { setMode('login'); setFieldErrors({}); setErr(''); }}
+                      className="text-[#9C6B30] hover:underline font-medium cursor-pointer"
+                    >
+                      Sign in
+                    </button>
+                  </>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
+
+      {/* Account Verification Modal Window */}
+      {showVerifyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white border border-[#E8E8E8] rounded-2xl w-full max-w-md p-6 sm:p-8 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200 my-auto">
+            <button
+              type="button"
+              onClick={() => setShowVerifyModal(false)}
+              className="absolute top-4 right-4 p-1.5 text-neutral-400 hover:text-neutral-800 rounded-full hover:bg-neutral-100 transition"
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+
+            <div className="text-center mb-6">
+              <div className="w-14 h-14 rounded-full bg-[#FAF5EB] border border-[#9C6B30]/30 text-[#9C6B30] flex items-center justify-center mx-auto mb-4 shadow-[0_4px_16px_rgba(156,107,48,0.12)]">
+                <ShieldCheck size={28} />
+              </div>
+              <h2 className="font-display text-2xl sm:text-3xl text-[#1A1A1A] font-light">
+                Verify Your Email
+              </h2>
+              <div className="gold-line w-12 mx-auto my-3" />
+              <p className="text-xs sm:text-sm text-neutral-500 max-w-sm mx-auto leading-relaxed">
+                We've sent a 6-digit verification code to
+              </p>
+              <div className="mt-2 inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-[#FAF5EB] text-[#9C6B30] font-medium text-xs border border-[#9C6B30]/20">
+                <Mail size={13} />
+                <span>{verifyEmail}</span>
+              </div>
+            </div>
+
+            {verifyDevCode && (
+              <div className="mb-5 p-3 rounded-xl bg-amber-50 border border-amber-200/80 text-center">
+                <div className="text-[11px] text-amber-800 font-medium">
+                  Test Mode / Quick Fill:
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVerifyCode(verifyDevCode);
+                    setVerifyError('');
+                  }}
+                  className="mt-1 text-xs font-mono font-bold tracking-widest text-amber-900 bg-amber-100 hover:bg-amber-200 px-3 py-1 rounded-md transition cursor-pointer"
+                >
+                  Fill Code: {verifyDevCode}
+                </button>
+              </div>
+            )}
+
+            <form onSubmit={handleVerifySubmit} className="space-y-5" noValidate>
+              <div>
+                <label className="block text-[10px] tracking-[0.2em] uppercase font-semibold text-neutral-500 text-center mb-2">
+                  Enter 6-Digit Verification Code
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  autoFocus
+                  value={verifyCode}
+                  onChange={e => {
+                    const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 6);
+                    setVerifyCode(val);
+                    if (verifyError) setVerifyError('');
+                  }}
+                  placeholder="••••••"
+                  className={`w-full py-3.5 px-4 border text-center font-mono text-2xl tracking-[0.35em] text-[#1A1A1A] bg-[#FAF8F5]/60 focus:bg-white rounded-xl focus:outline-none transition ${
+                    verifyError ? 'border-red-400 bg-red-50/20' : 'border-[#E2DBD1] focus:border-[#9C6B30]'
+                  }`}
+                />
+                {verifyError && (
+                  <p className="text-xs text-red-500 mt-2 text-center font-light">
+                    {verifyError}
+                  </p>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                disabled={verifyBusy || verifyCode.length < 6}
+                className="w-full py-3.5 sm:py-4 bg-[#1A1A1A] hover:bg-[#9C6B30] text-white text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.25em] uppercase transition rounded-full flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer font-medium shadow-[0_4px_16px_rgba(26,26,26,0.12)] hover:shadow-[0_6px_22px_rgba(156,107,48,0.28)]"
+              >
+                {verifyBusy && <Loader2 size={14} className="animate-spin" />}
+                <span>VERIFY &amp; ACTIVATE ACCOUNT</span>
+              </button>
+            </form>
+
+            <div className="mt-6 pt-5 border-t border-[#EAE3D6] text-center space-y-3">
+              <div className="text-xs text-neutral-500">
+                Didn't receive the email?{' '}
+                <button
+                  type="button"
+                  onClick={handleResendCode}
+                  disabled={resendCooldown > 0 || resending}
+                  className="text-[#9C6B30] font-medium hover:underline disabled:text-neutral-400 disabled:no-underline cursor-pointer"
+                >
+                  {resending
+                    ? 'Sending...'
+                    : resendCooldown > 0
+                    ? `Resend code in ${resendCooldown}s`
+                    : 'Resend code'}
+                </button>
+              </div>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowVerifyModal(false);
+                    setMode('register');
+                    setVerifyError('');
+                    setVerifyCode('');
+                  }}
+                  className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-800 transition cursor-pointer"
+                >
+                  <ArrowLeft size={13} />
+                  <span>Change email / Back to registration</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Forgot / Reset Password Modal */}
       {showForgotModal && (

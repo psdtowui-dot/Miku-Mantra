@@ -1,12 +1,14 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Loader2, Search, X } from 'lucide-react';
+import { Loader2, Search, X, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function AdminCustomers() {
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchVal, setSearchVal] = useState('');
   const [search, setSearch] = useState('');
+  const [deletingId, setDeletingId] = useState(null);
 
   const load = async (query = search) => {
     setLoading(true);
@@ -18,6 +20,25 @@ export default function AdminCustomers() {
       console.error(e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteCustomer = async (u) => {
+    if (!confirm(`Are you sure you want to permanently delete customer ${u.name || u.email}? All personal addresses and sessions will be deleted.`)) return;
+    setDeletingId(u.id);
+    try {
+      const r = await fetch(`/api/admin/customers/${u.id}`, { method: 'DELETE', credentials: 'include' });
+      const d = await r.json();
+      if (r.ok) {
+        toast.success(d.message || 'Customer deleted successfully');
+        load(search);
+      } else {
+        toast.error(d.error || 'Failed to delete customer');
+      }
+    } catch (e) {
+      toast.error('Network error deleting customer');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -74,12 +95,13 @@ export default function AdminCustomers() {
                   <th className="text-left p-3 min-w-[100px]">Phone</th>
                   <th className="text-left p-3">Role</th>
                   <th className="text-left p-3 min-w-[90px]">Joined</th>
+                  <th className="text-right p-3 min-w-[80px]">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
                 {list.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="p-8 text-center text-neutral-400">
+                    <td colSpan={6} className="p-8 text-center text-neutral-400">
                       No customers found
                     </td>
                   </tr>
@@ -100,6 +122,20 @@ export default function AdminCustomers() {
                       </td>
                       <td className="p-3 text-xs text-neutral-500">
                         {new Date(u.createdAt).toLocaleDateString('en-IN')}
+                      </td>
+                      <td className="p-3 text-right">
+                        {u.role !== 'admin' && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCustomer(u)}
+                            disabled={deletingId === u.id}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition cursor-pointer disabled:opacity-50"
+                            title="Delete customer account"
+                          >
+                            {deletingId === u.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                            <span className="hidden sm:inline">Delete</span>
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))
