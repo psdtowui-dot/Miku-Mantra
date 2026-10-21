@@ -65,11 +65,25 @@ export default function AdminActivityLogsPage() {
     loadLogs(page, search, actionFilter, moduleFilter);
   }, [page, search, actionFilter, moduleFilter]);
 
+  const formatDate = (val) => {
+    if (!val) return '—';
+    try {
+      const d = new Date(val);
+      return isNaN(d.getTime()) ? '—' : d.toLocaleString('en-IN');
+    } catch {
+      return '—';
+    }
+  };
+
   const getActionBadge = (action) => {
-    if (action.includes('CREATED') || action.includes('ENABLED')) {
+    if (!action || typeof action !== 'string') {
+      return 'bg-neutral-50 text-neutral-700 border-neutral-200';
+    }
+    const act = action.toUpperCase();
+    if (act.includes('CREATED') || act.includes('ENABLED') || act.includes('APPROVED')) {
       return 'bg-emerald-50 text-emerald-700 border-emerald-200';
     }
-    if (action.includes('DELETED') || action.includes('DISABLED')) {
+    if (act.includes('DELETED') || act.includes('DISABLED') || act.includes('REJECTED') || act.includes('CANCELLED')) {
       return 'bg-red-50 text-red-700 border-red-200';
     }
     return 'bg-amber-50 text-amber-700 border-amber-200';
@@ -174,24 +188,24 @@ export default function AdminActivityLogsPage() {
                     </td>
                   </tr>
                 ) : (
-                  logs.map((log) => (
-                    <tr key={log.id} className="hover:bg-neutral-50/60 transition-colors">
+                  logs.map((log, idx) => (
+                    <tr key={log.id || log._id || `log-${idx}`} className="hover:bg-neutral-50/60 transition-colors">
                       <td className="p-3.5 text-neutral-600 font-mono text-[11px] whitespace-nowrap">
-                        {log.createdAt ? new Date(log.createdAt).toLocaleString('en-IN') : '—'}
+                        {formatDate(log.createdAt)}
                       </td>
                       <td className="p-3.5">
                         <div className="font-medium text-neutral-900">{log.adminName || 'System'}</div>
-                        <div className="text-[11px] text-neutral-400 font-mono truncate max-w-[150px]" title={log.adminEmail}>
-                          {log.adminEmail}
+                        <div className="text-[11px] text-neutral-400 font-mono truncate max-w-[150px]" title={log.adminEmail || ''}>
+                          {log.adminEmail || 'system'}
                         </div>
                       </td>
                       <td className="p-3.5">
                         <span className={`inline-block px-2 py-0.5 rounded border text-[10px] font-mono font-semibold uppercase ${getActionBadge(log.action)}`}>
-                          {log.action}
+                          {log.action || 'SYSTEM'}
                         </span>
                       </td>
                       <td className="p-3.5 font-mono text-xs text-neutral-700">
-                        {log.module}
+                        {log.module || 'SYSTEM'}
                       </td>
                       <td className="p-3.5 text-neutral-800 text-xs">
                         <div className="font-medium">{log.targetName || log.targetId || '—'}</div>
@@ -273,20 +287,20 @@ export default function AdminActivityLogsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-neutral-50 p-2.5 rounded-lg border border-neutral-100">
                   <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-medium">Action</div>
-                  <div className="font-semibold text-neutral-800 mt-0.5">{selectedLog.action}</div>
+                  <div className="font-semibold text-neutral-800 mt-0.5">{selectedLog.action || '—'}</div>
                 </div>
                 <div className="bg-neutral-50 p-2.5 rounded-lg border border-neutral-100">
                   <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-medium">Module</div>
-                  <div className="font-semibold text-neutral-800 mt-0.5">{selectedLog.module}</div>
+                  <div className="font-semibold text-neutral-800 mt-0.5">{selectedLog.module || '—'}</div>
                 </div>
                 <div className="bg-neutral-50 p-2.5 rounded-lg border border-neutral-100">
                   <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-medium">Administrator</div>
-                  <div className="font-medium text-neutral-800 mt-0.5 truncate">{selectedLog.adminEmail}</div>
+                  <div className="font-medium text-neutral-800 mt-0.5 truncate">{selectedLog.adminEmail || selectedLog.adminName || 'System'}</div>
                 </div>
                 <div className="bg-neutral-50 p-2.5 rounded-lg border border-neutral-100">
                   <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-medium">Timestamp</div>
                   <div className="font-mono text-[11px] text-neutral-800 mt-0.5">
-                    {new Date(selectedLog.createdAt).toLocaleString('en-IN')}
+                    {formatDate(selectedLog.createdAt)}
                   </div>
                 </div>
               </div>
@@ -296,7 +310,7 @@ export default function AdminActivityLogsPage() {
                   Event Metadata Payload
                 </div>
                 <pre className="p-3 bg-neutral-900 text-neutral-200 rounded-xl font-mono text-xs overflow-x-auto max-h-60 border border-neutral-800">
-                  {JSON.stringify(selectedLog.metadata, null, 2)}
+                  {JSON.stringify(selectedLog.metadata && typeof selectedLog.metadata === 'object' ? selectedLog.metadata : {}, null, 2)}
                 </pre>
               </div>
 

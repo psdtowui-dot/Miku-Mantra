@@ -5141,7 +5141,21 @@ async function handleRoute(request, { params }) {
           .toArray();
 
         return ok({
-          logs: list.map(clean),
+          logs: list.map(doc => {
+            const c = clean(doc);
+            return {
+              id: c.id || (doc._id ? String(doc._id) : uuidv4()),
+              action: c.action || 'SYSTEM_EVENT',
+              module: c.module || 'SYSTEM',
+              adminName: c.adminName || 'System',
+              adminEmail: c.adminEmail || 'system',
+              targetId: c.targetId || null,
+              targetName: c.targetName || null,
+              metadata: c.metadata && typeof c.metadata === 'object' ? c.metadata : {},
+              ipAddress: c.ipAddress || 'unknown',
+              createdAt: c.createdAt || new Date()
+            };
+          }),
           total,
           page,
           limit,
@@ -6619,11 +6633,19 @@ async function handleRoute(request, { params }) {
 
           if (imported.length > 0 || updated.length > 0) {
             try {
-              await logAdminActivity(db, admin, 'products.import', {
-                importedCount: imported.length,
-                updatedCount: updated.length,
-                skippedCount: skipped.length,
-                failedCount: failed.length
+              await logAdminActivity(db, {
+                admin,
+                action: 'PRODUCTS_IMPORTED',
+                module: 'PRODUCTS',
+                targetId: 'batch_import',
+                targetName: `Batch Import (${imported.length} products)`,
+                metadata: {
+                  importedCount: imported.length,
+                  updatedCount: updated.length,
+                  skippedCount: skipped.length,
+                  failedCount: failed.length
+                },
+                request
               });
             } catch (logErr) {}
           }
