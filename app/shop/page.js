@@ -26,8 +26,12 @@ export async function generateMetadata({ searchParams }) {
   const title = applyTitleTemplate(pageSubject, settings.titleTemplate, siteName);
   const description = `Explore ${pageSubject} at ${siteName}. Handcrafted 22K gold, diamond & bridal jewellery. BIS hallmarked & certified heirlooms.`;
   
-  const rawQuery = new URLSearchParams(params || {}).toString();
-  const shopUrl = rawQuery ? `${siteUrl}/shop?${rawQuery}` : `${siteUrl}/shop`;
+  const canonicalParams = new URLSearchParams();
+  if (category) canonicalParams.set('category', category);
+  if (collection) canonicalParams.set('collection', collection);
+  if (gender) canonicalParams.set('gender', gender);
+  const cleanQuery = canonicalParams.toString();
+  const canonicalUrl = cleanQuery ? `${siteUrl}/shop?${cleanQuery}` : `${siteUrl}/shop`;
 
   const ogImage = toAbsoluteUrl(settings.shareBanner || settings.ogImage, siteUrl);
 
@@ -35,11 +39,11 @@ export async function generateMetadata({ searchParams }) {
     metadataBase: new URL(siteUrl),
     title,
     description,
-    alternates: { canonical: shopUrl },
+    alternates: { canonical: canonicalUrl },
     openGraph: {
       title,
       description,
-      url: shopUrl,
+      url: canonicalUrl,
       siteName,
       type: 'website',
       images: [

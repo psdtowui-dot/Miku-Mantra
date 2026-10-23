@@ -13,7 +13,7 @@ async function getSitemapData() {
     };
   }
 
-  const directUrl = process.env.MONGO_DIRECT_URL || "mongodb://akashsriv1984_db_user:2M5Edv773XLUmT15@ac-htqrxv1-shard-00-00.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-01.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-02.7szyylz.mongodb.net:27017/userPortal?ssl=true&replicaSet=atlas-1c5jr9-shard-0&authSource=admin&retryWrites=true&w=majority";
+  const directUrl = process.env.MONGO_DIRECT_URL;
   const mongoUrl = process.env.MONGO_URL || process.env.MONGODB_URI || process.env.MONGO_DIRECT_URL || directUrl;
   if (!mongoUrl) {
     return {
@@ -59,7 +59,7 @@ async function getSitemapData() {
 }
 
 export default async function sitemap() {
-  const base = process.env.NEXT_PUBLIC_BASE_URL || 'https://luxe-jewel-store.preview.emergentagent.com';
+  const base = process.env.NEXT_PUBLIC_BASE_URL || 'https://mikumantra.com';
   const now = new Date();
   const staticUrls = [
     { url: base, lastModified: now, changeFrequency: 'daily', priority: 1 },

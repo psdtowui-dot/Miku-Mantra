@@ -6,6 +6,8 @@ import {
   Loader2,
   Check,
   Copy,
+  Pencil,
+  RotateCcw,
   Eye,
   EyeOff,
   ShieldCheck,
@@ -23,6 +25,7 @@ export default function AdminPaymentSettings() {
   const [copiedWebhook, setCopiedWebhook] = useState(false);
   const [showSecret, setShowSecret] = useState(false);
   const [showWebhookSecret, setShowWebhookSecret] = useState(false);
+  const [isEditingWebhook, setIsEditingWebhook] = useState(false);
 
   const [form, setForm] = useState({
     razorpay: {
@@ -31,6 +34,7 @@ export default function AdminPaymentSettings() {
       keyId: '',
       keySecret: '',
       webhookSecret: '',
+      webhookUrl: '',
       businessName: 'MikuMantra Fine Jewellery',
       themeColor: '#9C6B30'
     },
@@ -62,6 +66,7 @@ export default function AdminPaymentSettings() {
             keyId: rzp.keyId || '',
             keySecret: '', // always empty on load for security
             webhookSecret: '',
+            webhookUrl: rzp.webhookUrl || '',
             businessName: rzp.businessName || data.siteName || 'MikuMantra Fine Jewellery',
             themeColor: rzp.themeColor || '#9C6B30'
           },
@@ -101,6 +106,7 @@ export default function AdminPaymentSettings() {
             keyId: form.razorpay.keyId.trim(),
             keySecret: form.razorpay.keySecret.trim(),
             webhookSecret: form.razorpay.webhookSecret.trim(),
+            webhookUrl: form.razorpay.webhookUrl.trim(),
             businessName: form.razorpay.businessName.trim() || 'MikuMantra Fine Jewellery',
             themeColor: form.razorpay.themeColor || '#9C6B30'
           },
@@ -131,11 +137,13 @@ export default function AdminPaymentSettings() {
     setSaving(false);
   };
 
-  const webhookUrl = `${serverMeta.siteUrl || (typeof window !== 'undefined' ? window.location.origin : '')}/api/payment/razorpay/webhook`;
+  const rawBase = (serverMeta.siteUrl || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/+$/, '');
+  const defaultWebhookUrl = `${rawBase}/api/payment/razorpay/webhook`;
+  const effectiveWebhookUrl = (form.razorpay.webhookUrl && form.razorpay.webhookUrl.trim()) || defaultWebhookUrl;
 
   const copyWebhookToClipboard = () => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(webhookUrl);
+      navigator.clipboard.writeText(effectiveWebhookUrl);
       setCopiedWebhook(true);
       toast.success('Webhook URL copied to clipboard');
       setTimeout(() => setCopiedWebhook(false), 2500);
@@ -417,24 +425,81 @@ export default function AdminPaymentSettings() {
                 </button>
               </div>
 
-              {/* Webhook Endpoint Box */}
-              <div className="mt-3 p-3.5 bg-neutral-50 rounded-lg border border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-neutral-500">
-                    Webhook Callback Endpoint
+              {/* Webhook Endpoint Box with Edit Option */}
+              <div className="mt-3 p-3.5 bg-neutral-50 rounded-lg border border-neutral-200 space-y-2.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block">
+                      Webhook Callback Endpoint
+                    </label>
+                    <span className="text-[11px] text-neutral-400">
+                      {isEditingWebhook ? 'Enter a custom webhook endpoint or tunnel URL for Razorpay' : 'Configure this URL in your Razorpay Dashboard -> Webhooks'}
+                    </span>
                   </div>
-                  <div className="font-mono text-xs text-neutral-800 truncate mt-0.5 select-all">
-                    {webhookUrl}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingWebhook(!isEditingWebhook)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-neutral-200 rounded-md text-xs text-neutral-700 hover:bg-neutral-100 shrink-0 font-medium transition cursor-pointer"
+                    >
+                      <Pencil size={13} className="text-[#9C6B30]" />
+                      {isEditingWebhook ? 'Close Edit' : 'Edit URL'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={copyWebhookToClipboard}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-neutral-200 rounded-md text-xs text-neutral-700 hover:bg-neutral-100 shrink-0 font-medium transition cursor-pointer"
+                    >
+                      {copiedWebhook ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                      {copiedWebhook ? 'Copied' : 'Copy URL'}
+                    </button>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={copyWebhookToClipboard}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-neutral-200 rounded-md text-xs text-neutral-700 hover:bg-neutral-100 shrink-0 font-medium transition"
-                >
-                  {copiedWebhook ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
-                  {copiedWebhook ? 'Copied' : 'Copy URL'}
-                </button>
+
+                {isEditingWebhook ? (
+                  <div className="space-y-2 pt-1">
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="url"
+                        value={form.razorpay.webhookUrl}
+                        onChange={e => setForm(prev => ({
+                          ...prev,
+                          razorpay: { ...prev.razorpay, webhookUrl: e.target.value }
+                        }))}
+                        placeholder={defaultWebhookUrl}
+                        className="flex-1 px-3 py-2 bg-white border border-neutral-300 rounded-lg text-xs font-mono text-neutral-900 focus:outline-none focus:border-[#9C6B30]"
+                      />
+                      {form.razorpay.webhookUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setForm(prev => ({
+                            ...prev,
+                            razorpay: { ...prev.razorpay, webhookUrl: '' }
+                          }))}
+                          className="flex items-center justify-center gap-1 px-3 py-2 bg-neutral-200 hover:bg-neutral-300 rounded-lg text-xs text-neutral-700 font-medium transition cursor-pointer shrink-0"
+                        >
+                          <RotateCcw size={12} />
+                          Reset Default
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-neutral-500">
+                      <span>Default Atelier Endpoint: <code className="text-neutral-700 select-all">{defaultWebhookUrl}</code></span>
+                      <span className="text-neutral-400">Remember to click "Save Settings" after editing</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-0.5">
+                    <div className="font-mono text-xs text-neutral-800 truncate select-all bg-white px-2.5 py-2 rounded border border-neutral-200 flex-1">
+                      {effectiveWebhookUrl}
+                    </div>
+                    {form.razorpay.webhookUrl && (
+                      <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-1 rounded font-semibold uppercase tracking-wider shrink-0">
+                        Custom Override
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>

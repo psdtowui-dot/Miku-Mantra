@@ -161,6 +161,10 @@ export default function CartPage() {
     if (couponCode) sessionStorage.setItem(couponKey, JSON.stringify({ code: couponCode, discount, gift }));
     else sessionStorage.removeItem(couponKey);
     if (gift) sessionStorage.setItem(giftKey, '1'); else sessionStorage.removeItem(giftKey);
+    if (!user) {
+      router.push('/login?redirect=/checkout');
+      return;
+    }
     router.push('/checkout');
   };
 

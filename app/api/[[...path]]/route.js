@@ -60,9 +60,22 @@ function cacheGet(k) {
 function cacheSet(k, v, ttlMs = 300000) {
   _cache.set(k, { v, exp: Date.now() + ttlMs });
 }
+async function getCachedSiteSettings(db, forceFresh = false) {
+  if (!forceFresh) {
+    const cached = cacheGet('cached_site_settings');
+    if (cached) return cached;
+  }
+  const doc = await db.collection('site_settings').findOne({ id: 'default' });
+  if (doc) cacheSet('cached_site_settings', doc, 60000);
+  return doc;
+}
+
 function cacheBust(prefix, { revalidateLayout = false } = {}) {
   for (const k of _cache.keys()) {
     if (!prefix || k.startsWith(prefix)) _cache.delete(k);
+  }
+  if (!prefix || prefix.includes('setting')) {
+    _cache.delete('cached_site_settings');
   }
   if (!prefix || prefix.includes('product')) {
     _cache.delete('homepage_data');
@@ -719,8 +732,35 @@ async function syncCategoryAndCollectionFilterOptions(db) {
 }
 
 const SESSION_COOKIE = 'mikumantra_session', SESSION_DAYS = 30
-function hashPassword(password, salt) { const s = salt || crypto.randomBytes(16).toString('hex'); const h = crypto.pbkdf2Sync(password, s, 10000, 64, 'sha512').toString('hex'); return { salt: s, hash: h } }
-function verifyPassword(password, salt, hash) { return crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex') === hash }
+const PBKDF2_ITERATIONS = 210000;
+const LEGACY_ITERATIONS = 10000;
+
+function hashPassword(password, salt, iterations = PBKDF2_ITERATIONS) {
+  const s = salt || crypto.randomBytes(16).toString('hex');
+  const h = crypto.pbkdf2Sync(password, s, iterations, 64, 'sha512').toString('hex');
+  return { salt: s, hash: String(iterations) + '$' + h };
+}
+
+function verifyPassword(password, salt, storedHash) {
+  if (!storedHash || !salt) return false;
+  try {
+    if (storedHash.includes('$')) {
+      const parts = storedHash.split('$');
+      const iter = parseInt(parts[0], 10) || PBKDF2_ITERATIONS;
+      const hashVal = parts[1];
+      const computed = crypto.pbkdf2Sync(password, salt, iter, 64, 'sha512').toString('hex');
+      const b1 = Buffer.from(computed, 'hex');
+      const b2 = Buffer.from(hashVal, 'hex');
+      return b1.length === b2.length && crypto.timingSafeEqual(b1, b2);
+    }
+    const legacyComputed = crypto.pbkdf2Sync(password, salt, LEGACY_ITERATIONS, 64, 'sha512').toString('hex');
+    const b1 = Buffer.from(legacyComputed, 'hex');
+    const b2 = Buffer.from(storedHash, 'hex');
+    return b1.length === b2.length && crypto.timingSafeEqual(b1, b2);
+  } catch (e) {
+    return false;
+  }
+}
 
 // Helpers for admin email resolution from .env and database
 let cachedEnvAdminEmails = null;
@@ -826,7 +866,8 @@ async function syncEnvAdminEmailsWithDatabase(db) {
       if (!em) continue;
       const existing = await db.collection('users').findOne({ email: em });
       if (!existing) {
-        const { salt, hash } = hashPassword('12341234');
+        const randomInitialPwd = crypto.randomBytes(24).toString('base64url');
+        const { salt, hash } = hashPassword(randomInitialPwd);
         await db.collection('users').insertOne({
           id: uuidv4(),
           name: 'MikuMantra Admin',
@@ -1059,6 +1100,40 @@ async function createAuditLog(db, { returnId, orderId, action, performedBy, oldS
 }
 
 
+async function executeRazorpayRefund({ db, paymentId, amountInPaise, idempotencyKey, notes, receipt }) {
+  try {
+    const currentSettings = await getCachedSiteSettings(db);
+    const effectiveKeyId = (currentSettings?.paymentSettings?.razorpay?.keyId && currentSettings.paymentSettings.razorpay.keyId.trim()) || process.env.RAZORPAY_KEY_ID;
+    const effectiveKeySecret = (currentSettings?.paymentSettings?.razorpay?.keySecret && currentSettings.paymentSettings.razorpay.keySecret.trim()) || process.env.RAZORPAY_KEY_SECRET;
+
+    const isMockPayment = !paymentId || paymentId.startsWith('pay_MOCK') || paymentId.startsWith('pay_TEST');
+    if (!isMockPayment && effectiveKeySecret && effectiveKeyId) {
+      const authHeader = 'Basic ' + Buffer.from(String(effectiveKeyId) + ':' + String(effectiveKeySecret)).toString('base64');
+      const rzpRes = await fetch('https://api.razorpay.com/v1/payments/' + paymentId + '/refund', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': authHeader,
+          ...(idempotencyKey ? { 'X-Razorpay-Idempotency-Key': idempotencyKey } : {})
+        },
+        body: JSON.stringify({
+          amount: Math.round(amountInPaise),
+          notes: notes || {},
+          receipt: receipt || ('ref_' + uuidv4().slice(0, 8))
+        })
+      });
+      const rzpData = await rzpRes.json().catch(() => ({}));
+      if (!rzpRes.ok) {
+        return { success: false, error: rzpData.error?.description || ('Razorpay Refund API HTTP ' + rzpRes.status) };
+      }
+      return { success: true, gatewayRefundId: rzpData.id };
+    }
+    return { success: true, gatewayRefundId: 'rfnd_MOCK_' + uuidv4().slice(0, 12) };
+  } catch (err) {
+    return { success: false, error: err.message || 'Payment gateway refund failed' };
+  }
+}
+
 async function handleRoute(request, { params }) {
   const { path = [] } = await params
   const route = `/${path.join('/')}`
@@ -1121,6 +1196,9 @@ async function handleRoute(request, { params }) {
       const folder = parts[0];
       const filename = parts.slice(1).join('/');
       if (!filename) return err('File name required', 400);
+      if (filename.includes('..') || filename.includes('\\') || (folder !== 'uploads' && folder !== 'images')) {
+        return err('Invalid path parameter', 400);
+      }
 
       let buffer = null;
       let contentType = null;
@@ -1691,7 +1769,8 @@ async function handleRoute(request, { params }) {
       if (isEnvAdmin) {
         const uCount = await db.collection('users').countDocuments({ email: em })
         if (uCount === 0) {
-          const { salt, hash } = hashPassword('12341234')
+          const randomInitialAdminPwd = crypto.randomBytes(24).toString('base64url');
+          const { salt, hash } = hashPassword(randomInitialAdminPwd)
           await db.collection('users').insertOne({
             id: uuidv4(),
             name: 'MikuMantra Admin',
@@ -2276,8 +2355,6 @@ async function handleRoute(request, { params }) {
         success: true,
         message,
         sent: emailResult.sent,
-        code: emailResult.sent ? undefined : code,
-        devCode: code,
         email: em
       });
     }
@@ -2530,7 +2607,7 @@ async function handleRoute(request, { params }) {
         return ok({ items: [], subtotal: 0, discount: 0, coupon: null, couponCode: null, couponValid: true, total: 0 });
       }
 
-      let siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+      let siteSettings = await getCachedSiteSettings(db);
       const shippingConfig = {
         ...DEFAULT_SITE_SETTINGS.shipping,
         ...((siteSettings && siteSettings.shipping) || {})
@@ -2882,6 +2959,23 @@ async function handleRoute(request, { params }) {
       if (chosenPayment === 'razorpay' && payConfig?.razorpay?.enabled === false) {
         return err('Razorpay payment method is currently disabled by store administrator.', 400);
       }
+      if (chosenPayment === 'razorpay') {
+        const rzpConfig = payConfig?.razorpay;
+        const keySecret = (rzpConfig?.keySecret && rzpConfig.keySecret.trim()) || process.env.RAZORPAY_KEY_SECRET;
+        const { razorpayPaymentId, razorpayOrderId, razorpaySignature } = body;
+        if (!razorpayPaymentId || !razorpayOrderId || !razorpaySignature) {
+          return err('Missing payment ID, order ID, or signature for Razorpay payment.', 400);
+        }
+        if (keySecret && !razorpayOrderId.startsWith('order_MOCK')) {
+          const generatedSignature = crypto
+            .createHmac('sha256', keySecret)
+            .update(razorpayOrderId + '|' + razorpayPaymentId)
+            .digest('hex');
+          if (generatedSignature !== razorpaySignature) {
+            return err('Payment verification failed: invalid signature.', 400);
+          }
+        }
+      }
       if (chosenPayment === 'cod' && payConfig?.cod?.enabled === false) {
         return err('Cash on Delivery payment method is currently disabled by store administrator.', 400);
       }
@@ -3226,14 +3320,34 @@ async function handleRoute(request, { params }) {
       const actor = isActorAdmin ? 'admin' : 'customer';
 
       const isPaid = order.paymentStatus === 'paid' || (order.payment !== 'cod' && order.paymentStatus !== 'pending');
-      const refundDoc = isPaid ? {
-        refundStatus: 'refund_initiated',
-        refundAmount: order.amounts?.total || 0,
-        refundId: order.razorpayPaymentId ? `ref_${order.razorpayPaymentId}` : `ref_MOCK_${uuidv4().slice(0, 8)}`,
-        refundInitiatedAt: now
-      } : {
-        refundStatus: 'not_applicable'
-      };
+      let refundDoc = { refundStatus: 'not_applicable' };
+      if (isPaid) {
+        let gatewayRefundId = null;
+        let refundStatus = 'refund_initiated';
+        if (order.payment === 'razorpay' && order.razorpayPaymentId) {
+          const refundRes = await executeRazorpayRefund({
+            db,
+            paymentId: order.razorpayPaymentId,
+            amountInPaise: (order.amounts?.total || 0) * 100,
+            idempotencyKey: 'cancel_' + order.id,
+            notes: { orderId: order.id, orderNumber: order.orderNumber, reason: cancellationReasonStr },
+            receipt: 'ref_' + order.id.slice(0, 10)
+          });
+          if (refundRes.success) {
+            gatewayRefundId = refundRes.gatewayRefundId;
+            refundStatus = 'refund_completed';
+          } else {
+            console.warn('Razorpay auto-refund notice for order', order.orderNumber, refundRes.error);
+          }
+        }
+        refundDoc = {
+          refundStatus,
+          refundAmount: order.amounts?.total || 0,
+          refundId: gatewayRefundId || (order.razorpayPaymentId ? ('ref_' + order.razorpayPaymentId) : ('ref_MOCK_' + uuidv4().slice(0, 8))),
+          gatewayRefundId: gatewayRefundId || null,
+          refundInitiatedAt: now
+        };
+      }
 
       const updateResult = await db.collection('orders').updateOne(
         {
@@ -3697,10 +3811,13 @@ async function handleRoute(request, { params }) {
       try {
         const bodyText = await request.text();
         const signature = request.headers.get('x-razorpay-signature');
-        const siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+        const siteSettings = await getCachedSiteSettings(db);
         const webhookSecret = (siteSettings?.paymentSettings?.razorpay?.webhookSecret && siteSettings.paymentSettings.razorpay.webhookSecret.trim()) || process.env.RAZORPAY_WEBHOOK_SECRET;
 
-        if (webhookSecret && signature) {
+        if (webhookSecret) {
+          if (!signature) {
+            return err('Missing webhook signature.', 400);
+          }
           const expectedSig = crypto.createHmac('sha256', webhookSecret).update(bodyText).digest('hex');
           if (signature !== expectedSig) {
             return err('Invalid webhook signature.', 400);
@@ -3827,7 +3944,7 @@ async function handleRoute(request, { params }) {
       const body = await request.json();
       let orderAmount = Number(body.amount);
 
-      const siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+      const siteSettings = await getCachedSiteSettings(db);
       const rzpConfig = siteSettings?.paymentSettings?.razorpay;
       if (rzpConfig && rzpConfig.enabled === false) {
         return err('Razorpay payment gateway is currently disabled by store administrator.', 400);
@@ -5869,6 +5986,7 @@ async function handleRoute(request, { params }) {
                 hasKeySecret,
                 hasWebhookSecret,
                 webhookSecret: rawPay?.razorpay?.webhookSecret ? '••••••••' : '',
+                webhookUrl: rawPay?.razorpay?.webhookUrl || '',
                 businessName: rawPay?.razorpay?.businessName || 'MikuMantra Fine Jewellery',
                 themeColor: rawPay?.razorpay?.themeColor || '#9C6B30'
               },
@@ -5947,6 +6065,7 @@ async function handleRoute(request, { params }) {
                 keyId: (newRzp.keyId || '').trim(),
                 keySecret: finalKeySecret,
                 webhookSecret: finalWebhookSecret,
+                webhookUrl: typeof newRzp.webhookUrl === 'string' ? newRzp.webhookUrl.trim() : (currentRzp.webhookUrl || ''),
                 businessName: newRzp.businessName || 'MikuMantra Fine Jewellery',
                 themeColor: newRzp.themeColor || '#9C6B30'
               },
@@ -6077,6 +6196,7 @@ async function handleRoute(request, { params }) {
                 hasKeySecret: Boolean((updatedRawPay?.razorpay?.keySecret && updatedRawPay.razorpay.keySecret.trim()) || process.env.RAZORPAY_KEY_SECRET),
                 hasWebhookSecret: Boolean((updatedRawPay?.razorpay?.webhookSecret && updatedRawPay.razorpay.webhookSecret.trim()) || process.env.RAZORPAY_WEBHOOK_SECRET),
                 webhookSecret: updatedRawPay?.razorpay?.webhookSecret ? '••••••••' : '',
+                webhookUrl: updatedRawPay?.razorpay?.webhookUrl || '',
                 businessName: updatedRawPay?.razorpay?.businessName || 'MikuMantra Fine Jewellery',
                 themeColor: updatedRawPay?.razorpay?.themeColor || '#9C6B30'
               },
@@ -6364,6 +6484,9 @@ async function handleRoute(request, { params }) {
       }
 
       if (sub === 'dashboard' && method === 'GET') {
+        if (!hasPermission(admin, 'dashboard.view') && !hasPermission(admin, 'reports.view')) {
+          return err('Permission denied: dashboard.view required', 403);
+        }
         const cached = cacheGet('admin_dashboard');
         if (cached) return ok(cached);
         const [orders, users, products, revenue, totalOrders] = await Promise.all([
@@ -6384,6 +6507,9 @@ async function handleRoute(request, { params }) {
 
       // Upload media
       if (sub === 'upload' && method === 'POST') {
+        if (!hasPermission(admin, 'products.create') && !hasPermission(admin, 'products.edit') && !hasPermission(admin, 'settings.edit')) {
+          return err('Permission denied: upload permission required', 403);
+        }
         try {
           const formData = await request.formData();
           const file = formData.get('file');
@@ -6649,7 +6775,8 @@ async function handleRoute(request, { params }) {
 
               const imagesDir = pathModule.join(process.cwd(), 'public', 'images');
               if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir, { recursive: true });
-              fs.writeFileSync(pathModule.join(imagesDir, cleanName), buffer);
+              const safeImageName = fs.existsSync(pathModule.join(imagesDir, cleanName)) ? filename : cleanName;
+              fs.writeFileSync(pathModule.join(imagesDir, safeImageName), buffer);
             } catch (fsErr) {
               console.warn('Filesystem upload write warning:', fsErr.message);
             }
@@ -6660,7 +6787,7 @@ async function handleRoute(request, { params }) {
               cleanName,
               url: savedToDb ? `/api/uploads/${filename}` : `/uploads/${filename}`,
               staticUrl: `/uploads/${filename}`,
-              imageUrl: `/images/${cleanName}`
+              imageUrl: `/images/${fs.existsSync(pathModule.join(process.cwd(), 'public', 'images', cleanName)) ? filename : cleanName}`
             });
           }
 
@@ -7487,6 +7614,15 @@ async function handleRoute(request, { params }) {
       // Collections, Banners, Coupons CRUD (uniform)
       for (const col of ['collections', 'banners', 'coupons']) {
         if (sub === col && method === 'GET') {
+          if (col === 'collections' && !hasPermission(admin, 'products.view') && !hasPermission(admin, 'settings.view')) {
+            return err('Permission denied: products.view required', 403);
+          }
+          if (col === 'banners' && !hasPermission(admin, 'settings.view')) {
+            return err('Permission denied: settings.view required', 403);
+          }
+          if (col === 'coupons' && !hasPermission(admin, 'products.view') && !hasPermission(admin, 'settings.view')) {
+            return err('Permission denied: products.view required', 403);
+          }
           const cached = cacheGet('admin_' + col);
           if (cached) return ok(cached);
           const list = await db.collection(col).find({}).toArray();
@@ -7495,6 +7631,15 @@ async function handleRoute(request, { params }) {
           return ok(r);
         }
         if (sub === col && method === 'POST') {
+          if (col === 'collections' && !hasPermission(admin, 'products.create') && !hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied: products.create required', 403);
+          }
+          if (col === 'banners' && !hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied: settings.edit required', 403);
+          }
+          if (col === 'coupons' && !hasPermission(admin, 'products.create') && !hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied: products.create required', 403);
+          }
           const b = await request.json();
           if (col === 'collections') {
             if (!b.name || !b.name.trim()) return err('Collection name is required', 400);
@@ -7531,6 +7676,15 @@ async function handleRoute(request, { params }) {
           return ok({ item: clean(doc) });
         }
         if (sub.startsWith(col + '/') && method === 'PUT') {
+          if (col === 'collections' && !hasPermission(admin, 'products.edit') && !hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied: products.edit required', 403);
+          }
+          if (col === 'banners' && !hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied: settings.edit required', 403);
+          }
+          if (col === 'coupons' && !hasPermission(admin, 'products.edit') && !hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied: products.edit required', 403);
+          }
           const id = sub.split('/')[1];
           const b = await request.json();
           if (col === 'collections') {
@@ -7570,6 +7724,15 @@ async function handleRoute(request, { params }) {
           return ok({ item: clean(up) });
         }
         if (sub.startsWith(col + '/') && method === 'DELETE') {
+          if (col === 'collections' && !hasPermission(admin, 'products.delete') && !hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied: products.delete required', 403);
+          }
+          if (col === 'banners' && !hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied: settings.edit required', 403);
+          }
+          if (col === 'coupons' && !hasPermission(admin, 'products.delete') && !hasPermission(admin, 'settings.edit')) {
+            return err('Permission denied: products.delete required', 403);
+          }
           const id = sub.split('/')[1];
           _cache.delete('admin_' + col);
 
@@ -7808,9 +7971,28 @@ async function handleRoute(request, { params }) {
 
           const isPaid = existingOrder.paymentStatus === 'paid' || (existingOrder.payment !== 'cod' && existingOrder.paymentStatus !== 'pending');
           if (isPaid) {
-            setDoc.refundStatus = 'refund_initiated';
+            let gatewayRefundId = null;
+            let refundStatus = 'refund_initiated';
+            if (existingOrder.payment === 'razorpay' && existingOrder.razorpayPaymentId) {
+              const refundRes = await executeRazorpayRefund({
+                db,
+                paymentId: existingOrder.razorpayPaymentId,
+                amountInPaise: (existingOrder.amounts?.total || 0) * 100,
+                idempotencyKey: 'cancel_' + existingOrder.id,
+                notes: { orderId: existingOrder.id, orderNumber: existingOrder.orderNumber, reason: b.reason || 'Admin cancellation' },
+                receipt: 'ref_' + existingOrder.id.slice(0, 10)
+              });
+              if (refundRes.success) {
+                gatewayRefundId = refundRes.gatewayRefundId;
+                refundStatus = 'refund_completed';
+              } else {
+                console.warn('Razorpay auto-refund notice for admin cancelled order', existingOrder.orderNumber, refundRes.error);
+              }
+            }
+            setDoc.refundStatus = refundStatus;
             setDoc.refundAmount = existingOrder.amounts?.total || 0;
-            setDoc.refundId = existingOrder.razorpayPaymentId ? `ref_${existingOrder.razorpayPaymentId}` : `ref_MOCK_${uuidv4().slice(0, 8)}`;
+            setDoc.refundId = gatewayRefundId || (existingOrder.razorpayPaymentId ? ('ref_' + existingOrder.razorpayPaymentId) : ('ref_MOCK_' + uuidv4().slice(0, 8)));
+            setDoc.gatewayRefundId = gatewayRefundId || null;
             setDoc.refundInitiatedAt = now;
           } else {
             setDoc.refundStatus = 'not_applicable';

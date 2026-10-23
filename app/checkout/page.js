@@ -281,7 +281,7 @@ export default function CheckoutPage() {
     if (orderSuccessRef.current || placing) return;
     if (!user) {
       toast.error('Please login or create an account before placing your order.');
-      router.push('/login?redirect=/checkout');
+      router.replace('/login?redirect=/checkout');
       return;
     }
     if (items.length === 0) {
@@ -372,10 +372,15 @@ export default function CheckoutPage() {
         return { paid: false };
       }
 
-      const isMock = !window.Razorpay || rzOrder.mock || rzOrder.key?.includes('mock');
+      if (!window.Razorpay && !rzOrder.mock && !rzOrder.key?.includes('mock')) {
+        toast.error('Razorpay payment gateway failed to load. Please disable ad-blockers and try again.');
+        return { paid: false };
+      }
+
+      const isMock = rzOrder.mock || rzOrder.key?.includes('mock');
       if (isMock) {
         setPlacingStatus('Payment confirmed…');
-        return { paid: true, paymentId: 'pay_MOCK' + Math.random().toString(36).slice(2, 10) };
+        return { paid: true, paymentId: 'pay_MOCK' + Math.random().toString(36).slice(2, 10), orderId: rzOrder.id, signature: 'mock_signature' };
       }
 
       setPlacingStatus('Opening payment…');
@@ -399,7 +404,7 @@ export default function CheckoutPage() {
                 body: JSON.stringify(resp)
               });
               const vd = await v.json();
-              resolve({ paid: vd.verified, paymentId: vd.paymentId });
+              resolve({ paid: vd.verified, paymentId: vd.paymentId, orderId: resp.razorpay_order_id, signature: resp.razorpay_signature });
             } catch (verErr) {
               console.error('Verification error:', verErr);
               resolve({ paid: false });
@@ -429,6 +434,8 @@ export default function CheckoutPage() {
       }
 
       let razorpayPaymentId = null;
+      let razorpayOrderId = null;
+      let razorpaySignature = null;
       if (payment === 'razorpay') {
         const res = await payWithRazorpay();
         if (!res.paid) {
@@ -437,7 +444,11 @@ export default function CheckoutPage() {
           setPlacingStatus('');
           return;
         }
-        razorpayPaymentId = res.paymentId;
+        razorpayPaymentId,
+        razorpayOrderId,
+        razorpaySignature = res.paymentId;
+        razorpayOrderId = res.orderId;
+        razorpaySignature = res.signature;
       }
 
       setPlacingStatus('Confirming your order…');
@@ -449,7 +460,9 @@ export default function CheckoutPage() {
         coupon: coupon?.code || storeCoupon?.code || null,
         discount,
         giftWrap: gift,
-        razorpayPaymentId
+        razorpayPaymentId,
+        razorpayOrderId,
+        razorpaySignature
       };
 
       const r = await authFetch('/api/orders', {
@@ -495,13 +508,23 @@ export default function CheckoutPage() {
     }
   }
 
-  if (authLoading || !hydrated || !user) {
+  if (authLoading || !hydrated) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
         <Loader2 className="animate-spin text-[#9C6B30]" size={36} />
       </div>
     );
   }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-white gap-3">
+        <Loader2 className="animate-spin text-[#9C6B30]" size={36} />
+        <p className="text-sm text-neutral-500 font-sans">Redirecting to login...</p>
+      </div>
+    );
+  }
+
 
   return (
     <main className="bg-white min-h-screen">

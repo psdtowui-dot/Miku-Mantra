@@ -1,4 +1,5 @@
 import ProductClient from './product-client';
+import { notFound } from 'next/navigation';
 import { getSiteSettings, getProductBySlugDB, getCanonicalBaseUrl, toAbsoluteUrl, applyTitleTemplate } from '@/lib/db-site-settings';
 
 export const dynamic = 'force-dynamic';
@@ -12,6 +13,7 @@ export async function generateMetadata({ params }){
   ]);
 
   const siteName = settings.siteName || 'MikuMantra Fine Jewellery';
+
   const siteUrl = getCanonicalBaseUrl(settings);
 
   if (!p) {
@@ -19,7 +21,8 @@ export async function generateMetadata({ params }){
     return {
       metadataBase: new URL(siteUrl),
       title: notFoundTitle,
-      description: settings.seoDescription
+      description: settings.seoDescription,
+      robots: { index: false, follow: false }
     };
   }
 
@@ -68,6 +71,10 @@ export default async function Page({ params }){
     getProductBySlugDB(slug),
     getSiteSettings()
   ]);
+  if (!p) {
+    notFound();
+  }
+
   const siteUrl = getCanonicalBaseUrl(settings);
   const productUrl = p ? `${siteUrl}/product/${p.slug || slug}` : '';
 

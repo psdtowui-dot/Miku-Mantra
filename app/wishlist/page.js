@@ -23,8 +23,17 @@ export default function WishlistPage() {
   useEffect(() => {
     let isMounted = true;
     async function loadCatalog() {
+      if (wishlistLoading) return;
+      if (!ids || ids.length === 0) {
+        if (isMounted) {
+          setProductsList([]);
+          setLoadingProducts(false);
+        }
+        return;
+      }
       try {
-        const r = await fetch('/api/products?limit=100', { cache: 'no-store' });
+        const queryParam = ids.length > 0 ? `ids=${encodeURIComponent(ids.join(','))}&limit=250` : 'limit=100';
+        const r = await fetch(`/api/products?${queryParam}`, { cache: 'no-store' });
         if (r.ok && isMounted) {
           const d = await r.json();
           if (Array.isArray(d.products)) setProductsList(d.products);
@@ -39,7 +48,7 @@ export default function WishlistPage() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [ids, wishlistLoading]);
 
   if (authLoading || (!user && !authLoading) || (user && loadingProducts && wishlistLoading)) {
     return (
