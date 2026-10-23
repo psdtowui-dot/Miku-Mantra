@@ -204,7 +204,47 @@ const DEFAULT_SITE_SETTINGS = {
     duration: 30,
     unit: 'minutes'
   },
-  customerReviewsEnabled: true
+  customerReviewsEnabled: true,
+  zoomSettings: {
+    enabled: true,
+    mode: 'side-by-side',
+    zoomLevel: 2.5,
+    showCrosshair: true,
+    lensSize: 160,
+    lensBorderColor: '#D4AF37',
+    allowCustomerToggle: true,
+    modalZoomEnabled: true,
+    desktop: {
+      enabled: true,
+      mode: 'side-by-side',
+      zoomLevel: 2.5,
+      showCrosshair: true,
+      lensSize: 160,
+      lensBorderColor: '#D4AF37',
+      allowCustomerToggle: true,
+      modalZoomEnabled: true
+    },
+    tablet: {
+      enabled: true,
+      mode: 'inner',
+      zoomLevel: 2.0,
+      pinchToZoom: true,
+      doubleTapZoom: true,
+      showGestureHint: true,
+      modalZoomEnabled: true,
+      allowCustomerToggle: false
+    },
+    mobile: {
+      enabled: true,
+      mode: 'pinch',
+      zoomLevel: 2.0,
+      pinchToZoom: true,
+      doubleTapZoom: true,
+      showGestureHint: true,
+      modalZoomEnabled: true,
+      allowCustomerToggle: false
+    }
+  }
 };
 
 function calculateShippingCharge(subtotal, shippingConfig = {}) {
@@ -1545,19 +1585,40 @@ async function handleRoute(request, { params }) {
       }
       if (!p) return err('Not found', 404);
 
-      const related = await db.collection('products').find({
-        category: p.category,
-        id: { $ne: p.id },
-        ...activeFilter
-      }, {
-        projection: {
-          id: 1, slug: 1, name: 1, sku: 1, price: 1, mrp: 1, category: 1,
-          collection: 1, gender: 1, metal: 1, stone: 1, images: 1, image: 1,
-          badge: 1, stock: 1, rating: 1, reviews: 1, createdAt: 1
-        }
-      }).limit(4).toArray();
+      const [related, siteSettings] = await Promise.all([
+        db.collection('products').find({
+          category: p.category,
+          id: { $ne: p.id },
+          ...activeFilter
+        }, {
+          projection: {
+            id: 1, slug: 1, name: 1, sku: 1, price: 1, mrp: 1, category: 1,
+            collection: 1, gender: 1, metal: 1, stone: 1, images: 1, image: 1,
+            badge: 1, stock: 1, rating: 1, reviews: 1, createdAt: 1
+          }
+        }).limit(4).toArray(),
+        db.collection('site_settings').findOne({ id: 'default' })
+      ]);
 
-      const result = { product: clean(p), related: related.map(clean) };
+      const mergedZoom = {
+        ...DEFAULT_SITE_SETTINGS.zoomSettings,
+        ...(siteSettings?.zoomSettings || {}),
+        desktop: {
+          ...DEFAULT_SITE_SETTINGS.zoomSettings.desktop,
+          ...(siteSettings?.zoomSettings?.desktop || {})
+        },
+        tablet: {
+          ...DEFAULT_SITE_SETTINGS.zoomSettings.tablet,
+          ...(siteSettings?.zoomSettings?.tablet || {})
+        },
+        mobile: {
+          ...DEFAULT_SITE_SETTINGS.zoomSettings.mobile,
+          ...(siteSettings?.zoomSettings?.mobile || {})
+        },
+        ...(p.zoomMode && p.zoomMode !== 'default' ? { mode: p.zoomMode } : {})
+      };
+
+      const result = { product: clean(p), related: related.map(clean), zoomSettings: mergedZoom };
       cacheSet('product:' + slug, result, 300000);
       if (p.id && p.id !== slug) cacheSet('product:' + p.id, result, 300000);
       if (p.slug && p.slug !== slug) cacheSet('product:' + p.slug, result, 300000);
@@ -1719,6 +1780,31 @@ async function handleRoute(request, { params }) {
           },
           cod: {
             enabled: rawPay?.cod?.enabled !== false
+          }
+        },
+        zoomSettings: {
+          ...DEFAULT_SITE_SETTINGS.zoomSettings,
+          ...(settings?.zoomSettings || {}),
+          desktop: {
+            ...DEFAULT_SITE_SETTINGS.zoomSettings.desktop,
+            ...(settings?.zoomSettings?.desktop || {
+              enabled: settings?.zoomSettings?.enabled !== false,
+              mode: settings?.zoomSettings?.mode || 'side-by-side',
+              zoomLevel: Number(settings?.zoomSettings?.zoomLevel) || 2.5,
+              showCrosshair: settings?.zoomSettings?.showCrosshair !== false,
+              lensSize: Number(settings?.zoomSettings?.lensSize) || 160,
+              lensBorderColor: settings?.zoomSettings?.lensBorderColor || '#D4AF37',
+              allowCustomerToggle: settings?.zoomSettings?.allowCustomerToggle !== false,
+              modalZoomEnabled: settings?.zoomSettings?.modalZoomEnabled !== false
+            })
+          },
+          tablet: {
+            ...DEFAULT_SITE_SETTINGS.zoomSettings.tablet,
+            ...(settings?.zoomSettings?.tablet || {})
+          },
+          mobile: {
+            ...DEFAULT_SITE_SETTINGS.zoomSettings.mobile,
+            ...(settings?.zoomSettings?.mobile || {})
           }
         }
       });
@@ -5993,6 +6079,31 @@ async function handleRoute(request, { params }) {
               cod: {
                 enabled: rawPay?.cod?.enabled !== false
               }
+            },
+            zoomSettings: {
+              ...DEFAULT_SITE_SETTINGS.zoomSettings,
+              ...(settings?.zoomSettings || {}),
+              desktop: {
+                ...DEFAULT_SITE_SETTINGS.zoomSettings.desktop,
+                ...(settings?.zoomSettings?.desktop || {
+                  enabled: settings?.zoomSettings?.enabled !== false,
+                  mode: settings?.zoomSettings?.mode || 'side-by-side',
+                  zoomLevel: Number(settings?.zoomSettings?.zoomLevel) || 2.5,
+                  showCrosshair: settings?.zoomSettings?.showCrosshair !== false,
+                  lensSize: Number(settings?.zoomSettings?.lensSize) || 160,
+                  lensBorderColor: settings?.zoomSettings?.lensBorderColor || '#D4AF37',
+                  allowCustomerToggle: settings?.zoomSettings?.allowCustomerToggle !== false,
+                  modalZoomEnabled: settings?.zoomSettings?.modalZoomEnabled !== false
+                })
+              },
+              tablet: {
+                ...DEFAULT_SITE_SETTINGS.zoomSettings.tablet,
+                ...(settings?.zoomSettings?.tablet || {})
+              },
+              mobile: {
+                ...DEFAULT_SITE_SETTINGS.zoomSettings.mobile,
+                ...(settings?.zoomSettings?.mobile || {})
+              }
             }
           }));
         }
@@ -6087,6 +6198,49 @@ async function handleRoute(request, { params }) {
               },
               request
             });
+          }
+
+          if (updates.zoomSettings) {
+            const zs = updates.zoomSettings;
+            const existing = await db.collection('site_settings').findOne({ id: 'default' });
+            const prevZs = existing?.zoomSettings || DEFAULT_SITE_SETTINGS.zoomSettings;
+
+            const desktopMode = zs.desktop?.mode || zs.mode || prevZs.desktop?.mode || prevZs.mode || 'side-by-side';
+            const desktopZoomLevel = Number(zs.desktop?.zoomLevel ?? zs.zoomLevel ?? prevZs.desktop?.zoomLevel ?? prevZs.zoomLevel) || 2.5;
+            const desktopEnabled = (zs.desktop?.enabled !== undefined ? zs.desktop.enabled : (zs.enabled !== undefined ? zs.enabled : (prevZs.desktop?.enabled !== false)));
+
+            updates.zoomSettings = {
+              ...prevZs,
+              ...zs,
+              enabled: desktopEnabled,
+              mode: desktopMode,
+              zoomLevel: desktopZoomLevel,
+              showCrosshair: zs.desktop?.showCrosshair !== undefined ? zs.desktop.showCrosshair : (zs.showCrosshair !== false),
+              lensSize: Number(zs.desktop?.lensSize ?? zs.lensSize ?? prevZs.desktop?.lensSize ?? prevZs.lensSize) || 160,
+              lensBorderColor: zs.desktop?.lensBorderColor || zs.lensBorderColor || prevZs.desktop?.lensBorderColor || prevZs.lensBorderColor || '#D4AF37',
+              allowCustomerToggle: zs.desktop?.allowCustomerToggle !== undefined ? zs.desktop.allowCustomerToggle : (zs.allowCustomerToggle !== false),
+              modalZoomEnabled: zs.desktop?.modalZoomEnabled !== undefined ? zs.desktop.modalZoomEnabled : (zs.modalZoomEnabled !== false),
+              desktop: {
+                ...(prevZs.desktop || DEFAULT_SITE_SETTINGS.zoomSettings.desktop),
+                ...(zs.desktop || {}),
+                enabled: desktopEnabled,
+                mode: desktopMode,
+                zoomLevel: desktopZoomLevel,
+                showCrosshair: zs.desktop?.showCrosshair !== undefined ? zs.desktop.showCrosshair : (zs.showCrosshair !== false),
+                lensSize: Number(zs.desktop?.lensSize ?? zs.lensSize ?? prevZs.desktop?.lensSize ?? prevZs.lensSize) || 160,
+                lensBorderColor: zs.desktop?.lensBorderColor || zs.lensBorderColor || prevZs.desktop?.lensBorderColor || prevZs.lensBorderColor || '#D4AF37',
+                allowCustomerToggle: zs.desktop?.allowCustomerToggle !== undefined ? zs.desktop.allowCustomerToggle : (zs.allowCustomerToggle !== false),
+                modalZoomEnabled: zs.desktop?.modalZoomEnabled !== undefined ? zs.desktop.modalZoomEnabled : (zs.modalZoomEnabled !== false)
+              },
+              tablet: {
+                ...(prevZs.tablet || DEFAULT_SITE_SETTINGS.zoomSettings.tablet),
+                ...(zs.tablet || {})
+              },
+              mobile: {
+                ...(prevZs.mobile || DEFAULT_SITE_SETTINGS.zoomSettings.mobile),
+                ...(zs.mobile || {})
+              }
+            };
           }
 
           await db.collection('site_settings').updateOne(

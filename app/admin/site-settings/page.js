@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Globe, Upload, Save, Loader2, Image as ImageIcon, Link as LinkIcon, Check, Eye, Truck, Star, CreditCard, ArrowRight, RotateCcw, ZoomIn, Columns, Maximize2, Crosshair, Sparkles, CheckCircle2, Sliders, Clock } from 'lucide-react';
+import { Globe, Upload, Save, Loader2, Image as ImageIcon, Link as LinkIcon, Check, Eye, Truck, Star, CreditCard, ArrowRight, RotateCcw, ZoomIn, Columns, Maximize2, Crosshair, Sparkles, CheckCircle2, Sliders, Clock, Monitor, Tablet, Smartphone, Move } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function AdminSiteSettings() {
@@ -10,6 +10,8 @@ export default function AdminSiteSettings() {
   const [uploading, setUploading] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [uploadingFavicon, setUploadingFavicon] = useState(false);
+  const [zoomDeviceTab, setZoomDeviceTab] = useState('desktop');
+  const [simDevice, setSimDevice] = useState('desktop');
   const [form, setForm] = useState({
     siteName: '',
     logo: '',
@@ -41,7 +43,37 @@ export default function AdminSiteSettings() {
       lensSize: 160,
       lensBorderColor: '#D4AF37',
       allowCustomerToggle: true,
-      modalZoomEnabled: true
+      modalZoomEnabled: true,
+      desktop: {
+        enabled: true,
+        mode: 'side-by-side',
+        zoomLevel: 2.5,
+        showCrosshair: true,
+        lensSize: 160,
+        lensBorderColor: '#D4AF37',
+        allowCustomerToggle: true,
+        modalZoomEnabled: true
+      },
+      tablet: {
+        enabled: true,
+        mode: 'inner',
+        zoomLevel: 2.0,
+        pinchToZoom: true,
+        doubleTapZoom: true,
+        showGestureHint: true,
+        modalZoomEnabled: true,
+        allowCustomerToggle: false
+      },
+      mobile: {
+        enabled: true,
+        mode: 'pinch',
+        zoomLevel: 2.0,
+        pinchToZoom: true,
+        doubleTapZoom: true,
+        showGestureHint: true,
+        modalZoomEnabled: true,
+        allowCustomerToggle: false
+      }
     }
   });
 
@@ -82,7 +114,37 @@ export default function AdminSiteSettings() {
             lensSize: Number(d.zoomSettings?.lensSize) || 160,
             lensBorderColor: d.zoomSettings?.lensBorderColor || '#D4AF37',
             allowCustomerToggle: d.zoomSettings?.allowCustomerToggle !== false,
-            modalZoomEnabled: d.zoomSettings?.modalZoomEnabled !== false
+            modalZoomEnabled: d.zoomSettings?.modalZoomEnabled !== false,
+            desktop: {
+              enabled: (d.zoomSettings?.desktop?.enabled !== undefined ? d.zoomSettings.desktop.enabled : (d.zoomSettings?.enabled !== false)),
+              mode: d.zoomSettings?.desktop?.mode || d.zoomSettings?.mode || 'side-by-side',
+              zoomLevel: Number(d.zoomSettings?.desktop?.zoomLevel ?? d.zoomSettings?.zoomLevel) || 2.5,
+              showCrosshair: (d.zoomSettings?.desktop?.showCrosshair !== undefined ? d.zoomSettings.desktop.showCrosshair : (d.zoomSettings?.showCrosshair !== false)),
+              lensSize: Number(d.zoomSettings?.desktop?.lensSize ?? d.zoomSettings?.lensSize) || 160,
+              lensBorderColor: d.zoomSettings?.desktop?.lensBorderColor || d.zoomSettings?.lensBorderColor || '#D4AF37',
+              allowCustomerToggle: (d.zoomSettings?.desktop?.allowCustomerToggle !== undefined ? d.zoomSettings.desktop.allowCustomerToggle : (d.zoomSettings?.allowCustomerToggle !== false)),
+              modalZoomEnabled: (d.zoomSettings?.desktop?.modalZoomEnabled !== undefined ? d.zoomSettings.desktop.modalZoomEnabled : (d.zoomSettings?.modalZoomEnabled !== false)),
+            },
+            tablet: {
+              enabled: d.zoomSettings?.tablet?.enabled !== false,
+              mode: d.zoomSettings?.tablet?.mode || 'inner',
+              zoomLevel: Number(d.zoomSettings?.tablet?.zoomLevel) || 2.0,
+              pinchToZoom: d.zoomSettings?.tablet?.pinchToZoom !== false,
+              doubleTapZoom: d.zoomSettings?.tablet?.doubleTapZoom !== false,
+              showGestureHint: d.zoomSettings?.tablet?.showGestureHint !== false,
+              modalZoomEnabled: d.zoomSettings?.tablet?.modalZoomEnabled !== false,
+              allowCustomerToggle: Boolean(d.zoomSettings?.tablet?.allowCustomerToggle),
+            },
+            mobile: {
+              enabled: d.zoomSettings?.mobile?.enabled !== false,
+              mode: d.zoomSettings?.mobile?.mode || 'pinch',
+              zoomLevel: Number(d.zoomSettings?.mobile?.zoomLevel) || 2.0,
+              pinchToZoom: d.zoomSettings?.mobile?.pinchToZoom !== false,
+              doubleTapZoom: d.zoomSettings?.mobile?.doubleTapZoom !== false,
+              showGestureHint: d.zoomSettings?.mobile?.showGestureHint !== false,
+              modalZoomEnabled: d.zoomSettings?.mobile?.modalZoomEnabled !== false,
+              allowCustomerToggle: false,
+            }
           }
         });
       } else {
@@ -657,7 +719,7 @@ export default function AdminSiteSettings() {
             </p>
           </div>
 
-          {/* Section: Product Image Zoom Controls & Settings */}
+          {/* Section: Product Image Zoom Controls & Settings (Separate for Desktop, Tablet & Mobile) */}
           <div className="bg-white p-4 xs:p-6 rounded-xl border border-neutral-200 shadow-xs space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-100 pb-3">
               <div>
@@ -666,393 +728,1208 @@ export default function AdminSiteSettings() {
                   Product Image Zoom Controls &amp; Settings
                 </h2>
                 <p className="text-xs text-neutral-500 mt-0.5">
-                  Control how jewelry products are magnified for customers. Select Side-by-Side Lens Zoom, Inner In-Place Zoom, or allow customers to toggle both.
+                  Separate zoom functionality configured independently for Desktop, Tablet (Tab), and Mobile devices.
                 </p>
               </div>
+
+              {/* Master Zoom Switch */}
               <label className="flex items-center gap-3 cursor-pointer bg-neutral-50 px-3 py-1.5 rounded-lg border border-neutral-200 hover:border-[#9C6B30] transition shrink-0">
                 <span className={`text-xs font-semibold ${form.zoomSettings?.enabled !== false ? 'text-emerald-700' : 'text-neutral-500'}`}>
-                  Zoom: {form.zoomSettings?.enabled !== false ? 'ACTIVE' : 'OFF'}
+                  Storewide Zoom: {form.zoomSettings?.enabled !== false ? 'ACTIVE' : 'OFF'}
                 </span>
                 <input
                   type="checkbox"
                   checked={form.zoomSettings?.enabled !== false}
-                  onChange={e => setForm(prev => ({
-                    ...prev,
-                    zoomSettings: { ...prev.zoomSettings, enabled: e.target.checked }
-                  }))}
+                  onChange={e => {
+                    const checked = e.target.checked;
+                    setForm(prev => ({
+                      ...prev,
+                      zoomSettings: {
+                        ...prev.zoomSettings,
+                        enabled: checked,
+                        desktop: { ...prev.zoomSettings?.desktop, enabled: checked },
+                        tablet: { ...prev.zoomSettings?.tablet, enabled: checked },
+                        mobile: { ...prev.zoomSettings?.mobile, enabled: checked }
+                      }
+                    }));
+                  }}
                   className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer"
                 />
               </label>
             </div>
 
-            {/* Zoom Functionality Mode Selector */}
-            <div>
-              <label className="text-[11px] font-bold text-neutral-600 uppercase tracking-wider block mb-2">
-                Active Zoom Functionality Mode *
-              </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                {/* 1. Side-by-Side Lens Zoom */}
-                <button
-                  type="button"
-                  onClick={() => setForm(prev => ({
-                    ...prev,
-                    zoomSettings: { ...prev.zoomSettings, mode: 'side-by-side' }
-                  }))}
-                  className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
-                    form.zoomSettings?.mode === 'side-by-side'
-                      ? 'border-[#9C6B30] bg-[#FAF6EF] ring-2 ring-[#9C6B30]/20 shadow-xs'
-                      : 'border-neutral-200 hover:border-neutral-300 bg-white'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-1 mb-2">
-                    <div className="w-8 h-8 rounded-lg bg-[#9C6B30]/10 text-[#9C6B30] flex items-center justify-center">
-                      <Columns size={16} />
-                    </div>
-                    <span className="bg-[#9C6B30] text-white text-[9px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full">
-                      Recommended
-                    </span>
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-neutral-900 mb-1">Side-by-Side Lens</h3>
-                    <p className="text-[11px] text-neutral-500 leading-snug">
-                      Hover lens with crosshairs on image; magnified detail displays in adjacent side window.
-                    </p>
-                  </div>
-                  {form.zoomSettings?.mode === 'side-by-side' && (
-                    <div className="mt-2 text-[10px] font-bold text-[#9C6B30] flex items-center gap-1">
-                      <CheckCircle2 size={12} /> Active Mode
-                    </div>
-                  )}
-                </button>
+            {/* Device-Specific Zoom Selector Tabs */}
+            <div className="flex items-center gap-2 border-b border-neutral-200 pb-2 overflow-x-auto">
+              {/* Desktop Tab */}
+              <button
+                type="button"
+                onClick={() => {
+                  setZoomDeviceTab('desktop');
+                  setSimDevice('desktop');
+                }}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
+                  zoomDeviceTab === 'desktop'
+                    ? 'bg-[#1A1A1A] text-white shadow-xs'
+                    : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                }`}
+              >
+                <Monitor size={15} />
+                <span>Desktop Zoom</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                  form.zoomSettings?.desktop?.enabled !== false && form.zoomSettings?.desktop?.mode !== 'disabled'
+                    ? (zoomDeviceTab === 'desktop' ? 'bg-emerald-500/30 text-emerald-200' : 'bg-emerald-100 text-emerald-800')
+                    : 'bg-neutral-200 text-neutral-600'
+                }`}>
+                  {form.zoomSettings?.desktop?.enabled !== false && form.zoomSettings?.desktop?.mode !== 'disabled' ? 'Active' : 'Off'}
+                </span>
+              </button>
 
-                {/* 2. Inner In-Place Zoom */}
-                <button
-                  type="button"
-                  onClick={() => setForm(prev => ({
-                    ...prev,
-                    zoomSettings: { ...prev.zoomSettings, mode: 'inner' }
-                  }))}
-                  className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
-                    form.zoomSettings?.mode === 'inner'
-                      ? 'border-[#9C6B30] bg-[#FAF6EF] ring-2 ring-[#9C6B30]/20 shadow-xs'
-                      : 'border-neutral-200 hover:border-neutral-300 bg-white'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-1 mb-2">
-                    <div className="w-8 h-8 rounded-lg bg-[#9C6B30]/10 text-[#9C6B30] flex items-center justify-center">
-                      <Maximize2 size={16} />
-                    </div>
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-neutral-900 mb-1">Inner In-Place</h3>
-                    <p className="text-[11px] text-neutral-500 leading-snug">
-                      Hover smoothly scales and pans the image directly inside its frame without a separate pane.
-                    </p>
-                  </div>
-                  {form.zoomSettings?.mode === 'inner' && (
-                    <div className="mt-2 text-[10px] font-bold text-[#9C6B30] flex items-center gap-1">
-                      <CheckCircle2 size={12} /> Active Mode
-                    </div>
-                  )}
-                </button>
+              {/* Tablet Tab */}
+              <button
+                type="button"
+                onClick={() => {
+                  setZoomDeviceTab('tablet');
+                  setSimDevice('tablet');
+                }}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
+                  zoomDeviceTab === 'tablet'
+                    ? 'bg-[#1A1A1A] text-white shadow-xs'
+                    : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                }`}
+              >
+                <Tablet size={15} />
+                <span>Tablet / Tab Zoom</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                  form.zoomSettings?.tablet?.enabled !== false && form.zoomSettings?.tablet?.mode !== 'disabled'
+                    ? (zoomDeviceTab === 'tablet' ? 'bg-emerald-500/30 text-emerald-200' : 'bg-emerald-100 text-emerald-800')
+                    : 'bg-neutral-200 text-neutral-600'
+                }`}>
+                  {form.zoomSettings?.tablet?.enabled !== false && form.zoomSettings?.tablet?.mode !== 'disabled' ? 'Active' : 'Off'}
+                </span>
+              </button>
 
-                {/* 3. Both / Customer Switcher */}
-                <button
-                  type="button"
-                  onClick={() => setForm(prev => ({
-                    ...prev,
-                    zoomSettings: { ...prev.zoomSettings, mode: 'both' }
-                  }))}
-                  className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
-                    form.zoomSettings?.mode === 'both'
-                      ? 'border-[#9C6B30] bg-[#FAF6EF] ring-2 ring-[#9C6B30]/20 shadow-xs'
-                      : 'border-neutral-200 hover:border-neutral-300 bg-white'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-1 mb-2">
-                    <div className="w-8 h-8 rounded-lg bg-neutral-100 text-neutral-700 flex items-center justify-center">
-                      <Sliders size={16} />
-                    </div>
-                    <span className="bg-neutral-800 text-white text-[9px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full">
-                      Dual Mode
-                    </span>
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-neutral-900 mb-1">Both / Switcher</h3>
-                    <p className="text-[11px] text-neutral-500 leading-snug">
-                      Enables both zoom styles with an on-screen toggle pill so customers can choose between Side &amp; Inner zoom.
-                    </p>
-                  </div>
-                  {form.zoomSettings?.mode === 'both' && (
-                    <div className="mt-2 text-[10px] font-bold text-[#9C6B30] flex items-center gap-1">
-                      <CheckCircle2 size={12} /> Active Mode
-                    </div>
-                  )}
-                </button>
-
-                {/* 4. Disabled */}
-                <button
-                  type="button"
-                  onClick={() => setForm(prev => ({
-                    ...prev,
-                    zoomSettings: { ...prev.zoomSettings, mode: 'disabled' }
-                  }))}
-                  className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
-                    form.zoomSettings?.mode === 'disabled'
-                      ? 'border-red-400 bg-red-50/50 ring-2 ring-red-300 shadow-xs'
-                      : 'border-neutral-200 hover:border-neutral-300 bg-white'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-1 mb-2">
-                    <div className="w-8 h-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center">
-                      <RotateCcw size={16} />
-                    </div>
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-neutral-900 mb-1">Turn Off Zoom</h3>
-                    <p className="text-[11px] text-neutral-500 leading-snug">
-                      Disables hover magnification entirely across all product pages.
-                    </p>
-                  </div>
-                  {form.zoomSettings?.mode === 'disabled' && (
-                    <div className="mt-2 text-[10px] font-bold text-red-600 flex items-center gap-1">
-                      <CheckCircle2 size={12} /> Disabled
-                    </div>
-                  )}
-                </button>
-              </div>
+              {/* Mobile Tab */}
+              <button
+                type="button"
+                onClick={() => {
+                  setZoomDeviceTab('mobile');
+                  setSimDevice('mobile');
+                }}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
+                  zoomDeviceTab === 'mobile'
+                    ? 'bg-[#1A1A1A] text-white shadow-xs'
+                    : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                }`}
+              >
+                <Smartphone size={15} />
+                <span>Mobile Zoom</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                  form.zoomSettings?.mobile?.enabled !== false && form.zoomSettings?.mobile?.mode !== 'disabled'
+                    ? (zoomDeviceTab === 'mobile' ? 'bg-emerald-500/30 text-emerald-200' : 'bg-emerald-100 text-emerald-800')
+                    : 'bg-neutral-200 text-neutral-600'
+                }`}>
+                  {form.zoomSettings?.mobile?.enabled !== false && form.zoomSettings?.mobile?.mode !== 'disabled' ? 'Active' : 'Off'}
+                </span>
+              </button>
             </div>
 
-            {/* Magnification Level & Lens Reticle Controls */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-3 border-t border-neutral-100">
-              {/* Magnification Level */}
-              <div className="space-y-3">
-                <label className="text-[11px] font-bold text-neutral-600 uppercase tracking-wider block">
-                  Magnification Scale: <strong className="text-[#9C6B30]">{form.zoomSettings?.zoomLevel || 2.5}x</strong>
-                </label>
-                <div className="flex items-center gap-2 flex-wrap">
-                  {[1.5, 2.0, 2.5, 3.0, 4.0].map((lvl) => (
+            {/* TAB 1: DESKTOP ZOOM SETTINGS */}
+            {zoomDeviceTab === 'desktop' && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                <div className="flex items-center justify-between p-3 rounded-lg bg-[#FAF6EF] border border-[#9C6B30]/20">
+                  <div className="flex items-center gap-2.5">
+                    <Monitor size={18} className="text-[#9C6B30]" />
+                    <div>
+                      <div className="text-xs font-bold text-neutral-900">Desktop Viewport Mode (≥ 1024px)</div>
+                      <div className="text-[11px] text-neutral-500">Supports mouse cursor hover, square reticle lens, and dual flyout window.</div>
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                    <span>{form.zoomSettings?.desktop?.enabled !== false ? 'Enabled' : 'Disabled'}</span>
+                    <input
+                      type="checkbox"
+                      checked={form.zoomSettings?.desktop?.enabled !== false}
+                      onChange={e => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          enabled: e.target.checked,
+                          desktop: { ...prev.zoomSettings?.desktop, enabled: e.target.checked }
+                        }
+                      }))}
+                      className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer"
+                    />
+                  </label>
+                </div>
+
+                {/* Desktop Zoom Modes */}
+                <div>
+                  <label className="text-[11px] font-bold text-neutral-600 uppercase tracking-wider block mb-2">
+                    Desktop Zoom Functionality Mode *
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {/* 1. Side-by-Side Lens */}
                     <button
-                      key={lvl}
                       type="button"
                       onClick={() => setForm(prev => ({
                         ...prev,
-                        zoomSettings: { ...prev.zoomSettings, zoomLevel: lvl }
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          mode: 'side-by-side',
+                          desktop: { ...prev.zoomSettings?.desktop, mode: 'side-by-side' }
+                        }
                       }))}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                        Number(form.zoomSettings?.zoomLevel) === lvl
-                          ? 'bg-[#1A1A1A] text-white shadow-xs'
-                          : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                      className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
+                        (form.zoomSettings?.desktop?.mode || form.zoomSettings?.mode) === 'side-by-side'
+                          ? 'border-[#9C6B30] bg-[#FAF6EF] ring-2 ring-[#9C6B30]/20 shadow-xs'
+                          : 'border-neutral-200 hover:border-neutral-300 bg-white'
                       }`}
                     >
-                      {lvl.toFixed(1)}x {lvl === 2.5 && '★'}
+                      <div className="flex items-start justify-between gap-1 mb-2">
+                        <div className="w-8 h-8 rounded-lg bg-[#9C6B30]/10 text-[#9C6B30] flex items-center justify-center">
+                          <Columns size={16} />
+                        </div>
+                        <span className="bg-[#9C6B30] text-white text-[9px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full">
+                          Recommended
+                        </span>
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-neutral-900 mb-1">Side-by-Side Lens</h3>
+                        <p className="text-[11px] text-neutral-500 leading-snug">
+                          Hover lens box with crosshairs on image; high-res magnified detail displays in adjacent side window.
+                        </p>
+                      </div>
+                      {(form.zoomSettings?.desktop?.mode || form.zoomSettings?.mode) === 'side-by-side' && (
+                        <div className="mt-2 text-[10px] font-bold text-[#9C6B30] flex items-center gap-1">
+                          <CheckCircle2 size={12} /> Active Mode
+                        </div>
+                      )}
                     </button>
-                  ))}
-                </div>
-                <p className="text-[11px] text-neutral-400">
-                  💡 2.5x is recommended for fine gold and diamond craftsmanship.
-                </p>
-              </div>
 
-              {/* Lens Size (for Side-by-Side Zoom) */}
-              <div className="space-y-3">
-                <label className="text-[11px] font-bold text-neutral-600 uppercase tracking-wider block">
-                  Magnifier Lens Box Size: <strong className="text-[#9C6B30]">{form.zoomSettings?.lensSize || 160} px</strong>
-                </label>
-                <div className="flex items-center gap-2 flex-wrap">
-                  {[
-                    { label: 'Compact', size: 130 },
-                    { label: 'Standard', size: 160 },
-                    { label: 'Large', size: 200 }
-                  ].map((s) => (
+                    {/* 2. Inner In-Place */}
                     <button
-                      key={s.size}
                       type="button"
                       onClick={() => setForm(prev => ({
                         ...prev,
-                        zoomSettings: { ...prev.zoomSettings, lensSize: s.size }
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          mode: 'inner',
+                          desktop: { ...prev.zoomSettings?.desktop, mode: 'inner' }
+                        }
                       }))}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                        Number(form.zoomSettings?.lensSize) === s.size
-                          ? 'bg-[#1A1A1A] text-white shadow-xs'
-                          : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                      className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
+                        (form.zoomSettings?.desktop?.mode || form.zoomSettings?.mode) === 'inner'
+                          ? 'border-[#9C6B30] bg-[#FAF6EF] ring-2 ring-[#9C6B30]/20 shadow-xs'
+                          : 'border-neutral-200 hover:border-neutral-300 bg-white'
                       }`}
                     >
-                      {s.label} ({s.size}px)
+                      <div className="flex items-start justify-between gap-1 mb-2">
+                        <div className="w-8 h-8 rounded-lg bg-[#9C6B30]/10 text-[#9C6B30] flex items-center justify-center">
+                          <Maximize2 size={16} />
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-neutral-900 mb-1">Inner In-Place</h3>
+                        <p className="text-[11px] text-neutral-500 leading-snug">
+                          Hover smoothly scales and pans the image directly inside its frame without taking extra screen space.
+                        </p>
+                      </div>
+                      {(form.zoomSettings?.desktop?.mode || form.zoomSettings?.mode) === 'inner' && (
+                        <div className="mt-2 text-[10px] font-bold text-[#9C6B30] flex items-center gap-1">
+                          <CheckCircle2 size={12} /> Active Mode
+                        </div>
+                      )}
                     </button>
-                  ))}
+
+                    {/* 3. Both / Customer Switcher */}
+                    <button
+                      type="button"
+                      onClick={() => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          mode: 'both',
+                          desktop: { ...prev.zoomSettings?.desktop, mode: 'both' }
+                        }
+                      }))}
+                      className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
+                        (form.zoomSettings?.desktop?.mode || form.zoomSettings?.mode) === 'both'
+                          ? 'border-[#9C6B30] bg-[#FAF6EF] ring-2 ring-[#9C6B30]/20 shadow-xs'
+                          : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-1 mb-2">
+                        <div className="w-8 h-8 rounded-lg bg-neutral-100 text-neutral-700 flex items-center justify-center">
+                          <Sliders size={16} />
+                        </div>
+                        <span className="bg-neutral-800 text-white text-[9px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full">
+                          Dual Mode
+                        </span>
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-neutral-900 mb-1">Both / Switcher</h3>
+                        <p className="text-[11px] text-neutral-500 leading-snug">
+                          Enables both styles with an on-screen toggle pill so shoppers can choose between Side &amp; Inner zoom.
+                        </p>
+                      </div>
+                      {(form.zoomSettings?.desktop?.mode || form.zoomSettings?.mode) === 'both' && (
+                        <div className="mt-2 text-[10px] font-bold text-[#9C6B30] flex items-center gap-1">
+                          <CheckCircle2 size={12} /> Active Mode
+                        </div>
+                      )}
+                    </button>
+
+                    {/* 4. Disabled */}
+                    <button
+                      type="button"
+                      onClick={() => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          mode: 'disabled',
+                          desktop: { ...prev.zoomSettings?.desktop, mode: 'disabled' }
+                        }
+                      }))}
+                      className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
+                        (form.zoomSettings?.desktop?.mode || form.zoomSettings?.mode) === 'disabled'
+                          ? 'border-red-400 bg-red-50/50 ring-2 ring-red-300 shadow-xs'
+                          : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-1 mb-2">
+                        <div className="w-8 h-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center">
+                          <RotateCcw size={16} />
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-neutral-900 mb-1">Turn Off Desktop</h3>
+                        <p className="text-[11px] text-neutral-500 leading-snug">
+                          Disables desktop magnification while keeping mobile and tablet active.
+                        </p>
+                      </div>
+                      {(form.zoomSettings?.desktop?.mode || form.zoomSettings?.mode) === 'disabled' && (
+                        <div className="mt-2 text-[10px] font-bold text-red-600 flex items-center gap-1">
+                          <CheckCircle2 size={12} /> Disabled
+                        </div>
+                      )}
+                    </button>
+                  </div>
                 </div>
-                <p className="text-[11px] text-neutral-400">
-                  💡 Dimensions of the square selector box following the cursor on the main product image.
-                </p>
+
+                {/* Desktop Scale & Lens Box */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-3 border-t border-neutral-100">
+                  <div className="space-y-3">
+                    <label className="text-[11px] font-bold text-neutral-600 uppercase tracking-wider block">
+                      Magnification Scale: <strong className="text-[#9C6B30]">{(form.zoomSettings?.desktop?.zoomLevel || form.zoomSettings?.zoomLevel || 2.5)}x</strong>
+                    </label>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {[1.5, 2.0, 2.5, 3.0, 4.0].map((lvl) => (
+                        <button
+                          key={lvl}
+                          type="button"
+                          onClick={() => setForm(prev => ({
+                            ...prev,
+                            zoomSettings: {
+                              ...prev.zoomSettings,
+                              zoomLevel: lvl,
+                              desktop: { ...prev.zoomSettings?.desktop, zoomLevel: lvl }
+                            }
+                          }))}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                            Number(form.zoomSettings?.desktop?.zoomLevel || form.zoomSettings?.zoomLevel) === lvl
+                              ? 'bg-[#1A1A1A] text-white shadow-xs'
+                              : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                          }`}
+                        >
+                          {lvl.toFixed(1)}x {lvl === 2.5 && '★'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="text-[11px] font-bold text-neutral-600 uppercase tracking-wider block">
+                      Magnifier Lens Box Size: <strong className="text-[#9C6B30]">{(form.zoomSettings?.desktop?.lensSize || form.zoomSettings?.lensSize || 160)} px</strong>
+                    </label>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {[
+                        { label: 'Compact', size: 130 },
+                        { label: 'Standard', size: 160 },
+                        { label: 'Large', size: 200 }
+                      ].map((s) => (
+                        <button
+                          key={s.size}
+                          type="button"
+                          onClick={() => setForm(prev => ({
+                            ...prev,
+                            zoomSettings: {
+                              ...prev.zoomSettings,
+                              lensSize: s.size,
+                              desktop: { ...prev.zoomSettings?.desktop, lensSize: s.size }
+                            }
+                          }))}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                            Number(form.zoomSettings?.desktop?.lensSize || form.zoomSettings?.lensSize) === s.size
+                              ? 'bg-[#1A1A1A] text-white shadow-xs'
+                              : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                          }`}
+                        >
+                          {s.label} ({s.size}px)
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Desktop Options */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-neutral-100">
+                  <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <Crosshair size={18} className="text-[#9C6B30] shrink-0" />
+                      <div>
+                        <div className="text-xs font-bold text-neutral-800">Show Crosshair Reticle Inside Lens</div>
+                        <div className="text-[11px] text-neutral-500">Displays precise crossing lines (+) centered in the lens box.</div>
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={(form.zoomSettings?.desktop?.showCrosshair !== undefined ? form.zoomSettings.desktop.showCrosshair : form.zoomSettings?.showCrosshair) !== false}
+                      onChange={e => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          showCrosshair: e.target.checked,
+                          desktop: { ...prev.zoomSettings?.desktop, showCrosshair: e.target.checked }
+                        }
+                      }))}
+                      className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer shrink-0"
+                    />
+                  </div>
+
+                  <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <Sliders size={18} className="text-[#9C6B30] shrink-0" />
+                      <div>
+                        <div className="text-xs font-bold text-neutral-800">Allow Customer Mode Switcher</div>
+                        <div className="text-[11px] text-neutral-500">Displays toggle pill for shoppers to switch between Side &amp; Inner.</div>
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={(form.zoomSettings?.desktop?.allowCustomerToggle !== undefined ? form.zoomSettings.desktop.allowCustomerToggle : form.zoomSettings?.allowCustomerToggle) !== false}
+                      onChange={e => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          allowCustomerToggle: e.target.checked,
+                          desktop: { ...prev.zoomSettings?.desktop, allowCustomerToggle: e.target.checked }
+                        }
+                      }))}
+                      className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer shrink-0"
+                    />
+                  </div>
+
+                  <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <ZoomIn size={18} className="text-[#9C6B30] shrink-0" />
+                      <div>
+                        <div className="text-xs font-bold text-neutral-800">Fullscreen Click-to-Enlarge Modal</div>
+                        <div className="text-[11px] text-neutral-500">Enables high-resolution fullscreen lightbox view button.</div>
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={(form.zoomSettings?.desktop?.modalZoomEnabled !== undefined ? form.zoomSettings.desktop.modalZoomEnabled : form.zoomSettings?.modalZoomEnabled) !== false}
+                      onChange={e => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          modalZoomEnabled: e.target.checked,
+                          desktop: { ...prev.zoomSettings?.desktop, modalZoomEnabled: e.target.checked }
+                        }
+                      }))}
+                      className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer shrink-0"
+                    />
+                  </div>
+
+                  <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-neutral-800">Lens &amp; Reticle Accent Color</div>
+                      <div className="text-[11px] text-neutral-500">Reticle border and crosshairs color.</div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {[
+                        { name: 'Gold', color: '#D4AF37' },
+                        { name: 'Bronze', color: '#9C6B30' },
+                        { name: 'Dark', color: '#1A1A1A' },
+                        { name: 'Rose', color: '#B76E79' },
+                      ].map(c => (
+                        <button
+                          key={c.color}
+                          type="button"
+                          onClick={() => setForm(prev => ({
+                            ...prev,
+                            zoomSettings: {
+                              ...prev.zoomSettings,
+                              lensBorderColor: c.color,
+                              desktop: { ...prev.zoomSettings?.desktop, lensBorderColor: c.color }
+                            }
+                          }))}
+                          className={`w-6 h-6 rounded-full border-2 transition transform hover:scale-110 cursor-pointer ${
+                            (form.zoomSettings?.desktop?.lensBorderColor || form.zoomSettings?.lensBorderColor) === c.color ? 'border-neutral-900 ring-2 ring-[#9C6B30]/40 scale-105' : 'border-white'
+                          }`}
+                          style={{ backgroundColor: c.color }}
+                          title={c.name}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* Crosshairs & Additional Options */}
-            <div className="pt-3 border-t border-neutral-100 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Crosshair lines toggle */}
-                <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 flex items-center justify-between gap-3">
+            {/* TAB 2: TABLET / TAB ZOOM SETTINGS */}
+            {zoomDeviceTab === 'tablet' && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                <div className="flex items-center justify-between p-3 rounded-lg bg-[#FAF6EF] border border-[#9C6B30]/20">
                   <div className="flex items-center gap-2.5">
-                    <Crosshair size={18} className="text-[#9C6B30] shrink-0" />
+                    <Tablet size={18} className="text-[#9C6B30]" />
                     <div>
-                      <div className="text-xs font-bold text-neutral-800">Show Crosshair Reticle Inside Lens</div>
-                      <div className="text-[11px] text-neutral-500">Displays precise crossing lines (+) centered in the lens box.</div>
+                      <div className="text-xs font-bold text-neutral-900">Tablet / Tab Viewport Mode (768px – 1023px)</div>
+                      <div className="text-[11px] text-neutral-500">Touch &amp; stylus friendly zoom designed for iPads and Android tablets.</div>
                     </div>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={form.zoomSettings?.showCrosshair !== false}
-                    onChange={e => setForm(prev => ({
-                      ...prev,
-                      zoomSettings: { ...prev.zoomSettings, showCrosshair: e.target.checked }
-                    }))}
-                    className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer shrink-0"
-                  />
+                  <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                    <span>{form.zoomSettings?.tablet?.enabled !== false ? 'Enabled' : 'Disabled'}</span>
+                    <input
+                      type="checkbox"
+                      checked={form.zoomSettings?.tablet?.enabled !== false}
+                      onChange={e => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          tablet: { ...prev.zoomSettings?.tablet, enabled: e.target.checked }
+                        }
+                      }))}
+                      className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer"
+                    />
+                  </label>
                 </div>
 
-                {/* Customer toggle button on storefront */}
-                <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <Sliders size={18} className="text-[#9C6B30] shrink-0" />
-                    <div>
-                      <div className="text-xs font-bold text-neutral-800">Allow Customer Mode Switcher</div>
-                      <div className="text-[11px] text-neutral-500">Shows a luxury toggle pill so visitors can switch between Side and Inner Zoom.</div>
-                    </div>
+                {/* Tablet Zoom Modes */}
+                <div>
+                  <label className="text-[11px] font-bold text-neutral-600 uppercase tracking-wider block mb-2">
+                    Active Tablet Zoom Functionality Mode *
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {/* 1. Inner In-Place Magnifier */}
+                    <button
+                      type="button"
+                      onClick={() => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          tablet: { ...prev.zoomSettings?.tablet, mode: 'inner' }
+                        }
+                      }))}
+                      className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
+                        form.zoomSettings?.tablet?.mode === 'inner'
+                          ? 'border-[#9C6B30] bg-[#FAF6EF] ring-2 ring-[#9C6B30]/20 shadow-xs'
+                          : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-1 mb-2">
+                        <div className="w-8 h-8 rounded-lg bg-[#9C6B30]/10 text-[#9C6B30] flex items-center justify-center">
+                          <Maximize2 size={16} />
+                        </div>
+                        <span className="bg-[#9C6B30] text-white text-[9px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full">
+                          Recommended
+                        </span>
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-neutral-900 mb-1">Inner In-Place</h3>
+                        <p className="text-[11px] text-neutral-500 leading-snug">
+                          Finger or stylus touch drags smoothly across the jewelry piece, magnifying in-place without blocking page layout.
+                        </p>
+                      </div>
+                      {form.zoomSettings?.tablet?.mode === 'inner' && (
+                        <div className="mt-2 text-[10px] font-bold text-[#9C6B30] flex items-center gap-1">
+                          <CheckCircle2 size={12} /> Active Mode
+                        </div>
+                      )}
+                    </button>
+
+                    {/* 2. Touch Pinch & Pan */}
+                    <button
+                      type="button"
+                      onClick={() => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          tablet: { ...prev.zoomSettings?.tablet, mode: 'pinch' }
+                        }
+                      }))}
+                      className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
+                        form.zoomSettings?.tablet?.mode === 'pinch'
+                          ? 'border-[#9C6B30] bg-[#FAF6EF] ring-2 ring-[#9C6B30]/20 shadow-xs'
+                          : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-1 mb-2">
+                        <div className="w-8 h-8 rounded-lg bg-neutral-100 text-neutral-700 flex items-center justify-center">
+                          <Move size={16} />
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-neutral-900 mb-1">Touch Pinch &amp; Pan</h3>
+                        <p className="text-[11px] text-neutral-500 leading-snug">
+                          Two-finger natural pinch gesture directly zooms the product photo; one finger pans around while zoomed.
+                        </p>
+                      </div>
+                      {form.zoomSettings?.tablet?.mode === 'pinch' && (
+                        <div className="mt-2 text-[10px] font-bold text-[#9C6B30] flex items-center gap-1">
+                          <CheckCircle2 size={12} /> Active Mode
+                        </div>
+                      )}
+                    </button>
+
+                    {/* 3. Fullscreen Lightbox Only */}
+                    <button
+                      type="button"
+                      onClick={() => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          tablet: { ...prev.zoomSettings?.tablet, mode: 'modal' }
+                        }
+                      }))}
+                      className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
+                        form.zoomSettings?.tablet?.mode === 'modal'
+                          ? 'border-[#9C6B30] bg-[#FAF6EF] ring-2 ring-[#9C6B30]/20 shadow-xs'
+                          : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-1 mb-2">
+                        <div className="w-8 h-8 rounded-lg bg-neutral-100 text-neutral-700 flex items-center justify-center">
+                          <ZoomIn size={16} />
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-neutral-900 mb-1">Lightbox Modal Only</h3>
+                        <p className="text-[11px] text-neutral-500 leading-snug">
+                          No in-place hover on the main image. Shoppers tap the magnifying glass for an immersive fullscreen view.
+                        </p>
+                      </div>
+                      {form.zoomSettings?.tablet?.mode === 'modal' && (
+                        <div className="mt-2 text-[10px] font-bold text-[#9C6B30] flex items-center gap-1">
+                          <CheckCircle2 size={12} /> Active Mode
+                        </div>
+                      )}
+                    </button>
+
+                    {/* 4. Disabled */}
+                    <button
+                      type="button"
+                      onClick={() => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          tablet: { ...prev.zoomSettings?.tablet, mode: 'disabled' }
+                        }
+                      }))}
+                      className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
+                        form.zoomSettings?.tablet?.mode === 'disabled'
+                          ? 'border-red-400 bg-red-50/50 ring-2 ring-red-300 shadow-xs'
+                          : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-1 mb-2">
+                        <div className="w-8 h-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center">
+                          <RotateCcw size={16} />
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-neutral-900 mb-1">Turn Off Tablet</h3>
+                        <p className="text-[11px] text-neutral-500 leading-snug">
+                          Completely disables image magnification on tablet viewports.
+                        </p>
+                      </div>
+                      {form.zoomSettings?.tablet?.mode === 'disabled' && (
+                        <div className="mt-2 text-[10px] font-bold text-red-600 flex items-center gap-1">
+                          <CheckCircle2 size={12} /> Disabled
+                        </div>
+                      )}
+                    </button>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={form.zoomSettings?.allowCustomerToggle !== false}
-                    onChange={e => setForm(prev => ({
-                      ...prev,
-                      zoomSettings: { ...prev.zoomSettings, allowCustomerToggle: e.target.checked }
-                    }))}
-                    className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer shrink-0"
-                  />
                 </div>
 
-                {/* Modal Lightbox toggle */}
-                <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <ZoomIn size={18} className="text-[#9C6B30] shrink-0" />
-                    <div>
-                      <div className="text-xs font-bold text-neutral-800">Fullscreen Click-to-Enlarge Modal</div>
-                      <div className="text-[11px] text-neutral-500">Enables the magnifying glass button at the bottom right for full lightbox view.</div>
-                    </div>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={form.zoomSettings?.modalZoomEnabled !== false}
-                    onChange={e => setForm(prev => ({
-                      ...prev,
-                      zoomSettings: { ...prev.zoomSettings, modalZoomEnabled: e.target.checked }
-                    }))}
-                    className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer shrink-0"
-                  />
-                </div>
-
-                {/* Lens Border Color Picker */}
-                <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-xs font-bold text-neutral-800">Lens &amp; Crosshair Color</div>
-                    <div className="text-[11px] text-neutral-500">Luxury accent color of the lens reticle.</div>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    {[
-                      { name: 'Gold', color: '#D4AF37' },
-                      { name: 'Bronze', color: '#9C6B30' },
-                      { name: 'Dark', color: '#1A1A1A' },
-                      { name: 'Rose', color: '#B76E79' },
-                    ].map(c => (
+                {/* Tablet Magnification Scale */}
+                <div className="space-y-3 pt-3 border-t border-neutral-100">
+                  <label className="text-[11px] font-bold text-neutral-600 uppercase tracking-wider block">
+                    Tablet Magnification Scale: <strong className="text-[#9C6B30]">{(form.zoomSettings?.tablet?.zoomLevel || 2.0)}x</strong>
+                  </label>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {[1.5, 2.0, 2.5, 3.0].map((lvl) => (
                       <button
-                        key={c.color}
+                        key={lvl}
                         type="button"
                         onClick={() => setForm(prev => ({
                           ...prev,
-                          zoomSettings: { ...prev.zoomSettings, lensBorderColor: c.color }
+                          zoomSettings: {
+                            ...prev.zoomSettings,
+                            tablet: { ...prev.zoomSettings?.tablet, zoomLevel: lvl }
+                          }
                         }))}
-                        className={`w-6 h-6 rounded-full border-2 transition transform hover:scale-110 cursor-pointer ${
-                          form.zoomSettings?.lensBorderColor === c.color ? 'border-neutral-900 ring-2 ring-[#9C6B30]/40 scale-105' : 'border-white'
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                          Number(form.zoomSettings?.tablet?.zoomLevel) === lvl
+                            ? 'bg-[#1A1A1A] text-white shadow-xs'
+                            : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
                         }`}
-                        style={{ backgroundColor: c.color }}
-                        title={c.name}
-                      />
+                      >
+                        {lvl.toFixed(1)}x {lvl === 2.0 && '★'}
+                      </button>
                     ))}
                   </div>
+                  <p className="text-[11px] text-neutral-400">
+                    💡 2.0x is ideal for tablet touch screens to maintain clear visibility of gemstone settings.
+                  </p>
                 </div>
-              </div>
-            </div>
 
-            {/* LIVE SIMULATOR FOR ADMIN */}
-            <div className="pt-4 border-t border-neutral-100 bg-[#FAF6EF]/50 p-4 rounded-xl border border-[#9C6B30]/20">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-[11px] font-bold text-neutral-700 uppercase tracking-wider flex items-center gap-1.5">
-                  <Sparkles size={14} className="text-[#9C6B30]" />
-                  Live Zoom Simulator (Test your settings live before saving)
-                </span>
-                <span className="text-[10px] text-[#9C6B30] font-semibold bg-[#9C6B30]/10 px-2 py-0.5 rounded-full">
-                  Mode: {form.zoomSettings?.mode?.toUpperCase() || 'SIDE-BY-SIDE'} · Scale: {form.zoomSettings?.zoomLevel || 2.5}x
-                </span>
-              </div>
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-6 py-2">
-                {/* Simulator Card with Sample Jewelry */}
-                <div className="relative w-48 h-48 sm:w-56 sm:h-56 rounded-xl overflow-hidden bg-white border border-neutral-200 shadow-sm group cursor-crosshair">
-                  <img
-                    src="https://images.unsplash.com/photo-1685970731194-e27b477e87ba?crop=entropy&cs=srgb&fm=jpg&q=85"
-                    alt="Simulator Diamond"
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  />
-                  {form.zoomSettings?.mode === 'side-by-side' && (
-                    <div
-                      className="absolute top-6 left-6 rounded-xl border-2 pointer-events-none shadow-xs"
-                      style={{
-                        width: '80px',
-                        height: '80px',
-                        borderColor: form.zoomSettings?.lensBorderColor || '#D4AF37',
-                        backgroundColor: 'rgba(255, 255, 255, 0.25)',
-                      }}
-                    >
-                      {form.zoomSettings?.showCrosshair !== false && (
-                        <>
-                          <div
-                            className="absolute top-1/2 left-0 right-0 h-[1px] -translate-y-1/2"
-                            style={{ backgroundColor: form.zoomSettings?.lensBorderColor || '#D4AF37' }}
-                          />
-                          <div
-                            className="absolute left-1/2 top-0 bottom-0 w-[1px] -translate-x-1/2"
-                            style={{ backgroundColor: form.zoomSettings?.lensBorderColor || '#D4AF37' }}
-                          />
-                          <div
-                            className="absolute top-1/2 left-1/2 w-1.5 h-1.5 rounded-full -translate-x-1/2 -translate-y-1/2 border border-white"
-                            style={{ backgroundColor: form.zoomSettings?.lensBorderColor || '#D4AF37' }}
-                          />
-                        </>
-                      )}
+                {/* Tablet Gestures & Controls */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-neutral-100">
+                  <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-neutral-800">Touch Pinch-to-Zoom Gesture</div>
+                      <div className="text-[11px] text-neutral-500">Enables two-finger pinch gesture scaling on tablet touchscreens.</div>
                     </div>
-                  )}
-                  <span className="absolute bottom-2 right-2 w-7 h-7 rounded-full bg-white/90 text-neutral-700 flex items-center justify-center shadow-xs border border-neutral-200">
-                    <ZoomIn size={14} />
-                  </span>
-                </div>
-
-                {/* Simulated Adjacent Zoom Pane */}
-                {form.zoomSettings?.mode === 'side-by-side' && (
-                  <div className="w-48 h-48 sm:w-56 sm:h-56 rounded-xl overflow-hidden bg-[#FAF6EF] border border-[#9C6B30]/30 shadow-md relative flex items-center justify-center">
-                    <div
-                      className="w-full h-full"
-                      style={{
-                        backgroundImage: `url('https://images.unsplash.com/photo-1685970731194-e27b477e87ba?crop=entropy&cs=srgb&fm=jpg&q=85')`,
-                        backgroundSize: `${200 * (form.zoomSettings?.zoomLevel || 2.5)}%`,
-                        backgroundPosition: '30% 30%',
-                        backgroundRepeat: 'no-repeat'
-                      }}
+                    <input
+                      type="checkbox"
+                      checked={form.zoomSettings?.tablet?.pinchToZoom !== false}
+                      onChange={e => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          tablet: { ...prev.zoomSettings?.tablet, pinchToZoom: e.target.checked }
+                        }
+                      }))}
+                      className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer shrink-0"
                     />
-                    <div className="absolute top-2 right-2 bg-black/70 text-white text-[9px] tracking-widest uppercase px-2 py-0.5 rounded-full font-semibold">
-                      {form.zoomSettings?.zoomLevel || 2.5}x PREVIEW
+                  </div>
+
+                  <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-neutral-800">Double-Tap to Zoom</div>
+                      <div className="text-[11px] text-neutral-500">Quick double-tap instantly zooms in or out at the tapped position.</div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={form.zoomSettings?.tablet?.doubleTapZoom !== false}
+                      onChange={e => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          tablet: { ...prev.zoomSettings?.tablet, doubleTapZoom: e.target.checked }
+                        }
+                      }))}
+                      className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer shrink-0"
+                    />
+                  </div>
+
+                  <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-neutral-800">Show Gesture Hint Pill</div>
+                      <div className="text-[11px] text-neutral-500">Displays "Pinch or double-tap to zoom" on tablet product images.</div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={form.zoomSettings?.tablet?.showGestureHint !== false}
+                      onChange={e => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          tablet: { ...prev.zoomSettings?.tablet, showGestureHint: e.target.checked }
+                        }
+                      }))}
+                      className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer shrink-0"
+                    />
+                  </div>
+
+                  <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-neutral-800">Fullscreen Lightbox Modal</div>
+                      <div className="text-[11px] text-neutral-500">Enables high-resolution fullscreen modal button for tablet shoppers.</div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={form.zoomSettings?.tablet?.modalZoomEnabled !== false}
+                      onChange={e => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          tablet: { ...prev.zoomSettings?.tablet, modalZoomEnabled: e.target.checked }
+                        }
+                      }))}
+                      className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer shrink-0"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 3: MOBILE ZOOM SETTINGS */}
+            {zoomDeviceTab === 'mobile' && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                <div className="flex items-center justify-between p-3 rounded-lg bg-[#FAF6EF] border border-[#9C6B30]/20">
+                  <div className="flex items-center gap-2.5">
+                    <Smartphone size={18} className="text-[#9C6B30]" />
+                    <div>
+                      <div className="text-xs font-bold text-neutral-900">Mobile Smartphone Viewport Mode (&lt; 768px)</div>
+                      <div className="text-[11px] text-neutral-500">High-performance mobile touch gestures tailored for phones.</div>
                     </div>
                   </div>
-                )}
+                  <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                    <span>{form.zoomSettings?.mobile?.enabled !== false ? 'Enabled' : 'Disabled'}</span>
+                    <input
+                      type="checkbox"
+                      checked={form.zoomSettings?.mobile?.enabled !== false}
+                      onChange={e => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          mobile: { ...prev.zoomSettings?.mobile, enabled: e.target.checked }
+                        }
+                      }))}
+                      className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer"
+                    />
+                  </label>
+                </div>
+
+                {/* Mobile Zoom Modes */}
+                <div>
+                  <label className="text-[11px] font-bold text-neutral-600 uppercase tracking-wider block mb-2">
+                    Active Mobile Zoom Functionality Mode *
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {/* 1. Touch Pinch & Pan */}
+                    <button
+                      type="button"
+                      onClick={() => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          mobile: { ...prev.zoomSettings?.mobile, mode: 'pinch' }
+                        }
+                      }))}
+                      className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
+                        form.zoomSettings?.mobile?.mode === 'pinch'
+                          ? 'border-[#9C6B30] bg-[#FAF6EF] ring-2 ring-[#9C6B30]/20 shadow-xs'
+                          : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-1 mb-2">
+                        <div className="w-8 h-8 rounded-lg bg-[#9C6B30]/10 text-[#9C6B30] flex items-center justify-center">
+                          <Move size={16} />
+                        </div>
+                        <span className="bg-[#9C6B30] text-white text-[9px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full">
+                          Recommended
+                        </span>
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-neutral-900 mb-1">Touch Pinch &amp; Pan</h3>
+                        <p className="text-[11px] text-neutral-500 leading-snug">
+                          Two-finger natural pinch gesture scales the jewelry image directly; one finger pans smoothly.
+                        </p>
+                      </div>
+                      {form.zoomSettings?.mobile?.mode === 'pinch' && (
+                        <div className="mt-2 text-[10px] font-bold text-[#9C6B30] flex items-center gap-1">
+                          <CheckCircle2 size={12} /> Active Mode
+                        </div>
+                      )}
+                    </button>
+
+                    {/* 2. Inner In-Place */}
+                    <button
+                      type="button"
+                      onClick={() => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          mobile: { ...prev.zoomSettings?.mobile, mode: 'inner' }
+                        }
+                      }))}
+                      className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
+                        form.zoomSettings?.mobile?.mode === 'inner'
+                          ? 'border-[#9C6B30] bg-[#FAF6EF] ring-2 ring-[#9C6B30]/20 shadow-xs'
+                          : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-1 mb-2">
+                        <div className="w-8 h-8 rounded-lg bg-neutral-100 text-neutral-700 flex items-center justify-center">
+                          <Maximize2 size={16} />
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-neutral-900 mb-1">Inner In-Place</h3>
+                        <p className="text-[11px] text-neutral-500 leading-snug">
+                          Touch and drag thumb across the screen to magnify the point beneath your finger.
+                        </p>
+                      </div>
+                      {form.zoomSettings?.mobile?.mode === 'inner' && (
+                        <div className="mt-2 text-[10px] font-bold text-[#9C6B30] flex items-center gap-1">
+                          <CheckCircle2 size={12} /> Active Mode
+                        </div>
+                      )}
+                    </button>
+
+                    {/* 3. Lightbox Modal Only */}
+                    <button
+                      type="button"
+                      onClick={() => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          mobile: { ...prev.zoomSettings?.mobile, mode: 'modal' }
+                        }
+                      }))}
+                      className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
+                        form.zoomSettings?.mobile?.mode === 'modal'
+                          ? 'border-[#9C6B30] bg-[#FAF6EF] ring-2 ring-[#9C6B30]/20 shadow-xs'
+                          : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-1 mb-2">
+                        <div className="w-8 h-8 rounded-lg bg-neutral-100 text-neutral-700 flex items-center justify-center">
+                          <ZoomIn size={16} />
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-neutral-900 mb-1">Lightbox Modal Only</h3>
+                        <p className="text-[11px] text-neutral-500 leading-snug">
+                          Tap button to open clean, fullscreen touch carousel with swipe navigation.
+                        </p>
+                      </div>
+                      {form.zoomSettings?.mobile?.mode === 'modal' && (
+                        <div className="mt-2 text-[10px] font-bold text-[#9C6B30] flex items-center gap-1">
+                          <CheckCircle2 size={12} /> Active Mode
+                        </div>
+                      )}
+                    </button>
+
+                    {/* 4. Disabled */}
+                    <button
+                      type="button"
+                      onClick={() => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          mobile: { ...prev.zoomSettings?.mobile, mode: 'disabled' }
+                        }
+                      }))}
+                      className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
+                        form.zoomSettings?.mobile?.mode === 'disabled'
+                          ? 'border-red-400 bg-red-50/50 ring-2 ring-red-300 shadow-xs'
+                          : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-1 mb-2">
+                        <div className="w-8 h-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center">
+                          <RotateCcw size={16} />
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-neutral-900 mb-1">Turn Off Mobile</h3>
+                        <p className="text-[11px] text-neutral-500 leading-snug">
+                          Disables zoom functionality on mobile phone viewports.
+                        </p>
+                      </div>
+                      {form.zoomSettings?.mobile?.mode === 'disabled' && (
+                        <div className="mt-2 text-[10px] font-bold text-red-600 flex items-center gap-1">
+                          <CheckCircle2 size={12} /> Disabled
+                        </div>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Mobile Magnification Scale */}
+                <div className="space-y-3 pt-3 border-t border-neutral-100">
+                  <label className="text-[11px] font-bold text-neutral-600 uppercase tracking-wider block">
+                    Mobile Magnification Scale: <strong className="text-[#9C6B30]">{(form.zoomSettings?.mobile?.zoomLevel || 2.0)}x</strong>
+                  </label>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {[1.5, 2.0, 2.5, 3.0].map((lvl) => (
+                      <button
+                        key={lvl}
+                        type="button"
+                        onClick={() => setForm(prev => ({
+                          ...prev,
+                          zoomSettings: {
+                            ...prev.zoomSettings,
+                            mobile: { ...prev.zoomSettings?.mobile, zoomLevel: lvl }
+                          }
+                        }))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                          Number(form.zoomSettings?.mobile?.zoomLevel) === lvl
+                            ? 'bg-[#1A1A1A] text-white shadow-xs'
+                            : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                        }`}
+                      >
+                        {lvl.toFixed(1)}x {lvl === 2.0 && '★'}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-neutral-400">
+                    💡 2.0x is recommended for smartphones to keep hand navigation fluid.
+                  </p>
+                </div>
+
+                {/* Mobile Gestures & Controls */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-neutral-100">
+                  <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-neutral-800">Touch Pinch-to-Zoom Gesture</div>
+                      <div className="text-[11px] text-neutral-500">Allow customers to pinch with two fingers on mobile phones.</div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={form.zoomSettings?.mobile?.pinchToZoom !== false}
+                      onChange={e => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          mobile: { ...prev.zoomSettings?.mobile, pinchToZoom: e.target.checked }
+                        }
+                      }))}
+                      className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer shrink-0"
+                    />
+                  </div>
+
+                  <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-neutral-800">Double-Tap to Zoom</div>
+                      <div className="text-[11px] text-neutral-500">Quick double-tap zooms into the touched detail on smartphones.</div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={form.zoomSettings?.mobile?.doubleTapZoom !== false}
+                      onChange={e => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          mobile: { ...prev.zoomSettings?.mobile, doubleTapZoom: e.target.checked }
+                        }
+                      }))}
+                      className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer shrink-0"
+                    />
+                  </div>
+
+                  <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-neutral-800">Show Floating Gesture Hint Pill</div>
+                      <div className="text-[11px] text-neutral-500">Subtle badge "Pinch to inspect" at the bottom of the photo.</div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={form.zoomSettings?.mobile?.showGestureHint !== false}
+                      onChange={e => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          mobile: { ...prev.zoomSettings?.mobile, showGestureHint: e.target.checked }
+                        }
+                      }))}
+                      className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer shrink-0"
+                    />
+                  </div>
+
+                  <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-neutral-800">Fullscreen Lightbox Modal Button</div>
+                      <div className="text-[11px] text-neutral-500">Floating magnifying glass icon opens swipeable fullscreen modal.</div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={form.zoomSettings?.mobile?.modalZoomEnabled !== false}
+                      onChange={e => setForm(prev => ({
+                        ...prev,
+                        zoomSettings: {
+                          ...prev.zoomSettings,
+                          mobile: { ...prev.zoomSettings?.mobile, modalZoomEnabled: e.target.checked }
+                        }
+                      }))}
+                      className="w-4 h-4 accent-[#9C6B30] rounded cursor-pointer shrink-0"
+                    />
+                  </div>
+                </div>
               </div>
+            )}
+
+            {/* LIVE SIMULATOR ACROSS DEVICES */}
+            <div className="pt-4 border-t border-neutral-100 bg-[#FAF6EF]/50 p-4 rounded-xl border border-[#9C6B30]/20">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                <span className="text-[11px] font-bold text-neutral-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <Sparkles size={14} className="text-[#9C6B30]" />
+                  Live Zoom Simulator (Preview how zoom feels on each device)
+                </span>
+                {/* Simulator Device Switcher */}
+                <div className="flex items-center gap-1 bg-white p-0.5 rounded-lg border border-neutral-200 shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => setSimDevice('desktop')}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase transition cursor-pointer ${
+                      simDevice === 'desktop'
+                        ? 'bg-[#1A1A1A] text-white shadow-xs'
+                        : 'text-neutral-600 hover:text-neutral-900'
+                    }`}
+                  >
+                    <Monitor size={12} />
+                    <span>Desktop</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimDevice('tablet')}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase transition cursor-pointer ${
+                      simDevice === 'tablet'
+                        ? 'bg-[#1A1A1A] text-white shadow-xs'
+                        : 'text-neutral-600 hover:text-neutral-900'
+                    }`}
+                  >
+                    <Tablet size={12} />
+                    <span>Tablet</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimDevice('mobile')}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase transition cursor-pointer ${
+                      simDevice === 'mobile'
+                        ? 'bg-[#1A1A1A] text-white shadow-xs'
+                        : 'text-neutral-600 hover:text-neutral-900'
+                    }`}
+                  >
+                    <Smartphone size={12} />
+                    <span>Mobile</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* SIMULATOR: DESKTOP VIEW */}
+              {simDevice === 'desktop' && (
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-6 py-2">
+                  <div className="relative w-48 h-48 sm:w-56 sm:h-56 rounded-xl overflow-hidden bg-white border border-neutral-200 shadow-sm group cursor-crosshair">
+                    <img
+                      src="https://images.unsplash.com/photo-1685970731194-e27b477e87ba?crop=entropy&cs=srgb&fm=jpg&q=85"
+                      alt="Simulator Diamond"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
+                    {(form.zoomSettings?.desktop?.mode || form.zoomSettings?.mode) === 'side-by-side' && (
+                      <div
+                        className="absolute top-6 left-6 rounded-xl border-2 pointer-events-none shadow-xs"
+                        style={{
+                          width: '80px',
+                          height: '80px',
+                          borderColor: form.zoomSettings?.desktop?.lensBorderColor || form.zoomSettings?.lensBorderColor || '#D4AF37',
+                          backgroundColor: 'rgba(255, 255, 255, 0.25)',
+                        }}
+                      >
+                        {(form.zoomSettings?.desktop?.showCrosshair ?? form.zoomSettings?.showCrosshair) !== false && (
+                          <>
+                            <div
+                              className="absolute top-1/2 left-0 right-0 h-[1px] -translate-y-1/2"
+                              style={{ backgroundColor: form.zoomSettings?.desktop?.lensBorderColor || form.zoomSettings?.lensBorderColor || '#D4AF37' }}
+                            />
+                            <div
+                              className="absolute left-1/2 top-0 bottom-0 w-[1px] -translate-x-1/2"
+                              style={{ backgroundColor: form.zoomSettings?.desktop?.lensBorderColor || form.zoomSettings?.lensBorderColor || '#D4AF37' }}
+                            />
+                            <div
+                              className="absolute top-1/2 left-1/2 w-1.5 h-1.5 rounded-full -translate-x-1/2 -translate-y-1/2 border border-white"
+                              style={{ backgroundColor: form.zoomSettings?.desktop?.lensBorderColor || form.zoomSettings?.lensBorderColor || '#D4AF37' }}
+                            />
+                          </>
+                        )}
+                      </div>
+                    )}
+                    <span className="absolute bottom-2 right-2 w-7 h-7 rounded-full bg-white/90 text-neutral-700 flex items-center justify-center shadow-xs border border-neutral-200">
+                      <ZoomIn size={14} />
+                    </span>
+                  </div>
+
+                  {(form.zoomSettings?.desktop?.mode || form.zoomSettings?.mode) === 'side-by-side' && (
+                    <div className="w-48 h-48 sm:w-56 sm:h-56 rounded-xl overflow-hidden bg-[#FAF6EF] border border-[#9C6B30]/30 shadow-md relative flex items-center justify-center">
+                      <div
+                        className="w-full h-full"
+                        style={{
+                          backgroundImage: `url('https://images.unsplash.com/photo-1685970731194-e27b477e87ba?crop=entropy&cs=srgb&fm=jpg&q=85')`,
+                          backgroundSize: `${200 * (form.zoomSettings?.desktop?.zoomLevel || form.zoomSettings?.zoomLevel || 2.5)}%`,
+                          backgroundPosition: '30% 30%',
+                          backgroundRepeat: 'no-repeat'
+                        }}
+                      />
+                      <div className="absolute top-2 right-2 bg-black/70 text-white text-[9px] tracking-widest uppercase px-2 py-0.5 rounded-full font-semibold">
+                        {(form.zoomSettings?.desktop?.zoomLevel || form.zoomSettings?.zoomLevel || 2.5)}x DESKTOP PREVIEW
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* SIMULATOR: TABLET VIEW */}
+              {simDevice === 'tablet' && (
+                <div className="flex flex-col items-center justify-center py-2">
+                  <div className="relative w-64 h-64 rounded-2xl overflow-hidden bg-white border-4 border-neutral-800 shadow-xl group">
+                    <img
+                      src="https://images.unsplash.com/photo-1685970731194-e27b477e87ba?crop=entropy&cs=srgb&fm=jpg&q=85"
+                      alt="Simulator Tablet"
+                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-125"
+                      style={{ transformOrigin: '40% 40%' }}
+                    />
+                    <div className="absolute top-2 left-2 bg-black/70 backdrop-blur-xs text-white text-[9px] tracking-widest uppercase px-2.5 py-0.5 rounded-full font-semibold">
+                      {(form.zoomSettings?.tablet?.zoomLevel || 2.0)}x TABLET · {form.zoomSettings?.tablet?.mode?.toUpperCase() || 'INNER'}
+                    </div>
+                    {form.zoomSettings?.tablet?.showGestureHint !== false && (
+                      <div className="absolute bottom-2 left-2 bg-black/60 backdrop-blur-xs text-white text-[9px] tracking-wider uppercase px-2 py-0.5 rounded-full font-medium">
+                        Pinch or double-tap to zoom
+                      </div>
+                    )}
+                    <span className="absolute bottom-2 right-2 w-7 h-7 rounded-full bg-white/90 text-neutral-700 flex items-center justify-center shadow-xs border border-neutral-200">
+                      <ZoomIn size={14} />
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-500 mt-2 text-center">
+                    📱 Tablet view simulates in-place touch magnification and pinch gestures.
+                  </p>
+                </div>
+              )}
+
+              {/* SIMULATOR: MOBILE VIEW */}
+              {simDevice === 'mobile' && (
+                <div className="flex flex-col items-center justify-center py-2">
+                  <div className="relative w-48 h-60 rounded-3xl overflow-hidden bg-white border-4 border-neutral-900 shadow-xl group">
+                    {/* Phone speaker notch */}
+                    <div className="absolute top-1.5 left-1/2 -translate-x-1/2 w-12 h-1 bg-neutral-900 rounded-full z-20" />
+                    <img
+                      src="https://images.unsplash.com/photo-1685970731194-e27b477e87ba?crop=entropy&cs=srgb&fm=jpg&q=85"
+                      alt="Simulator Mobile"
+                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-125"
+                      style={{ transformOrigin: 'center' }}
+                    />
+                    <div className="absolute top-3 left-2 bg-black/70 backdrop-blur-xs text-white text-[8px] tracking-widest uppercase px-2 py-0.5 rounded-full font-semibold">
+                      {(form.zoomSettings?.mobile?.zoomLevel || 2.0)}x MOBILE · {form.zoomSettings?.mobile?.mode?.toUpperCase() || 'PINCH'}
+                    </div>
+                    {form.zoomSettings?.mobile?.showGestureHint !== false && (
+                      <div className="absolute bottom-2 left-2 bg-black/60 backdrop-blur-xs text-white text-[8px] tracking-wider uppercase px-2 py-0.5 rounded-full font-medium">
+                        Pinch to inspect
+                      </div>
+                    )}
+                    <span className="absolute bottom-2 right-2 w-6 h-6 rounded-full bg-white/90 text-neutral-700 flex items-center justify-center shadow-xs border border-neutral-200">
+                      <ZoomIn size={12} />
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-500 mt-2 text-center">
+                    📱 Mobile view simulates smooth touch pinch-to-zoom and pan on smartphones.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
