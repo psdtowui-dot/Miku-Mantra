@@ -189,7 +189,8 @@ const DEFAULT_SITE_SETTINGS = {
     razorpay: {
       enabled: true,
       testMode: true,
-      keyId: '',
+      mockMode: true,
+      keyId: 'rzp_test_mockkey',
       keySecret: '',
       webhookSecret: '',
       businessName: 'MikuMantra Fine Jewellery',
@@ -1754,7 +1755,11 @@ async function handleRoute(request, { params }) {
       const effectiveKeyId = (rawPay?.razorpay?.keyId && rawPay.razorpay.keyId.trim())
         ? rawPay.razorpay.keyId.trim()
         : (process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || process.env.RAZORPAY_KEY_ID || '');
-      const isMockKey = !effectiveKeyId || effectiveKeyId.includes('mock') || !effectiveKeyId.startsWith('rzp_');
+      const isMockKey = Boolean(rawPay?.razorpay?.mockMode)
+        || !effectiveKeyId
+        || effectiveKeyId.includes('mock')
+        || !effectiveKeyId.startsWith('rzp_')
+        || effectiveKeyId.length < 18;
 
       const r = clean({
         ...DEFAULT_SITE_SETTINGS,
@@ -1773,6 +1778,7 @@ async function handleRoute(request, { params }) {
           razorpay: {
             enabled: rawPay?.razorpay?.enabled !== false,
             testMode: rawPay?.razorpay?.testMode ?? true,
+            mockMode: isMockKey,
             keyId: effectiveKeyId,
             isMock: isMockKey,
             businessName: rawPay?.razorpay?.businessName || 'MikuMantra Fine Jewellery',
@@ -3045,19 +3051,31 @@ async function handleRoute(request, { params }) {
       if (chosenPayment === 'razorpay' && payConfig?.razorpay?.enabled === false) {
         return err('Razorpay payment method is currently disabled by store administrator.', 400);
       }
+      let verifiedRzpPaymentId = body.razorpayPaymentId || null;
+      let verifiedRzpOrderId = body.razorpayOrderId || null;
+      let verifiedRzpSignature = body.razorpaySignature || null;
+
       if (chosenPayment === 'razorpay') {
         const rzpConfig = payConfig?.razorpay;
         const keySecret = (rzpConfig?.keySecret && rzpConfig.keySecret.trim()) || process.env.RAZORPAY_KEY_SECRET;
-        const { razorpayPaymentId, razorpayOrderId, razorpaySignature } = body;
-        if (!razorpayPaymentId || !razorpayOrderId || !razorpaySignature) {
-          return err('Missing payment ID, order ID, or signature for Razorpay payment.', 400);
+        const isMockActive = Boolean(rzpConfig?.mockMode) || Boolean(rzpConfig?.isMock) || !rzpConfig?.keyId || rzpConfig?.keyId?.includes('mock');
+
+        if (isMockActive || (verifiedRzpOrderId && verifiedRzpOrderId.startsWith('order_MOCK')) || (verifiedRzpPaymentId && verifiedRzpPaymentId.startsWith('pay_MOCK'))) {
+          if (!verifiedRzpOrderId) verifiedRzpOrderId = 'order_MOCK_' + Math.random().toString(36).slice(2, 10);
+          if (!verifiedRzpPaymentId) verifiedRzpPaymentId = 'pay_MOCK_' + Math.random().toString(36).slice(2, 11).toUpperCase();
+          if (!verifiedRzpSignature) verifiedRzpSignature = 'mock_sig_' + Math.random().toString(36).slice(2, 10);
+        } else {
+          if (!verifiedRzpPaymentId || !verifiedRzpOrderId || !verifiedRzpSignature) {
+            return err('Missing payment ID, order ID, or signature for Razorpay payment.', 400);
+          }
         }
-        if (keySecret && !razorpayOrderId.startsWith('order_MOCK')) {
+
+        if (keySecret && !verifiedRzpOrderId.startsWith('order_MOCK')) {
           const generatedSignature = crypto
             .createHmac('sha256', keySecret)
-            .update(razorpayOrderId + '|' + razorpayPaymentId)
+            .update(verifiedRzpOrderId + '|' + verifiedRzpPaymentId)
             .digest('hex');
-          if (generatedSignature !== razorpaySignature) {
+          if (generatedSignature !== verifiedRzpSignature) {
             return err('Payment verification failed: invalid signature.', 400);
           }
         }
@@ -3112,8 +3130,8 @@ async function handleRoute(request, { params }) {
         },
         status: 'confirmed',
         statusHistory: [{ status: 'confirmed', at: now, note: 'Order placed successfully.' }],
-        razorpayPaymentId: body.razorpayPaymentId || null,
-        razorpayOrderId: body.razorpayOrderId || null,
+        razorpayPaymentId: verifiedRzpPaymentId,
+        razorpayOrderId: verifiedRzpOrderId,
         placedAt: now,
         estimatedDelivery: new Date(Date.now() + 5 * 86400 * 1000)
       };
@@ -4066,7 +4084,17 @@ async function handleRoute(request, { params }) {
         || process.env.RAZORPAY_KEY_SECRET
         || '';
 
-      const isRealKeys = keyId && keySecret && !keyId.includes('mock') && keyId.startsWith('rzp_');
+      const isExplicitMock = Boolean(rzpConfig?.mockMode)
+        || keyId.includes('mock')
+        || !keyId
+        || keyId.length < 18;
+
+      const isRealKeys = !isExplicitMock
+        && keyId
+        && keySecret
+        && (keyId.startsWith('rzp_live_') || keyId.startsWith('rzp_test_'))
+        && keyId.length >= 18
+        && keySecret.length >= 10;
 
       if (isRealKeys) {
         try {
@@ -6050,6 +6078,7 @@ async function handleRoute(request, { params }) {
           const envKeyId = process.env.RAZORPAY_KEY_ID || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || '';
           const hasKeySecret = Boolean((rawPay?.razorpay?.keySecret && rawPay.razorpay.keySecret.trim()) || process.env.RAZORPAY_KEY_SECRET);
           const hasWebhookSecret = Boolean((rawPay?.razorpay?.webhookSecret && rawPay.razorpay.webhookSecret.trim()) || process.env.RAZORPAY_WEBHOOK_SECRET);
+          const isMockAdmin = Boolean(rawPay?.razorpay?.mockMode) || !keyId || keyId.includes('mock') || !keyId.startsWith('rzp_') || keyId.length < 18;
 
           return ok(clean({
             ...DEFAULT_SITE_SETTINGS,
@@ -6067,6 +6096,8 @@ async function handleRoute(request, { params }) {
               razorpay: {
                 enabled: rawPay?.razorpay?.enabled !== false,
                 testMode: rawPay?.razorpay?.testMode ?? true,
+                mockMode: isMockAdmin,
+                isMock: isMockAdmin,
                 keyId,
                 envKeyId,
                 hasKeySecret,
@@ -6173,6 +6204,7 @@ async function handleRoute(request, { params }) {
               razorpay: {
                 enabled: newRzp.enabled !== false,
                 testMode: newRzp.testMode ?? true,
+                mockMode: Boolean(newRzp.mockMode),
                 keyId: (newRzp.keyId || '').trim(),
                 keySecret: finalKeySecret,
                 webhookSecret: finalWebhookSecret,

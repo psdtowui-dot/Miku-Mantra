@@ -6,7 +6,7 @@ import { useCart } from '@/lib/cart-store';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { formatINR } from '@/lib/products';
 import { toast } from 'sonner';
-import { Loader2, ShieldCheck, Truck, Lock, MapPin, Wallet, ChevronRight, CreditCard, BookmarkCheck, Plus, Check } from 'lucide-react';
+import { Loader2, ShieldCheck, Truck, Lock, MapPin, Wallet, ChevronRight, CreditCard, BookmarkCheck, Plus, Check, X, Smartphone, Building2, AlertTriangle, Sparkles } from 'lucide-react';
 
 export default function CheckoutPage() {
   const { items, subtotal, clear, coupon: storeCoupon, discount: storeDiscount, removeCoupon, hydrated, removeOrderedItems } = useCart();
@@ -20,6 +20,15 @@ export default function CheckoutPage() {
   const [email, setEmail] = useState('');
   const [payment, setPayment] = useState('razorpay');
   const [placing, setPlacing] = useState(false);
+  const [mockRazorpayState, setMockRazorpayState] = useState({
+    isOpen: false,
+    orderId: '',
+    amount: 0,
+    resolve: null,
+    method: 'upi',
+    upiApp: 'gpay',
+    isProcessing: false,
+  });
   const [coupon, setCoupon] = useState(null);
   const [gift, setGift] = useState(false);
   const [addrErrors, setAddrErrors] = useState({ fullName: '', phone: '', line1: '', city: '', state: '', pincode: '' });
@@ -372,15 +381,25 @@ export default function CheckoutPage() {
         return { paid: false };
       }
 
-      if (!window.Razorpay && !rzOrder.mock && !rzOrder.key?.includes('mock')) {
-        toast.error('Razorpay payment gateway failed to load. Please disable ad-blockers and try again.');
-        return { paid: false };
+      const isMock = Boolean(rzOrder.mock) || rzOrder.key?.includes('mock') || Boolean(paymentConfig?.razorpay?.isMock) || Boolean(paymentConfig?.razorpay?.mockMode);
+      if (isMock) {
+        setPlacingStatus('');
+        return new Promise((resolve) => {
+          setMockRazorpayState({
+            isOpen: true,
+            orderId: rzOrder.id || ('order_MOCK' + Math.random().toString(36).slice(2, 10)),
+            amount: rzOrder.amount ? (rzOrder.amount / 100) : total,
+            resolve,
+            method: 'upi',
+            upiApp: 'gpay',
+            isProcessing: false,
+          });
+        });
       }
 
-      const isMock = rzOrder.mock || rzOrder.key?.includes('mock');
-      if (isMock) {
-        setPlacingStatus('Payment confirmed…');
-        return { paid: true, paymentId: 'pay_MOCK' + Math.random().toString(36).slice(2, 10), orderId: rzOrder.id, signature: 'mock_signature' };
+      if (!window.Razorpay) {
+        toast.error('Razorpay payment gateway failed to load. Please disable ad-blockers and try again.');
+        return { paid: false };
       }
 
       setPlacingStatus('Opening payment…');
@@ -421,6 +440,65 @@ export default function CheckoutPage() {
     }
   }
 
+  const handleMockPaymentSuccess = async () => {
+    if (!mockRazorpayState.resolve) return;
+    setMockRazorpayState(s => ({ ...s, isProcessing: true }));
+    setPlacingStatus('Verifying payment with Mock Razorpay…');
+
+    const paymentId = 'pay_MOCK' + Math.random().toString(36).slice(2, 11).toUpperCase();
+    const orderId = mockRazorpayState.orderId;
+    const signature = 'mock_sig_' + Math.random().toString(36).slice(2, 10);
+
+    try {
+      const v = await authFetch('/api/payment/razorpay/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(10000),
+        body: JSON.stringify({
+          razorpay_order_id: orderId,
+          razorpay_payment_id: paymentId,
+          razorpay_signature: signature
+        })
+      });
+      const vd = await v.json();
+      mockRazorpayState.resolve({
+        paid: vd.verified !== false,
+        paymentId: vd.paymentId || paymentId,
+        orderId,
+        signature
+      });
+    } catch (e) {
+      mockRazorpayState.resolve({
+        paid: true,
+        paymentId,
+        orderId,
+        signature
+      });
+    } finally {
+      setMockRazorpayState(s => ({ ...s, isOpen: false, isProcessing: false, resolve: null }));
+    }
+  };
+
+  const handleMockPaymentFailure = () => {
+    if (mockRazorpayState.resolve) {
+      mockRazorpayState.resolve({ paid: false });
+    }
+    setMockRazorpayState(s => ({ ...s, isOpen: false, resolve: null }));
+    setPlacing(false);
+    setPlacingStatus('');
+    toast.error('Payment was declined by bank (Mock Simulation)');
+  };
+
+  const handleMockPaymentDismiss = () => {
+    if (mockRazorpayState.resolve) {
+      mockRazorpayState.resolve({ paid: false });
+    }
+    setMockRazorpayState(s => ({ ...s, isOpen: false, resolve: null }));
+    setPlacing(false);
+    setPlacingStatus('');
+    toast.info('Payment was cancelled');
+  };
+
   async function placeOrder() {
     if (placing) return;
     setPlacing(true);
@@ -444,9 +522,7 @@ export default function CheckoutPage() {
           setPlacingStatus('');
           return;
         }
-        razorpayPaymentId,
-        razorpayOrderId,
-        razorpaySignature = res.paymentId;
+        razorpayPaymentId = res.paymentId;
         razorpayOrderId = res.orderId;
         razorpaySignature = res.signature;
       }
@@ -811,6 +887,210 @@ export default function CheckoutPage() {
           </aside>
         </div>
       </div>
+
+      {/* MOCK RAZORPAY PAYMENT MODAL DIALOG */}
+      {mockRazorpayState.isOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-neutral-200 animate-in zoom-in-95 duration-150 flex flex-col">
+            {/* Razorpay Signature Navy Header */}
+            <div className="bg-[#0C2340] text-white p-4 sm:p-5 relative">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-xs tracking-wider text-white">
+                    RZP
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-white tracking-wide">
+                      {paymentConfig?.razorpay?.businessName || 'MikuMantra Fine Jewellery'}
+                    </div>
+                    <div className="text-[10px] text-blue-200">
+                      Razorpay Trusted Business
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleMockPaymentDismiss}
+                  className="p-1 rounded-full text-white/70 hover:text-white hover:bg-white/10 transition cursor-pointer"
+                  title="Cancel Payment"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Amount and Mock Banner */}
+              <div className="mt-3 pt-3 border-t border-white/10 flex items-baseline justify-between">
+                <div>
+                  <span className="text-[10px] uppercase tracking-widest text-blue-200 block">Amount to Pay</span>
+                  <span className="font-display text-2xl font-light text-white">
+                    {formatINR(mockRazorpayState.amount || total)}
+                  </span>
+                </div>
+                <span className="bg-amber-400 text-amber-950 text-[9px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full">
+                  Mock Simulator
+                </span>
+              </div>
+            </div>
+
+            {/* Payment Method Selector Tabs */}
+            <div className="grid grid-cols-3 border-b border-neutral-200 bg-neutral-50 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setMockRazorpayState(s => ({ ...s, method: 'upi' }))}
+                className={`py-2.5 flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                  mockRazorpayState.method === 'upi'
+                    ? 'border-b-2 border-[#0C2340] text-[#0C2340] bg-white font-bold'
+                    : 'text-neutral-500 hover:text-neutral-800'
+                }`}
+              >
+                <Smartphone size={14} />
+                <span>UPI</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMockRazorpayState(s => ({ ...s, method: 'card' }))}
+                className={`py-2.5 flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                  mockRazorpayState.method === 'card'
+                    ? 'border-b-2 border-[#0C2340] text-[#0C2340] bg-white font-bold'
+                    : 'text-neutral-500 hover:text-neutral-800'
+                }`}
+              >
+                <CreditCard size={14} />
+                <span>Card</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMockRazorpayState(s => ({ ...s, method: 'netbanking' }))}
+                className={`py-2.5 flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                  mockRazorpayState.method === 'netbanking'
+                    ? 'border-b-2 border-[#0C2340] text-[#0C2340] bg-white font-bold'
+                    : 'text-neutral-500 hover:text-neutral-800'
+                }`}
+              >
+                <Building2 size={14} />
+                <span>Netbanking</span>
+              </button>
+            </div>
+
+            {/* Tab Body */}
+            <div className="p-4 sm:p-5 space-y-3.5 text-xs text-neutral-700 min-h-[170px] flex flex-col justify-center">
+              {/* UPI Tab */}
+              {mockRazorpayState.method === 'upi' && (
+                <div className="space-y-3">
+                  <div className="text-[11px] text-neutral-500 font-medium">Select preferred UPI payment app:</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: 'gpay', name: 'Google Pay', label: 'GPay' },
+                      { id: 'phonepe', name: 'PhonePe', label: 'PhonePe' },
+                      { id: 'paytm', name: 'Paytm UPI', label: 'Paytm' }
+                    ].map(app => (
+                      <button
+                        key={app.id}
+                        type="button"
+                        onClick={() => setMockRazorpayState(s => ({ ...s, upiApp: app.id }))}
+                        className={`p-2.5 rounded-xl border text-center transition cursor-pointer ${
+                          mockRazorpayState.upiApp === app.id
+                            ? 'border-blue-600 bg-blue-50/60 font-bold text-blue-900 ring-1 ring-blue-600'
+                            : 'border-neutral-200 bg-white hover:border-neutral-300'
+                        }`}
+                      >
+                        <div className="text-xs font-semibold">{app.label}</div>
+                        <div className="text-[10px] text-neutral-500 mt-0.5">{app.name}</div>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="p-2.5 bg-neutral-50 rounded-lg border border-neutral-200 text-[11px] text-neutral-600 flex items-center justify-between">
+                    <span>Virtual UPI ID:</span>
+                    <span className="font-mono text-neutral-800 font-semibold">{addr.phone || '9876543210'}@okhdfcbank</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Card Tab */}
+              {mockRazorpayState.method === 'card' && (
+                <div className="space-y-2.5">
+                  <div className="p-3 bg-gradient-to-r from-neutral-800 to-neutral-900 text-white rounded-xl shadow-xs space-y-2 font-mono">
+                    <div className="flex justify-between items-center text-[10px] text-neutral-400">
+                      <span>MOCK RAZORPAY TEST CARD</span>
+                      <span className="text-amber-400 font-bold">VISA</span>
+                    </div>
+                    <div className="text-sm tracking-wider">4111 •••• •••• 4444</div>
+                    <div className="flex justify-between text-[10px] text-neutral-300">
+                      <span>{addr.fullName || 'TEST CUSTOMER'}</span>
+                      <span>12 / 28</span>
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-neutral-500 text-center">
+                    Simulated test card prefilled. No real debit will occur.
+                  </div>
+                </div>
+              )}
+
+              {/* Netbanking Tab */}
+              {mockRazorpayState.method === 'netbanking' && (
+                <div className="space-y-2">
+                  <div className="text-[11px] text-neutral-500 font-medium">Popular Banks (Simulated):</div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    {['HDFC Bank', 'ICICI Bank', 'State Bank of India', 'Axis Bank'].map(bank => (
+                      <div key={bank} className="p-2.5 bg-neutral-50 border border-neutral-200 rounded-lg text-neutral-700 font-medium flex items-center gap-1.5">
+                        <Check size={12} className="text-emerald-600" />
+                        <span>{bank}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="p-4 bg-neutral-50 border-t border-neutral-200 space-y-2">
+              <button
+                type="button"
+                disabled={mockRazorpayState.isProcessing}
+                onClick={handleMockPaymentSuccess}
+                className="w-full py-3 bg-[#0C2340] hover:bg-[#132c4d] text-white rounded-xl text-xs font-bold uppercase tracking-wider transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-md"
+              >
+                {mockRazorpayState.isProcessing ? (
+                  <>
+                    <Loader2 size={15} className="animate-spin" />
+                    <span>Verifying with Mock Gateway...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check size={15} />
+                    <span>Pay {formatINR(mockRazorpayState.amount || total)} (Simulate Success)</span>
+                  </>
+                )}
+              </button>
+
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={mockRazorpayState.isProcessing}
+                  onClick={handleMockPaymentFailure}
+                  className="text-[11px] text-red-600 hover:text-red-700 font-medium underline py-1 cursor-pointer"
+                >
+                  Simulate Payment Failure
+                </button>
+                <button
+                  type="button"
+                  disabled={mockRazorpayState.isProcessing}
+                  onClick={handleMockPaymentDismiss}
+                  className="text-[11px] text-neutral-500 hover:text-neutral-800 font-medium py-1 cursor-pointer"
+                >
+                  Cancel &amp; Return
+                </button>
+              </div>
+            </div>
+
+            {/* Security Footer */}
+            <div className="bg-neutral-100 px-4 py-2 border-t border-neutral-200 text-center text-[10px] text-neutral-500 flex items-center justify-center gap-1.5">
+              <Lock size={11} className="text-neutral-400" />
+              <span>Razorpay Mock Sandbox · Safe simulation mode</span>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

@@ -31,7 +31,8 @@ export default function AdminPaymentSettings() {
     razorpay: {
       enabled: true,
       testMode: true,
-      keyId: '',
+      mockMode: true,
+      keyId: 'rzp_test_mockkey',
       keySecret: '',
       webhookSecret: '',
       webhookUrl: '',
@@ -59,11 +60,13 @@ export default function AdminPaymentSettings() {
         const rzp = data.paymentSettings?.razorpay || {};
         const cod = data.paymentSettings?.cod || {};
 
+        const isMockActive = Boolean(rzp.mockMode) || Boolean(rzp.isMock) || !rzp.keyId || rzp.keyId.includes('mock');
         setForm({
           razorpay: {
             enabled: rzp.enabled !== false,
             testMode: rzp.testMode ?? true,
-            keyId: rzp.keyId || '',
+            mockMode: isMockActive,
+            keyId: rzp.keyId || (isMockActive ? 'rzp_test_mockkey' : ''),
             keySecret: '', // always empty on load for security
             webhookSecret: '',
             webhookUrl: rzp.webhookUrl || '',
@@ -103,7 +106,8 @@ export default function AdminPaymentSettings() {
           razorpay: {
             enabled: form.razorpay.enabled,
             testMode: form.razorpay.testMode,
-            keyId: form.razorpay.keyId.trim(),
+            mockMode: Boolean(form.razorpay.mockMode),
+            keyId: form.razorpay.mockMode ? (form.razorpay.keyId.trim() || 'rzp_test_mockkey') : form.razorpay.keyId.trim(),
             keySecret: form.razorpay.keySecret.trim(),
             webhookSecret: form.razorpay.webhookSecret.trim(),
             webhookUrl: form.razorpay.webhookUrl.trim(),
@@ -202,11 +206,13 @@ export default function AdminPaymentSettings() {
                 <span className={`text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider font-bold ${
                   !form.razorpay.enabled
                     ? 'bg-neutral-200 text-neutral-600'
+                    : form.razorpay.mockMode
+                    ? 'bg-purple-100 text-purple-800'
                     : isKeyLive
                     ? 'bg-emerald-100 text-emerald-800'
                     : 'bg-amber-100 text-amber-800'
                 }`}>
-                  {!form.razorpay.enabled ? 'Removed / Disabled' : isKeyLive ? 'Live' : 'Test Mode'}
+                  {!form.razorpay.enabled ? 'Removed / Disabled' : form.razorpay.mockMode ? 'Mock Mode' : isKeyLive ? 'Live' : 'Test Sandbox'}
                 </span>
               </div>
               <div className="text-xs text-neutral-500 mt-0.5">
@@ -285,44 +291,85 @@ export default function AdminPaymentSettings() {
         </div>
 
         <div className="p-5 sm:p-6 space-y-6">
-          {/* Environment Mode Toggle */}
+          {/* Environment Mode Toggle (Mock, Test Sandbox, Live Production) */}
           <div className="p-4 rounded-xl border border-neutral-200 bg-neutral-50/70 space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
               <div>
-                <div className="text-xs font-bold uppercase tracking-wider text-neutral-700">
+                <div className="text-xs font-bold uppercase tracking-wider text-neutral-700 flex items-center gap-2">
                   Gateway Environment
+                  {form.razorpay.mockMode && (
+                    <span className="text-[10px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-bold uppercase tracking-wider">
+                      🧪 Mock Simulation Active
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-neutral-500 mt-0.5">
-                  Toggle between sandbox test transactions and live production payments.
+                  Select Mock Mode for simulated payments, Sandbox for test API keys, or Production for real customer cards.
                 </p>
               </div>
-              <div className="inline-flex rounded-lg border border-neutral-300 bg-white p-1 shadow-2xs">
+              <div className="inline-flex flex-wrap rounded-lg border border-neutral-300 bg-white p-1 shadow-2xs">
                 <button
                   type="button"
                   onClick={() => setForm(prev => ({
                     ...prev,
-                    razorpay: { ...prev.razorpay, testMode: true }
+                    razorpay: {
+                      ...prev.razorpay,
+                      mockMode: true,
+                      testMode: true,
+                      keyId: prev.razorpay.keyId || 'rzp_test_mockkey'
+                    }
                   }))}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
-                    form.razorpay.testMode ? 'bg-amber-100 text-amber-900 font-bold shadow-2xs' : 'text-neutral-600 hover:text-neutral-900'
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition cursor-pointer ${
+                    form.razorpay.mockMode
+                      ? 'bg-purple-100 text-purple-900 font-bold shadow-2xs'
+                      : 'text-neutral-600 hover:text-neutral-900'
                   }`}
                 >
-                  Test Mode (Sandbox)
+                  🧪 Mock Mode (Simulated)
                 </button>
                 <button
                   type="button"
                   onClick={() => setForm(prev => ({
                     ...prev,
-                    razorpay: { ...prev.razorpay, testMode: false }
+                    razorpay: { ...prev.razorpay, mockMode: false, testMode: true }
                   }))}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
-                    !form.razorpay.testMode ? 'bg-emerald-600 text-white font-bold shadow-2xs' : 'text-neutral-600 hover:text-neutral-900'
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition cursor-pointer ${
+                    !form.razorpay.mockMode && form.razorpay.testMode
+                      ? 'bg-amber-100 text-amber-900 font-bold shadow-2xs'
+                      : 'text-neutral-600 hover:text-neutral-900'
                   }`}
                 >
-                  Live Mode (Production)
+                  ⚡ Test Mode (Sandbox)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForm(prev => ({
+                    ...prev,
+                    razorpay: { ...prev.razorpay, mockMode: false, testMode: false }
+                  }))}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition cursor-pointer ${
+                    !form.razorpay.mockMode && !form.razorpay.testMode
+                      ? 'bg-emerald-600 text-white font-bold shadow-2xs'
+                      : 'text-neutral-600 hover:text-neutral-900'
+                  }`}
+                >
+                  🟢 Live Mode (Production)
                 </button>
               </div>
             </div>
+
+            {/* Mock Mode Info Callout */}
+            {form.razorpay.mockMode && (
+              <div className="mt-3 p-3 bg-purple-50/80 border border-purple-200 rounded-lg text-xs text-purple-900 flex items-start gap-2.5">
+                <Sparkles size={16} className="text-purple-600 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-bold">Mock Razorpay is currently active</div>
+                  <div className="text-[11px] text-purple-700 mt-0.5">
+                    Orders placed with Razorpay display an interactive simulated Razorpay dialog (UPI, Cards, Netbanking) so you can test successful payments and error handling without real API credentials.
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Credentials Form */}
