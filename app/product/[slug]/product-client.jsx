@@ -132,6 +132,44 @@ export default function ProductClient({ initialProduct, initialRelated, slug, si
     }
   };
 
+  const handleShare = async (e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const shareUrl = typeof window !== 'undefined' ? window.location.href : `/product/${slug || p?.slug}`;
+    const shareData = {
+      title: p?.name || 'Miku Mantra',
+      text: p?.name ? `Check out ${p.name} on Miku Mantra` : 'Check out this product on Miku Mantra',
+      url: shareUrl,
+    };
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      try {
+        await navigator.share(shareData);
+        return;
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+      }
+    }
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+      } else {
+        const input = document.createElement('input');
+        input.value = shareUrl;
+        input.style.position = 'fixed';
+        input.style.opacity = '0';
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        document.body.removeChild(input);
+      }
+      toast.success('Link copied to clipboard');
+    } catch {
+      toast.error('Failed to copy link');
+    }
+  };
+
   const isOutOfStock = p.stock !== undefined ? p.stock <= 0 : false;
   return (
     <main className="bg-white">
@@ -198,7 +236,7 @@ export default function ProductClient({ initialProduct, initialRelated, slug, si
               </div>
               <button onClick={() => toggle(p.id)} className={`w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-[#E8E8E8] flex items-center justify-center hover:border-[#9C6B30] ${has(p.id) ? 'text-[#9C6B30]' : ''}`}><Heart size={16} fill={has(p.id) ? '#9C6B30' : 'none'} /></button>
               <button onClick={() => { const r = toggleCmp(p.id); if (r.full) toast.error('Compare up to 4 items'); else toast.success(r.added ? 'Added to compare' : 'Removed from compare'); }} className={`w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-[#E8E8E8] flex items-center justify-center hover:border-[#9C6B30] ${hasCmp(p.id) ? 'text-[#9C6B30]' : ''}`}><GitCompare size={16} /></button>
-              <button onClick={() => { navigator.clipboard?.writeText(window.location.href); toast.success('Link copied'); }} className="w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-[#E8E8E8] flex items-center justify-center hover:border-[#9C6B30]"><Share2 size={16} /></button>
+              <button type="button" aria-label="Share product" title="Share product" onClick={handleShare} className="w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-[#E8E8E8] flex items-center justify-center hover:border-[#9C6B30] hover:text-[#9C6B30] transition-colors"><Share2 size={16} /></button>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2 sm:gap-3">
               <button
