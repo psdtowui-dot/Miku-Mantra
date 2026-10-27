@@ -1,9 +1,9 @@
 import ProductClient from './product-client';
 import { notFound } from 'next/navigation';
 import { getSiteSettings, getProductBySlugDB, getCanonicalBaseUrl, toAbsoluteUrl, applyTitleTemplate } from '@/lib/db-site-settings';
+import ReactDOM from 'react-dom';
 
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
+export const revalidate = 60;
 
 export async function generateMetadata({ params }){
   const { slug } = await params;
@@ -13,7 +13,6 @@ export async function generateMetadata({ params }){
   ]);
 
   const siteName = settings.siteName || 'MikuMantra Fine Jewellery';
-
   const siteUrl = getCanonicalBaseUrl(settings);
 
   if (!p) {
@@ -77,6 +76,12 @@ export default async function Page({ params }){
 
   const siteUrl = getCanonicalBaseUrl(settings);
   const productUrl = p ? `${siteUrl}/product/${p.slug || slug}` : '';
+
+  const rawImages = (p.images && p.images.length > 0) ? p.images : [settings.shareBanner || settings.ogImage];
+  const primaryImgUrl = toAbsoluteUrl(rawImages[0], siteUrl);
+  if (primaryImgUrl && !primaryImgUrl.startsWith('data:')) {
+    ReactDOM.preload(primaryImgUrl, { as: 'image', fetchPriority: 'high' });
+  }
 
   const jsonLd = p ? {
     '@context':'https://schema.org', '@type':'Product',

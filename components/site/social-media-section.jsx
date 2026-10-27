@@ -23,7 +23,7 @@ export default function SocialMediaSection({ initialItems, initialSettings }) {
 
   // Fetch latest public social media data from API
   useEffect(() => {
-    if (initialItems && initialItems.length > 0 && initialSettings) return;
+    if (initialItems && initialItems.length > 0) return;
     let isMounted = true;
     fetch('/api/social-media')
       .then(res => res.json())

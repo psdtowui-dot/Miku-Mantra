@@ -4,30 +4,10 @@ import { Providers } from './providers'
 import { Toaster } from 'sonner'
 import AIChatMount from '@/components/site/ai-chat-mount'
 
-import { headers } from 'next/headers'
 import Navbar from '@/components/site/navbar';
 import Footer from '@/components/site/footer';
 
 import { getSiteSettings, getHeaderData, getFooterData, getCanonicalBaseUrl, toAbsoluteUrl } from '@/lib/db-site-settings';
-
-export const dynamic = 'force-dynamic';
-
-async function getBaseUrl() {
-  try {
-    const headersList = await headers();
-    const host = headersList.get('host');
-    if (host) {
-      const protocol = headersList.get('x-forwarded-proto') || (host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https');
-      return `${protocol}://${host}`;
-    }
-  } catch (e) {
-    // ignore
-  }
-  if (process.env.NEXT_PUBLIC_BASE_URL && !process.env.NEXT_PUBLIC_BASE_URL.includes('localhost')) {
-    return process.env.NEXT_PUBLIC_BASE_URL;
-  }
-  return 'http://localhost:3000';
-}
 
 export async function generateMetadata() {
   const settings = await getSiteSettings();
@@ -117,6 +97,7 @@ export default async function RootLayout({ children }) {
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
         <link rel="dns-prefetch" href="https://fonts.gstatic.com" />
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&display=swap" />
         <link rel="preconnect" href="https://checkout.razorpay.com" />
         <link rel="dns-prefetch" href="https://checkout.razorpay.com" />
       </head>
@@ -129,8 +110,8 @@ export default async function RootLayout({ children }) {
         </Providers>
         <AIChatMount />
         <Toaster position="top-center" richColors />
-        <Script src="https://accounts.google.com/gsi/client" strategy="afterInteractive" />
-        <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="afterInteractive" />
+        <Script src="https://accounts.google.com/gsi/client" strategy="lazyOnload" />
+        <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="lazyOnload" />
       </body>
     </html>
   )

@@ -547,7 +547,7 @@ export default function HomePage({ initialData }) {
 
   useEffect(() => {
     // If initialData was already passed, we already have server-fresh data. Only fetch if missing.
-    if (initialData && Array.isArray(initialData.products) && initialData.products.length > 0) return;
+    if (initialData) return;
 
     (async () => {
       try {

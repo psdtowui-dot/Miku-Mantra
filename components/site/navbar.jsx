@@ -135,10 +135,20 @@ export default function Navbar({ initialData }) {
   }, [initialData]);
 
   useEffect(() => {
-    const on = () => setScrolled(window.scrollY > 10);
-    on();
-    window.addEventListener('scroll', on);
-    return () => window.removeEventListener('scroll', on);
+    let ticking = false;
+    const onScroll = () => {
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          const isScrolled = window.scrollY > 10;
+          setScrolled(prev => (prev !== isScrolled ? isScrolled : prev));
+          ticking = false;
+        });
+        ticking = true;
+      }
+    };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
   if (pathname?.startsWith('/admin')) {
