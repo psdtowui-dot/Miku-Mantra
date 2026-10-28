@@ -21,15 +21,27 @@ export default function SocialMediaSection({ initialItems, initialSettings }) {
   );
   const [hoveredId, setHoveredId] = useState(null);
 
-  // Fetch latest public social media data from API
+  // Synchronize state when initialItems or initialSettings change
   useEffect(() => {
-    if (initialItems && initialItems.length > 0) return;
+    if (initialItems && initialItems.length > 0) {
+      setItems(initialItems);
+    }
+  }, [initialItems]);
+
+  useEffect(() => {
+    if (initialSettings) {
+      setSettings(prev => ({ ...DEFAULT_SOCIAL_MEDIA_SETTINGS, ...initialSettings }));
+    }
+  }, [initialSettings]);
+
+  // Fetch latest public social media data from API in background to ensure freshness
+  useEffect(() => {
     let isMounted = true;
-    fetch('/api/social-media')
+    fetch('/api/social-media', { cache: 'no-store' })
       .then(res => res.json())
       .then(data => {
         if (!isMounted) return;
-        if (data?.data && Array.isArray(data.data)) {
+        if (data?.data && Array.isArray(data.data) && data.data.length > 0) {
           setItems(data.data);
         }
         if (data?.settings) {
@@ -43,7 +55,7 @@ export default function SocialMediaSection({ initialItems, initialSettings }) {
     return () => {
       isMounted = false;
     };
-  }, [initialItems, initialSettings]);
+  }, []);
 
   // If disabled via Admin Settings, do not render
   if (settings.showSection === false) {
@@ -117,9 +129,13 @@ export default function SocialMediaSection({ initialItems, initialSettings }) {
               >
                 {/* Thumbnail Image */}
                 <img
-                  src={item.thumbnailUrl}
+                  src={item.thumbnailUrl || item.image || 'https://images.unsplash.com/photo-1651160670627-2896ddf7822f?crop=entropy&cs=srgb&fm=jpg&q=85'}
                   alt={item.title || `${item.platform || 'Social'} post`}
                   loading="lazy"
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = 'https://images.unsplash.com/photo-1651160670627-2896ddf7822f?crop=entropy&cs=srgb&fm=jpg&q=85';
+                  }}
                   className="w-full h-full object-cover select-none pointer-events-none transition-transform duration-700 ease-out"
                 />
 
@@ -183,9 +199,13 @@ export default function SocialMediaSection({ initialItems, initialSettings }) {
                 className="group relative aspect-square rounded-lg overflow-hidden bg-neutral-100 border border-neutral-200/80 active:scale-95 transition-transform"
               >
                 <img
-                  src={item.thumbnailUrl}
+                  src={item.thumbnailUrl || item.image || 'https://images.unsplash.com/photo-1651160670627-2896ddf7822f?crop=entropy&cs=srgb&fm=jpg&q=85'}
                   alt={item.title || item.platform}
                   loading="lazy"
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = 'https://images.unsplash.com/photo-1651160670627-2896ddf7822f?crop=entropy&cs=srgb&fm=jpg&q=85';
+                  }}
                   className="w-full h-full object-cover"
                 />
 

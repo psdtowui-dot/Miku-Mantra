@@ -92,8 +92,8 @@ const nextConfig = {
         ],
       },
       {
-        // Private / dynamic mutation endpoints should never be cached by intermediaries
-        source: "/api/:path((?:admin|auth|cart|checkout|orders|wishlist|returns|user).*)",
+        // Dynamic API endpoints should never be cached by browsers or intermediaries
+        source: "/api/((?!uploads|images).*)",
         headers: [
           { key: "Cache-Control", value: "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0" },
           { key: "Pragma", value: "no-cache" },

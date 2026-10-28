@@ -11,17 +11,29 @@ export default function CategoryShowcaseSection({ initialCategories, initialSett
   );
   const [hoveredId, setHoveredId] = useState(null);
 
-  // Client-side fetch to ensure categories and settings are always fresh and responsive
+  // Synchronize state when initialCategories or initialSettings change
   useEffect(() => {
-    if (initialCategories && initialCategories.length > 0) return;
+    if (initialCategories && initialCategories.length > 0) {
+      setCategories(initialCategories);
+    }
+  }, [initialCategories]);
+
+  useEffect(() => {
+    if (initialSettings) {
+      setSettings(prev => ({ ...DEFAULT_CATEGORY_SHOWCASE_SETTINGS, ...initialSettings }));
+    }
+  }, [initialSettings]);
+
+  // Client-side fetch with no-store to ensure categories and settings are always fresh
+  useEffect(() => {
     let isMounted = true;
-    fetch('/api/categories')
+    fetch('/api/categories', { cache: 'no-store' })
       .then(res => res.json())
       .then(data => {
         if (!isMounted) return;
-        if (data?.categories && Array.isArray(data.categories)) {
+        if (data?.categories && Array.isArray(data.categories) && data.categories.length > 0) {
           setCategories(data.categories);
-        } else if (data?.data?.categories && Array.isArray(data.data.categories)) {
+        } else if (data?.data?.categories && Array.isArray(data.data.categories) && data.data.categories.length > 0) {
           setCategories(data.data.categories);
         }
         if (data?.settings) {
@@ -37,7 +49,7 @@ export default function CategoryShowcaseSection({ initialCategories, initialSett
     return () => {
       isMounted = false;
     };
-  }, [initialCategories, initialSettings]);
+  }, []);
 
   // Section visibility toggle
   if (settings.sectionEnabled === false) {

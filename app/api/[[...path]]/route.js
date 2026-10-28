@@ -70,7 +70,7 @@ function cacheGet(k) {
   if (Date.now() > e.exp) { _cache.delete(k); return null; }
   return e.v;
 }
-function cacheSet(k, v, ttlMs = 300000) {
+function cacheSet(k, v, ttlMs = 5000) {
   _cache.set(k, { v, exp: Date.now() + ttlMs });
 }
 async function getCachedSiteSettings(db, forceFresh = false) {
@@ -83,39 +83,50 @@ async function getCachedSiteSettings(db, forceFresh = false) {
   return doc;
 }
 
-function cacheBust(prefix, { revalidateLayout = false } = {}) {
-  for (const k of _cache.keys()) {
-    if (!prefix || k.startsWith(prefix)) _cache.delete(k);
-  }
-  if (!prefix || prefix.includes('setting')) {
-    _cache.delete('cached_site_settings');
-  }
-  if (!prefix || prefix.includes('product')) {
-    _cache.delete('homepage_data');
-    _cache.delete('admin_products');
-    _cache.delete('admin_dashboard');
-    _cache.delete('shop_products');
+function cacheBust(prefix, { revalidateLayout = true, slug = null, productId = null } = {}) {
+  if (!prefix) {
+    _cache.clear();
+  } else {
     for (const k of _cache.keys()) {
-      if (k.startsWith('product:') || k.startsWith('products:') || k.startsWith('reviews:')) {
-        _cache.delete(k);
-      }
-    }
-    try {
-      invalidateSiteDataCache('homepage_data');
-      invalidateSiteDataCache('shop_products');
-      invalidateSiteDataCache('product_');
-    } catch (e) {}
-    if (revalidateLayout) {
-      try { revalidatePath('/', 'layout'); } catch (e) {}
-    }
-    try { revalidatePath('/shop'); } catch (e) {}
-  }
-  if (!prefix || prefix.includes('review')) {
-    for (const k of _cache.keys()) {
-      if (k.startsWith('reviews:')) _cache.delete(k);
+      if (k.startsWith(prefix)) _cache.delete(k);
     }
   }
-  try { invalidateSiteDataCache(prefix); } catch (e) {}
+  _cache.delete('cached_site_settings');
+  _cache.delete('homepage_data');
+  _cache.delete('admin_products');
+  _cache.delete('admin_dashboard');
+  _cache.delete('admin_categories');
+  _cache.delete('shop_products');
+  _cache.delete('cats');
+  _cache.delete('cols');
+  _cache.delete('bans');
+  _cache.delete('footer');
+  _cache.delete('site_settings');
+  _cache.delete('homepage_content');
+  _cache.delete('header_config');
+  _cache.delete('social_media_public');
+  _cache.delete('product_filters');
+  _cache.delete('coupon_settings');
+
+  if (slug) {
+    _cache.delete('product:' + slug);
+  }
+  if (productId) {
+    _cache.delete('reviews:' + productId);
+    _cache.delete('product:' + productId);
+  }
+
+  try {
+    invalidateSiteDataCache();
+  } catch (e) {}
+
+  try { revalidatePath('/', 'layout'); } catch (e) {}
+  try { revalidatePath('/'); } catch (e) {}
+  try { revalidatePath('/shop'); } catch (e) {}
+  try { revalidatePath('/product/[slug]', 'page'); } catch (e) {}
+  if (slug) {
+    try { revalidatePath('/product/' + slug); } catch (e) {}
+  }
 }
 
 let seeded = false, lastEnvMtime = 0, lastSyncedAdmins = ''
@@ -1194,49 +1205,49 @@ async function handleRoute(request, { params }) {
   const method = request.method
 
   if (route === '/' && method === 'GET') {
-    return ok({ ok: true, app: 'MikuMantra API' }, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+    return ok({ ok: true, app: 'MikuMantra API' });
   }
 
   // Pre-DB fast in-memory response for cached public read endpoints
   if (method === 'GET') {
     if (route === '/categories' || route === '/category-showcase') {
       const c = cacheGet('cats');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
     } else if (route === '/collections') {
       const c = cacheGet('cols');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
     } else if (route === '/banners') {
       const c = cacheGet('bans');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
     } else if (route === '/footer') {
       const c = cacheGet('footer');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
     } else if (route === '/site-settings') {
       const c = cacheGet('site_settings');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
     } else if (route === '/homepage-content') {
       const c = cacheGet('homepage_content');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
     } else if (route === '/product-filters') {
       const c = cacheGet('product_filters');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
     } else if (route === '/coupons/settings') {
       const isNoCache = request.headers.get('cache-control')?.includes('no-cache') || request.headers.get('cache-control')?.includes('no-store');
       if (!isNoCache) {
         const c = cacheGet('coupon_settings');
-        if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+        if (c) return ok(c);
       }
     } else if (route.startsWith('/products/')) {
       const slug = route.split('/')[2];
       if (slug) {
         const c = cacheGet('product:' + slug);
-        if (c) return ok(c, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
+        if (c) return ok(c);
       }
     } else if (route.startsWith('/reviews/product/')) {
       const pid = route.split('/')[3];
       if (pid) {
         const c = cacheGet('reviews:' + pid);
-        if (c) return ok(c, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
+        if (c) return ok(c);
       }
     }
   }
@@ -1555,7 +1566,7 @@ async function handleRoute(request, { params }) {
 
       const cacheKey = 'products:' + JSON.stringify({ filter, sortObj, page, limit });
       const cached = cacheGet(cacheKey);
-      if (cached) return ok(cached, { cacheControl: 'public, max-age=15, stale-while-revalidate=60' });
+      if (cached) return ok(cached);
 
       const projection = {
         id: 1, slug: 1, name: 1, sku: 1, price: 1, mrp: 1, category: 1, subcategory: 1,
@@ -1572,14 +1583,14 @@ async function handleRoute(request, { params }) {
       ]);
       const resp = { products: list.map(clean), total, page, totalPages: Math.ceil(total / limit) };
       cacheSet(cacheKey, resp, 60000);
-      return ok(resp, { cacheControl: 'public, max-age=15, stale-while-revalidate=60' });
+      return ok(resp);
     }
     if (route.startsWith('/products/') && method === 'GET') {
       const slug = route.split('/')[2];
       if (!slug) return err('Not found', 404);
 
       const cachedProduct = cacheGet('product:' + slug);
-      if (cachedProduct) return ok(cachedProduct, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
+      if (cachedProduct) return ok(cachedProduct);
 
       const activeFilter = {
         active: { $ne: false },
@@ -1638,11 +1649,11 @@ async function handleRoute(request, { params }) {
       if (p.id && p.id !== slug) cacheSet('product:' + p.id, result, 300000);
       if (p.slug && p.slug !== slug) cacheSet('product:' + p.slug, result, 300000);
 
-      return ok(result, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
+      return ok(result);
     }
     if ((route === '/categories' || route === '/category-showcase') && method === 'GET') {
       const c = cacheGet('cats');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
 
       let list = await db.collection('categories').find({ active: { $ne: false }, enabled: { $ne: false } }).sort({ order: 1, displayOrder: 1, createdAt: 1 }).toArray();
       if (!list || list.length === 0) {
@@ -1686,7 +1697,7 @@ async function handleRoute(request, { params }) {
         settings
       };
       cacheSet('cats', r, 300000);
-      return ok(r, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      return ok(r);
     }
     if (route === '/category-showcase/settings' && method === 'GET') {
       let settingsDoc = cacheGet('category_showcase_settings');
@@ -1702,17 +1713,17 @@ async function handleRoute(request, { params }) {
         success: true,
         data: { settings },
         settings
-      }, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      });
     }
     if (route === '/collections' && method === 'GET') {
       const c = cacheGet('cols');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
       const list = await db.collection('collections').find({}).toArray();
       const seen = new Set();
       const uniqueCols = list.map(clean).filter(item => { if (!item?.slug || seen.has(item.slug)) return false; seen.add(item.slug); return true; });
       const r = { collections: uniqueCols };
       cacheSet('cols', r, 300000);
-      return ok(r, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      return ok(r);
     }
     if (route === '/banners' && method === 'GET') {
       const c = cacheGet('bans');
@@ -4650,7 +4661,7 @@ async function handleRoute(request, { params }) {
       if (!pid) return err('Product identifier required', 400);
 
       const cached = cacheGet('reviews:' + pid);
-      if (cached) return ok(cached, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
+      if (cached) return ok(cached);
 
       // Fast exact indexed lookup
       let prod = await db.collection('products').findOne({ slug: pid }, { projection: { id: 1, slug: 1 } });
@@ -4700,7 +4711,7 @@ async function handleRoute(request, { params }) {
       if (prod?.id && prod.id !== pid) cacheSet('reviews:' + prod.id, resData, 300000);
       if (prod?.slug && prod.slug !== pid) cacheSet('reviews:' + prod.slug, resData, 300000);
 
-      return ok(resData, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
+      return ok(resData);
     }
     // ============ HEADER CONFIGURATION ============
     if (route.startsWith('/header')) {
@@ -4771,6 +4782,7 @@ async function handleRoute(request, { params }) {
           dropdown: body.hasDropdown ? { sections: [], featured: { image: '', title: '', url: '', alt: '', isActive: false } } : null
         };
         await db.collection('header').updateOne({ id: 'default' }, { $push: { navigation: newNav } });
+        cacheBust('header_config');
         return ok({ item: newNav });
       }
 
@@ -4801,11 +4813,13 @@ async function handleRoute(request, { params }) {
             return n;
           });
           await db.collection('header').updateOne({ id: 'default' }, { $set: { navigation: updatedNavs } });
+          cacheBust('header_config');
           return ok({ ok: true });
         }
         if (method === 'DELETE') {
           const updatedNavs = (header.navigation || []).filter(n => n.id !== navId);
           await db.collection('header').updateOne({ id: 'default' }, { $set: { navigation: updatedNavs } });
+          cacheBust('header_config');
           return ok({ ok: true });
         }
       }
@@ -6199,7 +6213,7 @@ async function handleRoute(request, { params }) {
             try { revalidatePath('/', 'layout'); } catch (e) {}
           }
 
-          _cache.delete('footer');
+          cacheBust('footer');
           const updated = await db.collection('footer').findOne({ id: 'default' });
           return ok(clean(updated));
         }
@@ -6493,12 +6507,7 @@ async function handleRoute(request, { params }) {
             }
           }
 
-          _cache.delete('site_settings');
-          try {
-            revalidatePath('/', 'layout');
-          } catch (revalErr) {
-            console.warn('revalidatePath warning:', revalErr.message);
-          }
+          cacheBust('site_settings');
           const updated = await db.collection('site_settings').findOne({ id: 'default' });
           const updatedRawPay = updated?.paymentSettings || DEFAULT_SITE_SETTINGS.paymentSettings;
           return ok(clean({
@@ -6563,13 +6572,7 @@ async function handleRoute(request, { params }) {
             { $set: { ...updates, updatedAt: new Date() } },
             { upsert: true }
           );
-          _cache.delete('site_settings');
-          _cache.delete('homepage_content');
-          try {
-            revalidatePath('/', 'layout');
-          } catch (revalErr) {
-            console.warn('revalidatePath warning:', revalErr.message);
-          }
+          cacheBust('homepage_content');
           const updated = await db.collection('site_settings').findOne({ id: 'default' });
           return ok(clean({
             homepagePromotions: updated.homepagePromotions ?? DEFAULT_SITE_SETTINGS.homepagePromotions,
@@ -6967,7 +6970,7 @@ async function handleRoute(request, { params }) {
           createdAt: new Date()
         };
         await db.collection('products').insertOne(p);
-        cacheBust('products:');
+        cacheBust('products:', { slug: p.slug, productId: p.id });
         _cache.delete('admin_products');
         _cache.delete('admin_dashboard');
         return ok({ product: clean(p) });
@@ -7023,10 +7026,10 @@ async function handleRoute(request, { params }) {
 
         await db.collection('products').updateOne({ id }, { $set: updateData });
         await recalculateProductRating(db, id);
-        cacheBust('products:');
+        const up = await db.collection('products').findOne({ id });
+        cacheBust('products:', { slug: up?.slug || updateData.slug, productId: id });
         _cache.delete('admin_products');
         _cache.delete('admin_dashboard');
-        const up = await db.collection('products').findOne({ id });
         return ok({ product: clean(up) });
       }
       if (sub.startsWith('products/') && method === 'DELETE') {
@@ -7995,8 +7998,11 @@ async function handleRoute(request, { params }) {
           if (col === 'collections') {
             await syncCategoryAndCollectionFilterOptions(db);
             _cache.delete('product_filters');
-            cacheBust('product_filters');
-            _cache.delete('cols');
+            cacheBust('cols');
+          } else if (col === 'banners') {
+            cacheBust('bans');
+          } else if (col === 'coupons') {
+            cacheBust('coupon');
           }
           return ok({ item: clean(doc) });
         }
@@ -8042,8 +8048,11 @@ async function handleRoute(request, { params }) {
           if (col === 'collections') {
             await syncCategoryAndCollectionFilterOptions(db);
             _cache.delete('product_filters');
-            cacheBust('product_filters');
-            _cache.delete('cols');
+            cacheBust('cols');
+          } else if (col === 'banners') {
+            cacheBust('bans');
+          } else if (col === 'coupons') {
+            cacheBust('coupon');
           }
           const up = await db.collection(col).findOne({ id });
           return ok({ item: clean(up) });
@@ -8060,6 +8069,13 @@ async function handleRoute(request, { params }) {
           }
           const id = sub.split('/')[1];
           _cache.delete('admin_' + col);
+          if (col === 'banners') {
+            cacheBust('bans');
+          } else if (col === 'collections') {
+            cacheBust('cols');
+          } else if (col === 'coupons') {
+            cacheBust('coupon');
+          }
 
           if (col === 'banners') {
             try {
@@ -9248,6 +9264,7 @@ async function handleRoute(request, { params }) {
         await db.collection('reviews').updateOne({ id }, updateOp);
         const updated = await db.collection('reviews').findOne({ id });
         await recalculateProductRating(db, r.productId);
+        cacheBust('review', { productId: r.productId });
 
         return ok({ review: clean(updated) });
       }
@@ -9258,6 +9275,7 @@ async function handleRoute(request, { params }) {
         if (r) {
           await db.collection('reviews').deleteOne({ id });
           await recalculateProductRating(db, r.productId);
+          cacheBust('review', { productId: r.productId });
         }
         return ok({ ok: true });
       }
