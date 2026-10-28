@@ -104,18 +104,18 @@ function cacheBust(prefix, { revalidateLayout = false } = {}) {
       invalidateSiteDataCache('homepage_data');
       invalidateSiteDataCache('shop_products');
       invalidateSiteDataCache('product_');
-    } catch (e) {}
+    } catch (e) { }
     if (revalidateLayout) {
-      try { revalidatePath('/', 'layout'); } catch (e) {}
+      try { revalidatePath('/', 'layout'); } catch (e) { }
     }
-    try { revalidatePath('/shop'); } catch (e) {}
+    try { revalidatePath('/shop'); } catch (e) { }
   }
   if (!prefix || prefix.includes('review')) {
     for (const k of _cache.keys()) {
       if (k.startsWith('reviews:')) _cache.delete(k);
     }
   }
-  try { invalidateSiteDataCache(prefix); } catch (e) {}
+  try { invalidateSiteDataCache(prefix); } catch (e) { }
 }
 
 let seeded = false, lastEnvMtime = 0, lastSyncedAdmins = ''
@@ -604,14 +604,6 @@ async function seedIfEmpty(db) {
         accountEnabled: true,
         cartEnabled: true
       },
-      announcement: {
-        announcementText: 'Complimentary Shipping Available on Eligible Orders',
-        isEnabled: true,
-        isSliding: true,
-        backgroundColor: '#1A1A1A',
-        textColor: '#FFFFFF',
-        updatedAt: new Date()
-      },
       isActive: true,
       createdAt: new Date()
     }
@@ -905,7 +897,7 @@ function initEnvFileWatcher(db) {
       if (fs.existsSync(fp)) {
         fs.watch(fp, onFileChange);
       }
-    } catch (e) {}
+    } catch (e) { }
   });
 }
 
@@ -1013,7 +1005,7 @@ async function getCurrentUser(db, request) {
     try {
       const store = await cookies();
       token = store.get(SESSION_COOKIE)?.value;
-    } catch (e) {}
+    } catch (e) { }
   }
   if (!token) return null;
 
@@ -1284,7 +1276,7 @@ async function handleRoute(request, { params }) {
               buffer = fs.readFileSync(wp);
               contentType = 'image/webp';
               break;
-            } catch (e) {}
+            } catch (e) { }
           }
         }
       }
@@ -1305,7 +1297,7 @@ async function handleRoute(request, { params }) {
               const ext = pathModule.extname(p).toLowerCase().replace('.', '');
               contentType = mimeMap[ext] || 'image/jpeg';
               break;
-            } catch (e) {}
+            } catch (e) { }
           }
         }
       }
@@ -1323,7 +1315,7 @@ async function handleRoute(request, { params }) {
             const cachePath = pathModule.join(process.cwd(), 'public', 'uploads', filename);
             if (!fs.existsSync(pathModule.dirname(cachePath))) fs.mkdirSync(pathModule.dirname(cachePath), { recursive: true });
             fs.writeFileSync(cachePath, buffer);
-          } catch (_) {}
+          } catch (_) { }
         }
       }
 
@@ -1409,13 +1401,13 @@ async function handleRoute(request, { params }) {
       try {
         const body = await request.json();
         const destinationPincode = body.destinationPincode?.trim();
-        
+
         if (!destinationPincode || destinationPincode.length !== 6 || !/^\d+$/.test(destinationPincode)) {
           return err('Enter a valid 6-digit pincode.', 400);
         }
-        
+
         const source = body.sourcePincode || WAREHOUSE_PINCODE;
-        
+
         // Simulate unserviceable pincodes (starting with 0 or 99)
         if (destinationPincode.startsWith('0') || destinationPincode.startsWith('99')) {
           return ok({
@@ -1425,7 +1417,7 @@ async function handleRoute(request, { params }) {
             freeShipping: false
           });
         }
-        
+
         // Zone-based realistic estimation based on first digit of destination pincode:
         // Region 1 (North: Delhi, HR, PB, HP, JK) -> 2-3 days
         // Region 2 (Local/UP, UK) -> 1-2 days (Local delivery since Noida warehouse starts with 2)
@@ -1435,7 +1427,7 @@ async function handleRoute(request, { params }) {
         const firstDigit = destinationPincode[0];
         let minDays = 3;
         let maxDays = 5;
-        
+
         if (firstDigit === '1') {
           minDays = 2;
           maxDays = 3;
@@ -1452,7 +1444,7 @@ async function handleRoute(request, { params }) {
           minDays = 5;
           maxDays = 6;
         }
-        
+
         let siteSettings = cacheGet('site_settings');
         if (!siteSettings) {
           siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
@@ -1964,7 +1956,7 @@ async function handleRoute(request, { params }) {
           maxAge: SESSION_DAYS * 86400,
           secure: process.env.NODE_ENV === 'production' || request.url.startsWith('https')
         });
-      } catch (e) {}
+      } catch (e) { }
       return ok({
         user: {
           id: u.id,
@@ -2146,7 +2138,7 @@ async function handleRoute(request, { params }) {
           maxAge: SESSION_DAYS * 86400,
           secure: process.env.NODE_ENV === 'production' || request.url.startsWith('https')
         });
-      } catch (e) {}
+      } catch (e) { }
 
       return ok({
         success: true,
@@ -2268,7 +2260,7 @@ async function handleRoute(request, { params }) {
       }
 
       const em = payload.email.trim().toLowerCase()
-      
+
       // Step 1: Verify admin status against .env and MongoDB database
       const isAdmin = await isAuthorizedAdminEmail(db, em)
 
@@ -2337,7 +2329,7 @@ async function handleRoute(request, { params }) {
           maxAge: SESSION_DAYS * 86400,
           secure: process.env.NODE_ENV === 'production' || request.url.startsWith('https')
         })
-      } catch (e) {}
+      } catch (e) { }
 
       return ok({
         user: {
@@ -2376,7 +2368,7 @@ async function handleRoute(request, { params }) {
     if (route === '/auth/me' && method === 'GET') { const user = await getCurrentUser(db, request); return ok({ user }) }
     if (route === '/auth/logout' && method === 'POST') {
       let t = request.headers.get('x-auth-token');
-      if (!t) { try { const store = await cookies(); t = store.get(SESSION_COOKIE)?.value; store.delete(SESSION_COOKIE); } catch (e) {} }
+      if (!t) { try { const store = await cookies(); t = store.get(SESSION_COOKIE)?.value; store.delete(SESSION_COOKIE); } catch (e) { } }
       if (t) await db.collection('sessions').deleteOne({ token: t });
       return ok({ ok: true })
     }
@@ -2398,7 +2390,7 @@ async function handleRoute(request, { params }) {
       // Invalidate server session cache so subsequent /auth/me queries return fresh data immediately
       invalidateUserSessionCache(u.id);
       let t = request.headers.get('x-auth-token') || request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
-      if (!t) { try { const store = await cookies(); t = store.get(SESSION_COOKIE)?.value; } catch (e) {} }
+      if (!t) { try { const store = await cookies(); t = store.get(SESSION_COOKIE)?.value; } catch (e) { } }
       if (t) invalidateUserSessionCache(t);
 
       const up = await db.collection('users').findOne({ id: u.id });
@@ -2458,7 +2450,7 @@ async function handleRoute(request, { params }) {
 
       // Invalidate other sessions so compromised devices are evicted
       let currentToken = request.headers.get('x-auth-token') || request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
-      if (!currentToken) { try { const store = await cookies(); currentToken = store.get(SESSION_COOKIE)?.value; } catch (e) {} }
+      if (!currentToken) { try { const store = await cookies(); currentToken = store.get(SESSION_COOKIE)?.value; } catch (e) { } }
       if (currentToken) {
         await db.collection('sessions').deleteMany({ userId: u.id, token: { $ne: currentToken } });
       }
@@ -2686,14 +2678,14 @@ async function handleRoute(request, { params }) {
         try {
           const store = await cookies();
           t = store.get(SESSION_COOKIE)?.value;
-        } catch (e) {}
+        } catch (e) { }
       }
       if (t) invalidateUserSessionCache(t);
 
       try {
         const store = await cookies();
         store.delete(SESSION_COOKIE);
-      } catch (e) {}
+      } catch (e) { }
 
       return ok({
         success: true,
@@ -2779,7 +2771,7 @@ async function handleRoute(request, { params }) {
       const orphanIds = rawProductIds.filter(id => !foundIds.has(id));
 
       if (orphanIds.length > 0) {
-        db.collection('wishlist').deleteMany({ userId: u.id, productId: { $in: orphanIds } }).catch(() => {});
+        db.collection('wishlist').deleteMany({ userId: u.id, productId: { $in: orphanIds } }).catch(() => { });
       }
 
       return ok({ wishlist: validList.map(clean), products: prods.map(clean) });
@@ -3409,7 +3401,7 @@ async function handleRoute(request, { params }) {
       if (!faviconBuffer) {
         const appIconPath = pathModule.join(process.cwd(), 'app', 'icon.png');
         if (fs.existsSync(appIconPath)) {
-          try { faviconBuffer = fs.readFileSync(appIconPath); } catch (e) {}
+          try { faviconBuffer = fs.readFileSync(appIconPath); } catch (e) { }
         }
       }
 
@@ -4750,7 +4742,7 @@ async function handleRoute(request, { params }) {
           _cache.delete('footer');
           _cache.delete('homepage_data');
           invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) {}
+          try { revalidatePath('/', 'layout'); } catch (e) { }
         }
 
         const updated = await db.collection('header').findOne({ id: 'default' });
@@ -5030,7 +5022,7 @@ async function handleRoute(request, { params }) {
         cacheBust('social_media');
         cacheBust('coupons');
         invalidateUserSessionCache();
-        try { invalidateSiteDataCache(); } catch (e) {}
+        try { invalidateSiteDataCache(); } catch (e) { }
       }
 
       // ============ ADMIN NEWSLETTER HEALTH CHECK ============
@@ -5072,9 +5064,9 @@ async function handleRoute(request, { params }) {
             const updated = await updateNewsletterSettings(db, body);
             _cache.delete('newsletter_settings_public');
             _cache.delete('homepage_data');
-            try { invalidateSiteDataCache('homepage_data'); } catch (e) {}
-            try { invalidateSiteDataCache(); } catch (e) {}
-            try { revalidatePath('/', 'layout'); } catch (e) {}
+            try { invalidateSiteDataCache('homepage_data'); } catch (e) { }
+            try { invalidateSiteDataCache(); } catch (e) { }
+            try { revalidatePath('/', 'layout'); } catch (e) { }
 
             await logAdminActivity(db, {
               admin,
@@ -5459,9 +5451,9 @@ async function handleRoute(request, { params }) {
 
         // Role verification
         const targetRole = await db.collection('roles').findOne({ key: role }) ||
-                           await db.collection('roles').findOne({ id: role }) ||
-                           DEFAULT_ROLES.find(r => r.key === role) ||
-                           DEFAULT_ROLES[1];
+          await db.collection('roles').findOne({ id: role }) ||
+          DEFAULT_ROLES.find(r => r.key === role) ||
+          DEFAULT_ROLES[1];
 
         // Privilege escalation verification
         const escalationErr = await validatePrivilegeEscalation(db, admin, null, targetRole.key, status);
@@ -5509,7 +5501,7 @@ async function handleRoute(request, { params }) {
           if (!target) return err('Admin not found', 404);
 
           const roleDoc = await db.collection('roles').findOne({ key: target.roleKey }) ||
-                          DEFAULT_ROLES.find(r => r.key === target.roleKey);
+            DEFAULT_ROLES.find(r => r.key === target.roleKey);
           const permissions = await resolveUserPermissions(db, target);
 
           return ok({
@@ -5542,8 +5534,8 @@ async function handleRoute(request, { params }) {
           let newRoleId = target.roleId;
           if (role) {
             const roleDoc = await db.collection('roles').findOne({ key: role }) ||
-                            await db.collection('roles').findOne({ id: role }) ||
-                            DEFAULT_ROLES.find(r => r.key === role);
+              await db.collection('roles').findOne({ id: role }) ||
+              DEFAULT_ROLES.find(r => r.key === role);
             if (roleDoc) {
               newRoleKey = roleDoc.key;
               newRoleId = roleDoc.id;
@@ -5920,7 +5912,7 @@ async function handleRoute(request, { params }) {
           if (!body.name || !body.name.trim()) return err('Group name is required');
           const rawKey = body.key || body.name;
           const key = rawKey.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-');
-          
+
           const existing = await db.collection('product_filters').findOne({ key });
           if (existing) return err(`A filter group with key "${key}" already exists.`, 409);
 
@@ -6196,7 +6188,7 @@ async function handleRoute(request, { params }) {
             _cache.delete('header_config');
             _cache.delete('homepage_data');
             invalidateSiteDataCache();
-            try { revalidatePath('/', 'layout'); } catch (e) {}
+            try { revalidatePath('/', 'layout'); } catch (e) { }
           }
 
           _cache.delete('footer');
@@ -6280,7 +6272,7 @@ async function handleRoute(request, { params }) {
         if (method === 'PUT') {
           const body = await request.json();
           const { _id, id, ...updates } = body;
-          
+
           if (updates.shipping) {
             const threshold = Number(updates.shipping.freeShippingThreshold);
             const standard = Number(updates.shipping.standardShippingCharge);
@@ -6484,7 +6476,7 @@ async function handleRoute(request, { params }) {
 
                   try {
                     fs.writeFileSync(pathModule.join(process.cwd(), 'app', 'icon.png'), favBuf);
-                  } catch (e) {}
+                  } catch (e) { }
                 }
                 fs.writeFileSync(pathModule.join(process.cwd(), 'public', 'favicon.ico'), icoData);
               }
@@ -6552,7 +6544,7 @@ async function handleRoute(request, { params }) {
         if (method === 'PUT') {
           const body = await request.json();
           const { homepagePromotions, assuranceSection, assuranceCards } = body;
-          
+
           const updates = {};
           if (Array.isArray(homepagePromotions)) updates.homepagePromotions = homepagePromotions;
           if (assuranceSection && typeof assuranceSection === 'object') updates.assuranceSection = assuranceSection;
@@ -6645,7 +6637,7 @@ async function handleRoute(request, { params }) {
           _cache.delete('homepage_data');
           cacheBust('social_media');
           invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) {}
+          try { revalidatePath('/', 'layout'); } catch (e) { }
 
           await logAdminActivity(db, {
             admin,
@@ -6684,7 +6676,7 @@ async function handleRoute(request, { params }) {
           _cache.delete('homepage_data');
           cacheBust('social_media');
           invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) {}
+          try { revalidatePath('/', 'layout'); } catch (e) { }
 
           const updated = await db.collection('social_media_settings').findOne({ id: 'default' });
           return ok({ success: true, settings: clean({ ...DEFAULT_SOCIAL_MEDIA_SETTINGS, ...updated }) });
@@ -6716,7 +6708,7 @@ async function handleRoute(request, { params }) {
           _cache.delete('homepage_data');
           cacheBust('social_media');
           invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) {}
+          try { revalidatePath('/', 'layout'); } catch (e) { }
 
           const updatedList = await db.collection('social_media').find({}).sort({ displayOrder: 1 }).toArray();
           return ok({ success: true, items: updatedList.map(clean) });
@@ -6737,7 +6729,7 @@ async function handleRoute(request, { params }) {
           _cache.delete('homepage_data');
           cacheBust('social_media');
           invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) {}
+          try { revalidatePath('/', 'layout'); } catch (e) { }
 
           return ok({ success: true, id, isActive: newStatus });
         }
@@ -6774,7 +6766,7 @@ async function handleRoute(request, { params }) {
           _cache.delete('homepage_data');
           cacheBust('social_media');
           invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) {}
+          try { revalidatePath('/', 'layout'); } catch (e) { }
 
           const updated = await db.collection('social_media').findOne({ id });
           return ok({ success: true, item: clean(updated) });
@@ -6792,7 +6784,7 @@ async function handleRoute(request, { params }) {
           _cache.delete('homepage_data');
           cacheBust('social_media');
           invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) {}
+          try { revalidatePath('/', 'layout'); } catch (e) { }
 
           await logAdminActivity(db, {
             admin,
@@ -7174,7 +7166,7 @@ async function handleRoute(request, { params }) {
             const uploadsDir = pathModule.join(process.cwd(), 'public', 'uploads');
             if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
             fs.writeFileSync(pathModule.join(uploadsDir, filename), buffer);
-          } catch (e) {}
+          } catch (e) { }
 
           const url = `/api/uploads/${filename}`;
           return ok({
@@ -7488,7 +7480,7 @@ async function handleRoute(request, { params }) {
                 },
                 request
               });
-            } catch (logErr) {}
+            } catch (logErr) { }
           }
 
           const availableImages = await scanAvailableImages(db);
@@ -7624,7 +7616,7 @@ async function handleRoute(request, { params }) {
           _cache.delete('homepage_data');
           cacheBust('cats');
           invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) {}
+          try { revalidatePath('/', 'layout'); } catch (e) { }
 
           const updated = await db.collection('category_showcase_settings').findOne({ id: 'default' });
           const settings = {
@@ -7668,7 +7660,7 @@ async function handleRoute(request, { params }) {
           cacheBust('cats');
           cacheBust('product_filters');
           invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) {}
+          try { revalidatePath('/', 'layout'); } catch (e) { }
 
           return ok({ success: true, message: 'Categories reordered successfully' });
         }
@@ -7698,7 +7690,7 @@ async function handleRoute(request, { params }) {
           cacheBust('cats');
           cacheBust('product_filters');
           invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) {}
+          try { revalidatePath('/', 'layout'); } catch (e) { }
 
           const up = await db.collection('categories').findOne({ id });
           return ok({ success: true, item: clean(up) });
@@ -7798,7 +7790,7 @@ async function handleRoute(request, { params }) {
           cacheBust('cats');
           cacheBust('product_filters');
           invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) {}
+          try { revalidatePath('/', 'layout'); } catch (e) { }
 
           await logAdminActivity(db, {
             admin,
@@ -7864,7 +7856,7 @@ async function handleRoute(request, { params }) {
           cacheBust('cats');
           cacheBust('product_filters');
           invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) {}
+          try { revalidatePath('/', 'layout'); } catch (e) { }
 
           const up = await db.collection('categories').findOne({ id });
           return ok({ success: true, item: clean(up), category: clean(up) });
@@ -7920,7 +7912,7 @@ async function handleRoute(request, { params }) {
           cacheBust('cats');
           cacheBust('product_filters');
           invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) {}
+          try { revalidatePath('/', 'layout'); } catch (e) { }
 
           await logAdminActivity(db, {
             admin,
@@ -8103,11 +8095,11 @@ async function handleRoute(request, { params }) {
         if (!hasPermission(admin, 'orders.view')) return err('Permission denied: orders.view required', 403);
         const search = q.get('search')?.trim();
         let query = {};
-        
+
         if (search) {
           const escaped = search.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
           const reg = { $regex: escaped, $options: 'i' };
-          
+
           // Find matching users by email or name to include matching userIds in query
           const matchingUsers = await db.collection('users').find({
             $or: [
@@ -8116,7 +8108,7 @@ async function handleRoute(request, { params }) {
             ]
           }).toArray();
           const matchingUserIds = matchingUsers.map(u => u.id);
-          
+
           query = {
             $or: [
               { id: reg },
@@ -8150,11 +8142,11 @@ async function handleRoute(request, { params }) {
         if (!hasPermission(admin, 'orders.view')) return err('Permission denied: orders.view required', 403);
         const search = q.get('search')?.trim();
         let query = { status: 'delivered' };
-        
+
         if (search) {
           const escaped = search.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
           const reg = { $regex: escaped, $options: 'i' };
-          
+
           const matchingUsers = await db.collection('users').find({
             $or: [
               { email: reg },
@@ -8162,7 +8154,7 @@ async function handleRoute(request, { params }) {
             ]
           }).toArray();
           const matchingUserIds = matchingUsers.map(u => u.id);
-          
+
           query = {
             status: 'delivered',
             $and: [
@@ -8804,7 +8796,7 @@ async function handleRoute(request, { params }) {
               }
             );
             _cache.delete('footer');
-            try { invalidateSiteDataCache('footer'); } catch (e) {}
+            try { invalidateSiteDataCache('footer'); } catch (e) { }
           }
 
           try {
@@ -9008,7 +9000,7 @@ async function handleRoute(request, { params }) {
         if (!hasPermission(admin, 'customers.view')) return err('Permission denied: customers.view required', 403);
         const search = q.get('search')?.trim();
         let query = {};
-        
+
         if (search) {
           const escaped = search.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
           const reg = { $regex: escaped, $options: 'i' };
@@ -9021,7 +9013,7 @@ async function handleRoute(request, { params }) {
             ]
           };
         }
-        
+
         const list = await db.collection('users').find(query).sort({ createdAt: -1 }).toArray();
         return ok({ customers: list.map(clean) })
       }
@@ -9681,7 +9673,7 @@ async function handleRoute(request, { params }) {
     const msg = String(e?.message || e);
     if (msg.includes('SSL') || msg.includes('topology') || msg.includes('pool') || msg.includes('connection') || msg.includes('timed out') || msg.includes('Primary')) {
       connectPromise = null;
-      try { if (client) client.close(); } catch (_) {}
+      try { if (client) client.close(); } catch (_) { }
     }
     return err('Internal server error: ' + msg, 500);
   }
