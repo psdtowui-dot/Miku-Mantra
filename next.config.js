@@ -53,26 +53,28 @@ const nextConfig = {
         source: "/api/uploads/:path*",
         headers: [
           { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
-          { key: "Access-Control-Allow-Origin", value: "*" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
         ],
       },
       {
         source: "/api/images/:path*",
         headers: [
           { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
-          { key: "Access-Control-Allow-Origin", value: "*" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
         ],
       },
       {
         source: "/uploads/:path*",
         headers: [
           { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
         ],
       },
       {
         source: "/images/:path*",
         headers: [
           { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
         ],
       },
       {
@@ -86,6 +88,7 @@ const nextConfig = {
         source: "/:path*.(ico|png|jpg|jpeg|svg|webp|woff2|woff)",
         headers: [
           { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
         ],
       },
       {
@@ -98,15 +101,27 @@ const nextConfig = {
         ],
       },
       {
+        // Public API CORS configuration - restricted to /api/* endpoints
+        source: "/api/:path*",
+        headers: [
+          { key: "Access-Control-Allow-Origin", value: process.env.CORS_ORIGINS || "*" },
+          { key: "Access-Control-Allow-Methods", value: "GET, POST, PUT, DELETE, OPTIONS, PATCH" },
+          { key: "Access-Control-Allow-Headers", value: "Content-Type, Authorization, x-auth-token, x-razorpay-signature, x-requested-with" },
+          { key: "Access-Control-Max-Age", value: "86400" },
+        ],
+      },
+      {
         source: "/(.*)",
         headers: [
           { key: "X-Frame-Options", value: "SAMEORIGIN" },
-          { key: "Content-Security-Policy", value: "frame-ancestors 'self';" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          { key: "Access-Control-Allow-Origin", value: process.env.CORS_ORIGINS || "*" },
-          { key: "Access-Control-Allow-Methods", value: "GET, POST, PUT, DELETE, OPTIONS" },
-          { key: "Access-Control-Allow-Headers", value: "*" },
+          { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), browsing-topics=()" },
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://accounts.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://api.razorpay.com https://lumberjack.razorpay.com https://accounts.google.com https://oauth2.googleapis.com https://www.googleapis.com; frame-src 'self' https://api.razorpay.com https://accounts.google.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self';"
+          },
         ],
       },
     ];

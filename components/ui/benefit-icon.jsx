@@ -81,21 +81,25 @@ export const PRESET_BENEFIT_ICONS = [
 function sanitizeSvg(rawSvg) {
   if (!rawSvg || typeof rawSvg !== 'string') return '';
   
-  // Strip dangerous tags like <script>, <object>, <embed>, <iframe>, <foreignObject>
+  // Strip dangerous tags like <script>, <object>, <embed>, <iframe>, <foreignObject>, <animate>, <set>, <link>, <meta>
   let clean = rawSvg
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
     .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
     .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '')
     .replace(/<embed\b[^<]*(?:(?!<\/embed>)<[^<]*)*<\/embed>/gi, '')
-    .replace(/<foreignObject\b[^<]*(?:(?!<\/foreignObject>)<[^<]*)*<\/foreignObject>/gi, '');
+    .replace(/<foreignObject\b[^<]*(?:(?!<\/foreignObject>)<[^<]*)*<\/foreignObject>/gi, '')
+    .replace(/<animate\b[^<]*(?:(?!<\/animate>)<[^<]*)*<\/animate>/gi, '')
+    .replace(/<set\b[^<]*(?:(?!<\/set>)<[^<]*)*<\/set>/gi, '')
+    .replace(/<link\b[^>]*>/gi, '')
+    .replace(/<meta\b[^>]*>/gi, '');
 
-  // Strip on* event attributes (onload, onerror, onclick, etc.)
-  clean = clean.replace(/\son\w+\s*=\s*(['"]).*?\1/gi, '');
-  clean = clean.replace(/\son\w+\s*=\s*[^\s>]+/gi, '');
+  // Strip all on* event attributes (onload, onerror, onclick, onmouseover, onbegin, etc.)
+  clean = clean.replace(/\s+on[a-z0-9_-]+\s*=\s*(['"]).*?\1/gi, '');
+  clean = clean.replace(/\s+on[a-z0-9_-]+\s*=\s*[^\s>]+/gi, '');
 
-  // Strip javascript: and data: URIs in attributes
-  clean = clean.replace(/href\s*=\s*(['"])javascript:.*?\1/gi, 'href="#"');
-  clean = clean.replace(/xlink:href\s*=\s*(['"])javascript:.*?\1/gi, 'xlink:href="#"');
+  // Strip javascript:, data: (except safe image data URIs), and vbscript: URIs in attributes
+  clean = clean.replace(/href\s*=\s*(['"])\s*(javascript|vbscript):.*?\1/gi, 'href="#"');
+  clean = clean.replace(/xlink:href\s*=\s*(['"])\s*(javascript|vbscript):.*?\1/gi, 'xlink:href="#"');
 
   return clean;
 }

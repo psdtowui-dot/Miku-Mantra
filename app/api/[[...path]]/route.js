@@ -1,4 +1,17 @@
 import { getDb, ensureAppIndexes } from '@/lib/db'
+import {
+  checkRateLimit,
+  getClientIp,
+  generateSecureOtp,
+  recordOtpFailure,
+  resetOtpAttempts,
+  isOtpLocked,
+  timingSafeEqualStrings,
+  escapeRegex,
+  sanitizeQueryInput,
+  validatePasswordStrength,
+  getSecureUploadHeaders
+} from '@/lib/security'
 import { v4 as uuidv4 } from 'uuid'
 import { NextResponse } from 'next/server'
 import { revalidatePath } from 'next/cache'
@@ -1317,12 +1330,7 @@ async function handleRoute(request, { params }) {
       if (!buffer) return err('File not found', 404);
 
       return new NextResponse(buffer, {
-        headers: {
-          'Content-Type': contentType || 'image/jpeg',
-          'Cache-Control': 'public, max-age=31536000, immutable',
-          'Access-Control-Allow-Origin': '*',
-          'Vary': 'Accept'
-        }
+        headers: getSecureUploadHeaders(contentType || 'image/jpeg')
       });
     }
 
@@ -1330,6 +1338,11 @@ async function handleRoute(request, { params }) {
     if (route === '/upload' && method === 'POST') {
       const u = await getCurrentUser(db, request);
       if (!u) return err('Sign in to upload photos', 401);
+      const clientIp = getClientIp(request);
+      const uploadRate = checkRateLimit(`${u.id}:${clientIp}`, 'customer_upload', 10, 60000);
+      if (!uploadRate.allowed) {
+        return err(`Upload rate limit exceeded. Please wait ${uploadRate.retryAfterSeconds} seconds before uploading more photos.`, 429);
+      }
       try {
         const formData = await request.formData();
         const file = formData.get('file');
@@ -1480,8 +1493,8 @@ async function handleRoute(request, { params }) {
       if (q.get('category')) filter.category = q.get('category');
       if (q.get('collection')) filter.collection = q.get('collection');
       if (q.get('gender')) filter.gender = q.get('gender');
-      if (q.get('metal')) filter.metal = { $regex: q.get('metal').trim(), $options: 'i' };
-      if (q.get('stone')) filter.stone = { $regex: q.get('stone').trim(), $options: 'i' };
+      if (q.get('metal')) filter.metal = { $regex: escapeRegex(q.get('metal').trim()), $options: 'i' };
+      if (q.get('stone')) filter.stone = { $regex: escapeRegex(q.get('stone').trim()), $options: 'i' };
       if (q.get('featured') === '1') filter.featured = true;
       if (q.get('bestseller') === '1') filter.bestseller = true;
       if (q.get('newArrival') === '1') filter.newArrival = true;
@@ -1514,15 +1527,16 @@ async function handleRoute(request, { params }) {
       // Search term
       const searchTerm = (q.get('search') || q.get('q') || '').trim();
       if (searchTerm) {
+        const safeSearch = escapeRegex(searchTerm);
         filter.$or = [
-          { name: { $regex: searchTerm, $options: 'i' } },
-          { sku: { $regex: searchTerm, $options: 'i' } },
-          { category: { $regex: searchTerm, $options: 'i' } },
-          { subcategory: { $regex: searchTerm, $options: 'i' } },
-          { brand: { $regex: searchTerm, $options: 'i' } },
-          { tags: { $regex: searchTerm, $options: 'i' } },
-          { keywords: { $regex: searchTerm, $options: 'i' } },
-          { description: { $regex: searchTerm, $options: 'i' } }
+          { name: { $regex: safeSearch, $options: 'i' } },
+          { sku: { $regex: safeSearch, $options: 'i' } },
+          { category: { $regex: safeSearch, $options: 'i' } },
+          { subcategory: { $regex: safeSearch, $options: 'i' } },
+          { brand: { $regex: safeSearch, $options: 'i' } },
+          { tags: { $regex: safeSearch, $options: 'i' } },
+          { keywords: { $regex: safeSearch, $options: 'i' } },
+          { description: { $regex: safeSearch, $options: 'i' } }
         ];
       }
 
@@ -1852,9 +1866,21 @@ async function handleRoute(request, { params }) {
 
     // ============ AUTH ============
     if (route === '/auth/login' && method === 'POST') {
-      const { email, password, requireAdmin } = await request.json()
-      if (!email || !password) return err('Email and password are required.')
-      const em = email.trim().toLowerCase()
+      const clientIp = getClientIp(request);
+      const rlIp = checkRateLimit(clientIp, 'auth_login_ip', 10, 60000);
+      if (!rlIp.allowed) {
+        return err(`Too many login attempts from this network. Please wait ${rlIp.retryAfterSeconds} seconds before trying again.`, 429);
+      }
+
+      const { email, password, requireAdmin } = await request.json();
+      if (!email || !password) return err('Email and password are required.');
+      const em = email.trim().toLowerCase();
+
+      const rlTarget = checkRateLimit(em, 'auth_login_target', 8, 60000);
+      if (!rlTarget.allowed) {
+        return err(`Too many login attempts for this account. Please wait ${rlTarget.retryAfterSeconds} seconds before trying again.`, 429);
+      }
+
       const envAdmins = getEnvAdminEmails()
       const isEnvAdmin = envAdmins.includes(em)
 
@@ -1889,7 +1915,7 @@ async function handleRoute(request, { params }) {
       }
 
       if (u.isEmailVerified === false) {
-        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        const code = generateSecureOtp();
         const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
         await db.collection('email_verifications').deleteMany({ email: em, type: 'register' });
         await db.collection('email_verifications').insertOne({
@@ -1911,7 +1937,7 @@ async function handleRoute(request, { params }) {
           requiresVerification: true,
           email: em,
           message: 'Please verify your email address to complete registration. A 6-digit verification code has been sent to your email.',
-          devCode: !emailResult.sent ? code : undefined
+          devCode: (process.env.NODE_ENV === 'development' && !isAdmin && !emailResult.sent) ? code : undefined
         });
       }
 
@@ -1929,7 +1955,16 @@ async function handleRoute(request, { params }) {
 
       const token = uuidv4(); const expiresAt = new Date(Date.now() + SESSION_DAYS * 86400 * 1000)
       await db.collection('sessions').insertOne({ token, userId: u.id, expiresAt, createdAt: new Date() })
-      try { const store = await cookies(); store.set(SESSION_COOKIE, token, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: SESSION_DAYS * 86400, secure: false }); } catch (e) {}
+      try {
+        const store = await cookies();
+        store.set(SESSION_COOKIE, token, {
+          httpOnly: true,
+          sameSite: 'lax',
+          path: '/',
+          maxAge: SESSION_DAYS * 86400,
+          secure: process.env.NODE_ENV === 'production' || request.url.startsWith('https')
+        });
+      } catch (e) {}
       return ok({
         user: {
           id: u.id,
@@ -1947,6 +1982,12 @@ async function handleRoute(request, { params }) {
       })
     }
     if (route === '/auth/register' && method === 'POST') {
+      const clientIp = getClientIp(request);
+      const rl = checkRateLimit(clientIp, 'auth_register', 5, 60000);
+      if (!rl.allowed) {
+        return err(`Registration rate limit reached. Please wait ${rl.retryAfterSeconds} seconds before trying again.`, 429);
+      }
+
       const { name, email, password, phone } = await request.json()
       if (!name || !email || !password) return err('Name, email and password are required.')
       const em = email.trim().toLowerCase()
@@ -1954,8 +1995,9 @@ async function handleRoute(request, { params }) {
       if (!emailRegex.test(em)) {
         return err('Please enter a valid email address.', 400);
       }
-      if (password.length < 6) {
-        return err('Password must be at least 6 characters.', 400);
+      const pwdVal = validatePasswordStrength(password);
+      if (!pwdVal.valid) {
+        return err(pwdVal.message, 400);
       }
 
       const existing = await db.collection('users').findOne({ email: em })
@@ -1998,9 +2040,10 @@ async function handleRoute(request, { params }) {
         await db.collection('users').insertOne(newUser)
       }
 
-      // Generate 6-digit verification code
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      // Generate 6-digit cryptographically secure verification code
+      const code = generateSecureOtp();
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+      resetOtpAttempts(em + ':register');
       await db.collection('email_verifications').deleteMany({ email: em, type: 'register' });
       await db.collection('email_verifications').insertOne({
         id: uuidv4(),
@@ -2012,7 +2055,9 @@ async function handleRoute(request, { params }) {
         createdAt: new Date()
       });
 
-      console.log(`[ACCOUNT VERIFICATION] Code for ${em}: ${code} (expires in 15 mins)`);
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[ACCOUNT VERIFICATION] Code generated for ${em} (expires in 15 mins)`);
+      }
 
       const emailResult = await sendAccountVerificationEmail({
         toEmail: em,
@@ -2030,15 +2075,25 @@ async function handleRoute(request, { params }) {
         requiresVerification: true,
         email: em,
         message,
-        devCode: !emailResult.sent ? code : undefined
+        devCode: (process.env.NODE_ENV === 'development' && role !== 'admin' && !emailResult.sent) ? code : undefined
       });
     }
 
     if (route === '/auth/verify-registration' && method === 'POST') {
+      const clientIp = getClientIp(request);
+      const rl = checkRateLimit(clientIp, 'verify_reg', 12, 60000);
+      if (!rl.allowed) {
+        return err(`Verification rate limit exceeded. Please wait ${rl.retryAfterSeconds} seconds before trying again.`, 429);
+      }
+
       const { email, code } = await request.json();
       if (!email || !code) return err('Email and verification code are required.', 400);
       const em = email.trim().toLowerCase();
       const cleanCode = code.toString().trim();
+
+      if (isOtpLocked(em + ':register', 5)) {
+        return err('Too many failed verification attempts. This code is locked. Please request a new verification code.', 429);
+      }
 
       const record = await db.collection('email_verifications').findOne({
         email: em,
@@ -2049,8 +2104,15 @@ async function handleRoute(request, { params }) {
       });
 
       if (!record) {
-        return err('Invalid or expired verification code. Please request a new code.', 400);
+        const fail = recordOtpFailure(em + ':register', 5);
+        if (fail.locked) {
+          await db.collection('email_verifications').deleteMany({ email: em, type: 'register' });
+          return err('Maximum verification attempts exceeded. Verification code invalidated. Please request a new code.', 429);
+        }
+        return err(`Invalid or expired verification code. ${fail.remaining} attempt(s) remaining.`, 400);
       }
+
+      resetOtpAttempts(em + ':register');
 
       const u = await db.collection('users').findOne({ email: em });
       if (!u) {
@@ -2110,6 +2172,12 @@ async function handleRoute(request, { params }) {
       if (!email) return err('Email address is required.', 400);
       const em = email.trim().toLowerCase();
 
+      const clientIp = getClientIp(request);
+      const rl = checkRateLimit(`${em}:${clientIp}`, 'resend_verification', 3, 60000);
+      if (!rl.allowed) {
+        return err(`Please wait ${rl.retryAfterSeconds} seconds before requesting another verification code.`, 429);
+      }
+
       const u = await db.collection('users').findOne({ email: em });
       if (!u) {
         return err('No account found with this email address.', 404);
@@ -2118,8 +2186,9 @@ async function handleRoute(request, { params }) {
         return err('This account has already been verified. You can sign in directly.', 400);
       }
 
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const code = generateSecureOtp();
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+      resetOtpAttempts(em + ':register');
 
       await db.collection('email_verifications').deleteMany({ email: em, type: 'register' });
       await db.collection('email_verifications').insertOne({
@@ -2132,7 +2201,9 @@ async function handleRoute(request, { params }) {
         createdAt: new Date()
       });
 
-      console.log(`[RESEND VERIFICATION] New code for ${em}: ${code}`);
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[RESEND VERIFICATION] New code generated for ${em}`);
+      }
 
       const emailResult = await sendAccountVerificationEmail({
         toEmail: em,
@@ -2146,10 +2217,11 @@ async function handleRoute(request, { params }) {
         message = `New verification code generated for ${em}.`;
       }
 
+      const isEnvAdmin = getEnvAdminEmails().includes(em);
       return ok({
         success: true,
         message,
-        devCode: !emailResult.sent ? code : undefined
+        devCode: (process.env.NODE_ENV === 'development' && !isEnvAdmin && !emailResult.sent) ? code : undefined
       });
     }
     if (route === '/auth/google' && method === 'POST') {
@@ -2185,6 +2257,9 @@ async function handleRoute(request, { params }) {
 
       if (!payload || !payload.email) {
         return err('Google account did not provide an email address.', 400)
+      }
+      if (payload.email_verified !== true && payload.email_verified !== 'true') {
+        return err('Google account email is not verified.', 401)
       }
 
       const expectedClientId = process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '998849094985-1ec0iv6a0ih2ulrru88vv3ngvcbcv68c.apps.googleusercontent.com'
@@ -2350,8 +2425,9 @@ async function handleRoute(request, { params }) {
 
       const { currentPassword, newPassword, confirmPassword } = await request.json();
 
-      if (!newPassword || typeof newPassword !== 'string' || newPassword.trim().length < 6) {
-        return err('New password must be at least 6 characters long.', 400);
+      const pwdCheck = validatePasswordStrength(newPassword);
+      if (!pwdCheck.valid) {
+        return err(pwdCheck.message, 400);
       }
 
       if (confirmPassword && newPassword !== confirmPassword) {
@@ -2380,10 +2456,15 @@ async function handleRoute(request, { params }) {
         { $set: { passwordSalt: salt, passwordHash: hash, updatedAt: new Date() } }
       );
 
+      // Invalidate other sessions so compromised devices are evicted
+      let currentToken = request.headers.get('x-auth-token') || request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+      if (!currentToken) { try { const store = await cookies(); currentToken = store.get(SESSION_COOKIE)?.value; } catch (e) {} }
+      if (currentToken) {
+        await db.collection('sessions').deleteMany({ userId: u.id, token: { $ne: currentToken } });
+      }
+
       invalidateUserSessionCache(u.id);
-      let t = request.headers.get('x-auth-token') || request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
-      if (!t) { try { const store = await cookies(); t = store.get(SESSION_COOKIE)?.value; } catch (e) {} }
-      if (t) invalidateUserSessionCache(t);
+      if (currentToken) invalidateUserSessionCache(currentToken);
 
       return ok({
         success: true,
@@ -2402,6 +2483,12 @@ async function handleRoute(request, { params }) {
         return err('Please enter a valid email address.', 400);
       }
 
+      const clientIp = getClientIp(request);
+      const rl = checkRateLimit(`${em}:${clientIp}`, 'forgot_pwd', 3, 60000);
+      if (!rl.allowed) {
+        return err(`Please wait ${rl.retryAfterSeconds} seconds before requesting another password reset code.`, 429);
+      }
+
       const u = await db.collection('users').findOne({ email: em });
       if (!u) {
         return err('No account was found with this email address.', 404);
@@ -2414,8 +2501,9 @@ async function handleRoute(request, { params }) {
         }
       }
 
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const code = generateSecureOtp();
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+      resetOtpAttempts(em + ':reset');
 
       await db.collection('password_resets').deleteMany({ email: em });
       await db.collection('password_resets').insertOne({
@@ -2427,7 +2515,9 @@ async function handleRoute(request, { params }) {
         createdAt: new Date()
       });
 
-      console.log(`[PASSWORD RESET] Code for ${em}: ${code} (expires in 15 mins)`);
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[PASSWORD RESET] Code generated for ${em} (expires in 15 mins)`);
+      }
 
       // Send verification code via Nodemailer (Gmail / SMTP)
       const emailResult = await sendPasswordResetEmail({
@@ -2452,10 +2542,20 @@ async function handleRoute(request, { params }) {
     }
 
     if (route === '/auth/verify-reset-code' && method === 'POST') {
+      const clientIp = getClientIp(request);
+      const rl = checkRateLimit(clientIp, 'verify_reset', 10, 60000);
+      if (!rl.allowed) {
+        return err(`Verification rate limit exceeded. Please wait ${rl.retryAfterSeconds} seconds.`, 429);
+      }
+
       const { email, code } = await request.json();
       if (!email || !code) return err('Email and verification code are required.', 400);
       const em = email.trim().toLowerCase();
       const cleanCode = code.toString().trim();
+
+      if (isOtpLocked(em + ':reset', 5)) {
+        return err('Too many failed verification attempts. This code is locked. Please request a new code.', 429);
+      }
 
       const record = await db.collection('password_resets').findOne({
         email: em,
@@ -2465,20 +2565,33 @@ async function handleRoute(request, { params }) {
       });
 
       if (!record) {
-        return err('Invalid or expired verification code.', 400);
+        const fail = recordOtpFailure(em + ':reset', 5);
+        if (fail.locked) {
+          await db.collection('password_resets').deleteMany({ email: em });
+          return err('Maximum verification attempts exceeded. Code has been invalidated. Please request a new code.', 429);
+        }
+        return err(`Invalid or expired verification code. ${fail.remaining} attempt(s) remaining.`, 400);
       }
 
+      resetOtpAttempts(em + ':reset');
       return ok({ success: true, valid: true });
     }
 
     if (route === '/auth/reset-password' && method === 'POST') {
+      const clientIp = getClientIp(request);
+      const rl = checkRateLimit(clientIp, 'reset_pwd_exec', 5, 60000);
+      if (!rl.allowed) {
+        return err(`Rate limit exceeded. Please wait ${rl.retryAfterSeconds} seconds before trying again.`, 429);
+      }
+
       const { email, code, newPassword, confirmPassword } = await request.json();
       if (!email || !code || !newPassword) {
         return err('Email, verification code, and new password are required.', 400);
       }
 
-      if (typeof newPassword !== 'string' || newPassword.trim().length < 6) {
-        return err('New password must be at least 6 characters long.', 400);
+      const pwdCheck = validatePasswordStrength(newPassword);
+      if (!pwdCheck.valid) {
+        return err(pwdCheck.message, 400);
       }
 
       if (confirmPassword && newPassword !== confirmPassword) {
@@ -2516,6 +2629,7 @@ async function handleRoute(request, { params }) {
       );
 
       await db.collection('sessions').deleteMany({ userId: user.id });
+      resetOtpAttempts(em + ':reset');
 
       return ok({
         success: true,
@@ -3060,7 +3174,7 @@ async function handleRoute(request, { params }) {
         const keySecret = (rzpConfig?.keySecret && rzpConfig.keySecret.trim()) || process.env.RAZORPAY_KEY_SECRET;
         const isMockActive = Boolean(rzpConfig?.mockMode) || Boolean(rzpConfig?.isMock) || !rzpConfig?.keyId || rzpConfig?.keyId?.includes('mock');
 
-        if (isMockActive || (verifiedRzpOrderId && verifiedRzpOrderId.startsWith('order_MOCK')) || (verifiedRzpPaymentId && verifiedRzpPaymentId.startsWith('pay_MOCK'))) {
+        if (isMockActive) {
           if (!verifiedRzpOrderId) verifiedRzpOrderId = 'order_MOCK_' + Math.random().toString(36).slice(2, 10);
           if (!verifiedRzpPaymentId) verifiedRzpPaymentId = 'pay_MOCK_' + Math.random().toString(36).slice(2, 11).toUpperCase();
           if (!verifiedRzpSignature) verifiedRzpSignature = 'mock_sig_' + Math.random().toString(36).slice(2, 10);
@@ -3068,15 +3182,17 @@ async function handleRoute(request, { params }) {
           if (!verifiedRzpPaymentId || !verifiedRzpOrderId || !verifiedRzpSignature) {
             return err('Missing payment ID, order ID, or signature for Razorpay payment.', 400);
           }
-        }
-
-        if (keySecret && !verifiedRzpOrderId.startsWith('order_MOCK')) {
-          const generatedSignature = crypto
-            .createHmac('sha256', keySecret)
-            .update(verifiedRzpOrderId + '|' + verifiedRzpPaymentId)
-            .digest('hex');
-          if (generatedSignature !== verifiedRzpSignature) {
-            return err('Payment verification failed: invalid signature.', 400);
+          if (verifiedRzpOrderId.startsWith('order_MOCK') || verifiedRzpPaymentId.startsWith('pay_MOCK')) {
+            return err('Mock payment identifiers are prohibited in live payment mode.', 400);
+          }
+          if (keySecret) {
+            const generatedSignature = crypto
+              .createHmac('sha256', keySecret)
+              .update(verifiedRzpOrderId + '|' + verifiedRzpPaymentId)
+              .digest('hex');
+            if (!timingSafeEqualStrings(generatedSignature, verifiedRzpSignature)) {
+              return err('Payment verification failed: invalid signature.', 400);
+            }
           }
         }
       }
@@ -3923,7 +4039,7 @@ async function handleRoute(request, { params }) {
             return err('Missing webhook signature.', 400);
           }
           const expectedSig = crypto.createHmac('sha256', webhookSecret).update(bodyText).digest('hex');
-          if (signature !== expectedSig) {
+          if (!timingSafeEqualStrings(signature, expectedSig)) {
             return err('Invalid webhook signature.', 400);
           }
         }
@@ -4145,6 +4261,11 @@ async function handleRoute(request, { params }) {
       const siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
       const rzpConfig = siteSettings?.paymentSettings?.razorpay;
       const keySecret = (rzpConfig?.keySecret && rzpConfig.keySecret.trim()) || process.env.RAZORPAY_KEY_SECRET || '';
+      const isMockActive = Boolean(rzpConfig?.mockMode) || Boolean(rzpConfig?.isMock) || !rzpConfig?.keyId || rzpConfig?.keyId?.includes('mock');
+
+      if (!isMockActive && (b.razorpay_order_id?.startsWith('order_MOCK') || b.razorpay_payment_id?.startsWith('pay_MOCK'))) {
+        return err('Mock payment verification is prohibited in live gateway mode.', 400);
+      }
 
       if (keySecret && b.razorpay_order_id && !b.razorpay_order_id.startsWith('order_MOCK') && b.razorpay_signature) {
         const generatedSignature = crypto
@@ -4152,21 +4273,29 @@ async function handleRoute(request, { params }) {
           .update(`${b.razorpay_order_id}|${b.razorpay_payment_id}`)
           .digest('hex');
 
-        if (generatedSignature !== b.razorpay_signature) {
+        if (!timingSafeEqualStrings(generatedSignature, b.razorpay_signature)) {
           return err('Payment signature verification failed.', 400);
         }
         return ok({ verified: true, paymentId: b.razorpay_payment_id });
       }
 
-      // Fallback / mock mode
-      return ok({
-        verified: true,
-        paymentId: b.razorpay_payment_id || 'pay_MOCK' + Math.random().toString(36).slice(2, 12)
-      });
+      if (isMockActive) {
+        return ok({
+          verified: true,
+          paymentId: b.razorpay_payment_id || 'pay_MOCK' + Math.random().toString(36).slice(2, 12)
+        });
+      }
+
+      return err('Payment signature verification failed: invalid credentials or signature.', 400);
     }
 
     // ============ AI CHAT (Gemini) ============
     if (route === '/ai/chat' && method === 'POST') {
+      const clientIp = getClientIp(request);
+      const rl = checkRateLimit(clientIp, 'ai_chat', 20, 60000);
+      if (!rl.allowed) {
+        return err(`AI Concierge request rate limit exceeded. Please wait ${rl.retryAfterSeconds} seconds before sending another message.`, 429);
+      }
       const { sessionId, message } = await request.json();
       if (!sessionId || !message) return err('sessionId and message are required.');
       if (!process.env.GEMINI_API_KEY) return err('AI is not configured on the server.', 500);
@@ -4590,7 +4719,7 @@ async function handleRoute(request, { params }) {
       }
 
       // Admin access validation
-      const admin = await requireAdmin(db);
+      const admin = await requireAdmin(db, request);
       if (!admin) return err('Admin access required', 403);
 
       _cache.delete('header_config'); // Bust cache
@@ -4845,6 +4974,11 @@ async function handleRoute(request, { params }) {
     // ============ PUBLIC NEWSLETTER SUBSCRIBE ============
     if ((route === '/newsletter/subscribe' || route === '/api/newsletter/subscribe' || route === '/newsletter') && method === 'POST') {
       try {
+        const clientIp = getClientIp(request);
+        const rl = checkRateLimit(clientIp, 'newsletter_subscribe', 6, 60000);
+        if (!rl.allowed) {
+          return NextResponse.json({ success: false, message: 'Too many subscribe requests. Please wait a moment.' }, { status: 429 });
+        }
         const body = await request.json().catch(() => ({}));
         const result = await subscribeCustomer(db, { email: body.email, source: body.source });
         return NextResponse.json(result, { status: result.statusCode || 200 });
@@ -4857,6 +4991,11 @@ async function handleRoute(request, { params }) {
     // ============ PUBLIC NEWSLETTER UNSUBSCRIBE ============
     if ((route === '/newsletter/unsubscribe' || route === '/api/newsletter/unsubscribe') && (method === 'GET' || method === 'POST')) {
       try {
+        const clientIp = getClientIp(request);
+        const rl = checkRateLimit(clientIp, 'newsletter_unsubscribe', 6, 60000);
+        if (!rl.allowed) {
+          return NextResponse.json({ success: false, message: 'Too many unsubscribe requests. Please wait a moment.' }, { status: 429 });
+        }
         const body = method === 'POST' ? await request.json().catch(() => ({})) : {};
         const token = q.get('token') || body.token || '';
         const email = q.get('email') || body.email || '';

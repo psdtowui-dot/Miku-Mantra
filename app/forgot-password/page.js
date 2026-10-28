@@ -77,8 +77,11 @@ function ForgotPasswordInner() {
     if (!newPassword) {
       errs.newPassword = 'Must enter a new password';
       valid = false;
-    } else if (newPassword.length < 6) {
-      errs.newPassword = 'Password must be at least 6 characters';
+    } else if (newPassword.length < 8) {
+      errs.newPassword = 'Password must be at least 8 characters';
+      valid = false;
+    } else if (!/[a-zA-Z]/.test(newPassword) || !/[0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(newPassword)) {
+      errs.newPassword = 'Password must contain at least one letter and one number or symbol';
       valid = false;
     }
     if (!confirmPassword) {

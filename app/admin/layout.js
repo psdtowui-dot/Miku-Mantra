@@ -131,8 +131,11 @@ export default function AdminLayout({ children }) {
     if (!adminPwdForm.newPassword) {
       errs.newPassword = 'Must enter a new password';
       valid = false;
-    } else if (adminPwdForm.newPassword.length < 6) {
-      errs.newPassword = 'Password must be at least 6 characters';
+    } else if (adminPwdForm.newPassword.length < 8) {
+      errs.newPassword = 'Password must be at least 8 characters';
+      valid = false;
+    } else if (!/[a-zA-Z]/.test(adminPwdForm.newPassword) || !/[0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(adminPwdForm.newPassword)) {
+      errs.newPassword = 'Password must contain at least one letter and one number or symbol';
       valid = false;
     }
 

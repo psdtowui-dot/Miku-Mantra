@@ -303,8 +303,11 @@ export default function AccountPage() {
     if (!pwdForm.newPassword) {
       errs.newPassword = 'Must enter a new password';
       valid = false;
-    } else if (pwdForm.newPassword.length < 6) {
-      errs.newPassword = 'Password must be at least 6 characters';
+    } else if (pwdForm.newPassword.length < 8) {
+      errs.newPassword = 'Password must be at least 8 characters';
+      valid = false;
+    } else if (!/[a-zA-Z]/.test(pwdForm.newPassword) || !/[0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(pwdForm.newPassword)) {
+      errs.newPassword = 'Password must contain at least one letter and one number or symbol';
       valid = false;
     }
 

@@ -278,6 +278,14 @@ function LoginInner(){
     if (!form.password) {
       errors.password = 'Please enter your password';
       isValid = false;
+    } else if (mode === 'register') {
+      if (form.password.length < 8) {
+        errors.password = 'Password must be at least 8 characters';
+        isValid = false;
+      } else if (!/[a-zA-Z]/.test(form.password) || !/[0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(form.password)) {
+        errors.password = 'Password must contain at least one letter and one number or symbol';
+        isValid = false;
+      }
     } else if (form.password.length < 6) {
       errors.password = 'Password must be at least 6 characters';
       isValid = false;
@@ -437,8 +445,11 @@ function LoginInner(){
     if (!forgotNewPassword) {
       errs.newPassword = 'Must enter a new password';
       valid = false;
-    } else if (forgotNewPassword.length < 6) {
-      errs.newPassword = 'Password must be at least 6 characters';
+    } else if (forgotNewPassword.length < 8) {
+      errs.newPassword = 'Password must be at least 8 characters';
+      valid = false;
+    } else if (!/[a-zA-Z]/.test(forgotNewPassword) || !/[0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(forgotNewPassword)) {
+      errs.newPassword = 'Password must contain at least one letter and one number or symbol';
       valid = false;
     }
     if (!forgotConfirmPassword) {
