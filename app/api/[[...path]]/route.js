@@ -70,7 +70,7 @@ function cacheGet(k) {
   if (Date.now() > e.exp) { _cache.delete(k); return null; }
   return e.v;
 }
-function cacheSet(k, v, ttlMs = 300000) {
+function cacheSet(k, v, ttlMs = 5000) {
   _cache.set(k, { v, exp: Date.now() + ttlMs });
 }
 async function getCachedSiteSettings(db, forceFresh = false) {
@@ -83,39 +83,50 @@ async function getCachedSiteSettings(db, forceFresh = false) {
   return doc;
 }
 
-function cacheBust(prefix, { revalidateLayout = false } = {}) {
-  for (const k of _cache.keys()) {
-    if (!prefix || k.startsWith(prefix)) _cache.delete(k);
-  }
-  if (!prefix || prefix.includes('setting')) {
-    _cache.delete('cached_site_settings');
-  }
-  if (!prefix || prefix.includes('product')) {
-    _cache.delete('homepage_data');
-    _cache.delete('admin_products');
-    _cache.delete('admin_dashboard');
-    _cache.delete('shop_products');
+function cacheBust(prefix, { revalidateLayout = true, slug = null, productId = null } = {}) {
+  if (!prefix) {
+    _cache.clear();
+  } else {
     for (const k of _cache.keys()) {
-      if (k.startsWith('product:') || k.startsWith('products:') || k.startsWith('reviews:')) {
-        _cache.delete(k);
-      }
-    }
-    try {
-      invalidateSiteDataCache('homepage_data');
-      invalidateSiteDataCache('shop_products');
-      invalidateSiteDataCache('product_');
-    } catch (e) { }
-    if (revalidateLayout) {
-      try { revalidatePath('/', 'layout'); } catch (e) { }
-    }
-    try { revalidatePath('/shop'); } catch (e) { }
-  }
-  if (!prefix || prefix.includes('review')) {
-    for (const k of _cache.keys()) {
-      if (k.startsWith('reviews:')) _cache.delete(k);
+      if (k.startsWith(prefix)) _cache.delete(k);
     }
   }
-  try { invalidateSiteDataCache(prefix); } catch (e) { }
+  _cache.delete('cached_site_settings');
+  _cache.delete('homepage_data');
+  _cache.delete('admin_products');
+  _cache.delete('admin_dashboard');
+  _cache.delete('admin_categories');
+  _cache.delete('shop_products');
+  _cache.delete('cats');
+  _cache.delete('cols');
+  _cache.delete('bans');
+  _cache.delete('footer');
+  _cache.delete('site_settings');
+  _cache.delete('homepage_content');
+  _cache.delete('header_config');
+  _cache.delete('social_media_public');
+  _cache.delete('product_filters');
+  _cache.delete('coupon_settings');
+
+  if (slug) {
+    _cache.delete('product:' + slug);
+  }
+  if (productId) {
+    _cache.delete('reviews:' + productId);
+    _cache.delete('product:' + productId);
+  }
+
+  try {
+    invalidateSiteDataCache();
+  } catch (e) {}
+
+  try { revalidatePath('/', 'layout'); } catch (e) {}
+  try { revalidatePath('/'); } catch (e) {}
+  try { revalidatePath('/shop'); } catch (e) {}
+  try { revalidatePath('/product/[slug]', 'page'); } catch (e) {}
+  if (slug) {
+    try { revalidatePath('/product/' + slug); } catch (e) {}
+  }
 }
 
 let seeded = false, lastEnvMtime = 0, lastSyncedAdmins = ''
@@ -604,6 +615,14 @@ async function seedIfEmpty(db) {
         accountEnabled: true,
         cartEnabled: true
       },
+      announcement: {
+        announcementText: 'Complimentary Shipping Available on Eligible Orders',
+        isEnabled: true,
+        isSliding: true,
+        backgroundColor: '#1A1A1A',
+        textColor: '#FFFFFF',
+        updatedAt: new Date()
+      },
       isActive: true,
       createdAt: new Date()
     }
@@ -897,7 +916,7 @@ function initEnvFileWatcher(db) {
       if (fs.existsSync(fp)) {
         fs.watch(fp, onFileChange);
       }
-    } catch (e) { }
+    } catch (e) {}
   });
 }
 
@@ -1005,7 +1024,7 @@ async function getCurrentUser(db, request) {
     try {
       const store = await cookies();
       token = store.get(SESSION_COOKIE)?.value;
-    } catch (e) { }
+    } catch (e) {}
   }
   if (!token) return null;
 
@@ -1186,49 +1205,49 @@ async function handleRoute(request, { params }) {
   const method = request.method
 
   if (route === '/' && method === 'GET') {
-    return ok({ ok: true, app: 'MikuMantra API' }, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+    return ok({ ok: true, app: 'MikuMantra API' });
   }
 
   // Pre-DB fast in-memory response for cached public read endpoints
   if (method === 'GET') {
     if (route === '/categories' || route === '/category-showcase') {
       const c = cacheGet('cats');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
     } else if (route === '/collections') {
       const c = cacheGet('cols');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
     } else if (route === '/banners') {
       const c = cacheGet('bans');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
     } else if (route === '/footer') {
       const c = cacheGet('footer');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
     } else if (route === '/site-settings') {
       const c = cacheGet('site_settings');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
     } else if (route === '/homepage-content') {
       const c = cacheGet('homepage_content');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
     } else if (route === '/product-filters') {
       const c = cacheGet('product_filters');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
     } else if (route === '/coupons/settings') {
       const isNoCache = request.headers.get('cache-control')?.includes('no-cache') || request.headers.get('cache-control')?.includes('no-store');
       if (!isNoCache) {
         const c = cacheGet('coupon_settings');
-        if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+        if (c) return ok(c);
       }
     } else if (route.startsWith('/products/')) {
       const slug = route.split('/')[2];
       if (slug) {
         const c = cacheGet('product:' + slug);
-        if (c) return ok(c, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
+        if (c) return ok(c);
       }
     } else if (route.startsWith('/reviews/product/')) {
       const pid = route.split('/')[3];
       if (pid) {
         const c = cacheGet('reviews:' + pid);
-        if (c) return ok(c, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
+        if (c) return ok(c);
       }
     }
   }
@@ -1276,7 +1295,7 @@ async function handleRoute(request, { params }) {
               buffer = fs.readFileSync(wp);
               contentType = 'image/webp';
               break;
-            } catch (e) { }
+            } catch (e) {}
           }
         }
       }
@@ -1297,7 +1316,7 @@ async function handleRoute(request, { params }) {
               const ext = pathModule.extname(p).toLowerCase().replace('.', '');
               contentType = mimeMap[ext] || 'image/jpeg';
               break;
-            } catch (e) { }
+            } catch (e) {}
           }
         }
       }
@@ -1315,7 +1334,7 @@ async function handleRoute(request, { params }) {
             const cachePath = pathModule.join(process.cwd(), 'public', 'uploads', filename);
             if (!fs.existsSync(pathModule.dirname(cachePath))) fs.mkdirSync(pathModule.dirname(cachePath), { recursive: true });
             fs.writeFileSync(cachePath, buffer);
-          } catch (_) { }
+          } catch (_) {}
         }
       }
 
@@ -1401,13 +1420,13 @@ async function handleRoute(request, { params }) {
       try {
         const body = await request.json();
         const destinationPincode = body.destinationPincode?.trim();
-
+        
         if (!destinationPincode || destinationPincode.length !== 6 || !/^\d+$/.test(destinationPincode)) {
           return err('Enter a valid 6-digit pincode.', 400);
         }
-
+        
         const source = body.sourcePincode || WAREHOUSE_PINCODE;
-
+        
         // Simulate unserviceable pincodes (starting with 0 or 99)
         if (destinationPincode.startsWith('0') || destinationPincode.startsWith('99')) {
           return ok({
@@ -1417,7 +1436,7 @@ async function handleRoute(request, { params }) {
             freeShipping: false
           });
         }
-
+        
         // Zone-based realistic estimation based on first digit of destination pincode:
         // Region 1 (North: Delhi, HR, PB, HP, JK) -> 2-3 days
         // Region 2 (Local/UP, UK) -> 1-2 days (Local delivery since Noida warehouse starts with 2)
@@ -1427,7 +1446,7 @@ async function handleRoute(request, { params }) {
         const firstDigit = destinationPincode[0];
         let minDays = 3;
         let maxDays = 5;
-
+        
         if (firstDigit === '1') {
           minDays = 2;
           maxDays = 3;
@@ -1444,7 +1463,7 @@ async function handleRoute(request, { params }) {
           minDays = 5;
           maxDays = 6;
         }
-
+        
         let siteSettings = cacheGet('site_settings');
         if (!siteSettings) {
           siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
@@ -1547,7 +1566,7 @@ async function handleRoute(request, { params }) {
 
       const cacheKey = 'products:' + JSON.stringify({ filter, sortObj, page, limit });
       const cached = cacheGet(cacheKey);
-      if (cached) return ok(cached, { cacheControl: 'public, max-age=15, stale-while-revalidate=60' });
+      if (cached) return ok(cached);
 
       const projection = {
         id: 1, slug: 1, name: 1, sku: 1, price: 1, mrp: 1, category: 1, subcategory: 1,
@@ -1564,14 +1583,14 @@ async function handleRoute(request, { params }) {
       ]);
       const resp = { products: list.map(clean), total, page, totalPages: Math.ceil(total / limit) };
       cacheSet(cacheKey, resp, 60000);
-      return ok(resp, { cacheControl: 'public, max-age=15, stale-while-revalidate=60' });
+      return ok(resp);
     }
     if (route.startsWith('/products/') && method === 'GET') {
       const slug = route.split('/')[2];
       if (!slug) return err('Not found', 404);
 
       const cachedProduct = cacheGet('product:' + slug);
-      if (cachedProduct) return ok(cachedProduct, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
+      if (cachedProduct) return ok(cachedProduct);
 
       const activeFilter = {
         active: { $ne: false },
@@ -1630,11 +1649,11 @@ async function handleRoute(request, { params }) {
       if (p.id && p.id !== slug) cacheSet('product:' + p.id, result, 300000);
       if (p.slug && p.slug !== slug) cacheSet('product:' + p.slug, result, 300000);
 
-      return ok(result, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
+      return ok(result);
     }
     if ((route === '/categories' || route === '/category-showcase') && method === 'GET') {
       const c = cacheGet('cats');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
 
       let list = await db.collection('categories').find({ active: { $ne: false }, enabled: { $ne: false } }).sort({ order: 1, displayOrder: 1, createdAt: 1 }).toArray();
       if (!list || list.length === 0) {
@@ -1678,7 +1697,7 @@ async function handleRoute(request, { params }) {
         settings
       };
       cacheSet('cats', r, 300000);
-      return ok(r, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      return ok(r);
     }
     if (route === '/category-showcase/settings' && method === 'GET') {
       let settingsDoc = cacheGet('category_showcase_settings');
@@ -1694,17 +1713,17 @@ async function handleRoute(request, { params }) {
         success: true,
         data: { settings },
         settings
-      }, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      });
     }
     if (route === '/collections' && method === 'GET') {
       const c = cacheGet('cols');
-      if (c) return ok(c, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      if (c) return ok(c);
       const list = await db.collection('collections').find({}).toArray();
       const seen = new Set();
       const uniqueCols = list.map(clean).filter(item => { if (!item?.slug || seen.has(item.slug)) return false; seen.add(item.slug); return true; });
       const r = { collections: uniqueCols };
       cacheSet('cols', r, 300000);
-      return ok(r, { cacheControl: 'public, max-age=60, stale-while-revalidate=300' });
+      return ok(r);
     }
     if (route === '/banners' && method === 'GET') {
       const c = cacheGet('bans');
@@ -1956,7 +1975,7 @@ async function handleRoute(request, { params }) {
           maxAge: SESSION_DAYS * 86400,
           secure: process.env.NODE_ENV === 'production' || request.url.startsWith('https')
         });
-      } catch (e) { }
+      } catch (e) {}
       return ok({
         user: {
           id: u.id,
@@ -2138,7 +2157,7 @@ async function handleRoute(request, { params }) {
           maxAge: SESSION_DAYS * 86400,
           secure: process.env.NODE_ENV === 'production' || request.url.startsWith('https')
         });
-      } catch (e) { }
+      } catch (e) {}
 
       return ok({
         success: true,
@@ -2260,7 +2279,7 @@ async function handleRoute(request, { params }) {
       }
 
       const em = payload.email.trim().toLowerCase()
-
+      
       // Step 1: Verify admin status against .env and MongoDB database
       const isAdmin = await isAuthorizedAdminEmail(db, em)
 
@@ -2329,7 +2348,7 @@ async function handleRoute(request, { params }) {
           maxAge: SESSION_DAYS * 86400,
           secure: process.env.NODE_ENV === 'production' || request.url.startsWith('https')
         })
-      } catch (e) { }
+      } catch (e) {}
 
       return ok({
         user: {
@@ -2368,7 +2387,7 @@ async function handleRoute(request, { params }) {
     if (route === '/auth/me' && method === 'GET') { const user = await getCurrentUser(db, request); return ok({ user }) }
     if (route === '/auth/logout' && method === 'POST') {
       let t = request.headers.get('x-auth-token');
-      if (!t) { try { const store = await cookies(); t = store.get(SESSION_COOKIE)?.value; store.delete(SESSION_COOKIE); } catch (e) { } }
+      if (!t) { try { const store = await cookies(); t = store.get(SESSION_COOKIE)?.value; store.delete(SESSION_COOKIE); } catch (e) {} }
       if (t) await db.collection('sessions').deleteOne({ token: t });
       return ok({ ok: true })
     }
@@ -2390,7 +2409,7 @@ async function handleRoute(request, { params }) {
       // Invalidate server session cache so subsequent /auth/me queries return fresh data immediately
       invalidateUserSessionCache(u.id);
       let t = request.headers.get('x-auth-token') || request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
-      if (!t) { try { const store = await cookies(); t = store.get(SESSION_COOKIE)?.value; } catch (e) { } }
+      if (!t) { try { const store = await cookies(); t = store.get(SESSION_COOKIE)?.value; } catch (e) {} }
       if (t) invalidateUserSessionCache(t);
 
       const up = await db.collection('users').findOne({ id: u.id });
@@ -2450,7 +2469,7 @@ async function handleRoute(request, { params }) {
 
       // Invalidate other sessions so compromised devices are evicted
       let currentToken = request.headers.get('x-auth-token') || request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
-      if (!currentToken) { try { const store = await cookies(); currentToken = store.get(SESSION_COOKIE)?.value; } catch (e) { } }
+      if (!currentToken) { try { const store = await cookies(); currentToken = store.get(SESSION_COOKIE)?.value; } catch (e) {} }
       if (currentToken) {
         await db.collection('sessions').deleteMany({ userId: u.id, token: { $ne: currentToken } });
       }
@@ -2678,14 +2697,14 @@ async function handleRoute(request, { params }) {
         try {
           const store = await cookies();
           t = store.get(SESSION_COOKIE)?.value;
-        } catch (e) { }
+        } catch (e) {}
       }
       if (t) invalidateUserSessionCache(t);
 
       try {
         const store = await cookies();
         store.delete(SESSION_COOKIE);
-      } catch (e) { }
+      } catch (e) {}
 
       return ok({
         success: true,
@@ -2771,7 +2790,7 @@ async function handleRoute(request, { params }) {
       const orphanIds = rawProductIds.filter(id => !foundIds.has(id));
 
       if (orphanIds.length > 0) {
-        db.collection('wishlist').deleteMany({ userId: u.id, productId: { $in: orphanIds } }).catch(() => { });
+        db.collection('wishlist').deleteMany({ userId: u.id, productId: { $in: orphanIds } }).catch(() => {});
       }
 
       return ok({ wishlist: validList.map(clean), products: prods.map(clean) });
@@ -3401,7 +3420,7 @@ async function handleRoute(request, { params }) {
       if (!faviconBuffer) {
         const appIconPath = pathModule.join(process.cwd(), 'app', 'icon.png');
         if (fs.existsSync(appIconPath)) {
-          try { faviconBuffer = fs.readFileSync(appIconPath); } catch (e) { }
+          try { faviconBuffer = fs.readFileSync(appIconPath); } catch (e) {}
         }
       }
 
@@ -4642,7 +4661,7 @@ async function handleRoute(request, { params }) {
       if (!pid) return err('Product identifier required', 400);
 
       const cached = cacheGet('reviews:' + pid);
-      if (cached) return ok(cached, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
+      if (cached) return ok(cached);
 
       // Fast exact indexed lookup
       let prod = await db.collection('products').findOne({ slug: pid }, { projection: { id: 1, slug: 1 } });
@@ -4692,7 +4711,7 @@ async function handleRoute(request, { params }) {
       if (prod?.id && prod.id !== pid) cacheSet('reviews:' + prod.id, resData, 300000);
       if (prod?.slug && prod.slug !== pid) cacheSet('reviews:' + prod.slug, resData, 300000);
 
-      return ok(resData, { cacheControl: 'public, max-age=30, stale-while-revalidate=120' });
+      return ok(resData);
     }
     // ============ HEADER CONFIGURATION ============
     if (route.startsWith('/header')) {
@@ -4742,7 +4761,7 @@ async function handleRoute(request, { params }) {
           _cache.delete('footer');
           _cache.delete('homepage_data');
           invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) { }
+          try { revalidatePath('/', 'layout'); } catch (e) {}
         }
 
         const updated = await db.collection('header').findOne({ id: 'default' });
@@ -4763,6 +4782,7 @@ async function handleRoute(request, { params }) {
           dropdown: body.hasDropdown ? { sections: [], featured: { image: '', title: '', url: '', alt: '', isActive: false } } : null
         };
         await db.collection('header').updateOne({ id: 'default' }, { $push: { navigation: newNav } });
+        cacheBust('header_config');
         return ok({ item: newNav });
       }
 
@@ -4793,11 +4813,13 @@ async function handleRoute(request, { params }) {
             return n;
           });
           await db.collection('header').updateOne({ id: 'default' }, { $set: { navigation: updatedNavs } });
+          cacheBust('header_config');
           return ok({ ok: true });
         }
         if (method === 'DELETE') {
           const updatedNavs = (header.navigation || []).filter(n => n.id !== navId);
           await db.collection('header').updateOne({ id: 'default' }, { $set: { navigation: updatedNavs } });
+          cacheBust('header_config');
           return ok({ ok: true });
         }
       }
@@ -5022,7 +5044,7 @@ async function handleRoute(request, { params }) {
         cacheBust('social_media');
         cacheBust('coupons');
         invalidateUserSessionCache();
-        try { invalidateSiteDataCache(); } catch (e) { }
+        try { invalidateSiteDataCache(); } catch (e) {}
       }
 
       // ============ ADMIN NEWSLETTER HEALTH CHECK ============
@@ -5064,9 +5086,9 @@ async function handleRoute(request, { params }) {
             const updated = await updateNewsletterSettings(db, body);
             _cache.delete('newsletter_settings_public');
             _cache.delete('homepage_data');
-            try { invalidateSiteDataCache('homepage_data'); } catch (e) { }
-            try { invalidateSiteDataCache(); } catch (e) { }
-            try { revalidatePath('/', 'layout'); } catch (e) { }
+            try { invalidateSiteDataCache('homepage_data'); } catch (e) {}
+            try { invalidateSiteDataCache(); } catch (e) {}
+            try { revalidatePath('/', 'layout'); } catch (e) {}
 
             await logAdminActivity(db, {
               admin,
@@ -5451,9 +5473,9 @@ async function handleRoute(request, { params }) {
 
         // Role verification
         const targetRole = await db.collection('roles').findOne({ key: role }) ||
-          await db.collection('roles').findOne({ id: role }) ||
-          DEFAULT_ROLES.find(r => r.key === role) ||
-          DEFAULT_ROLES[1];
+                           await db.collection('roles').findOne({ id: role }) ||
+                           DEFAULT_ROLES.find(r => r.key === role) ||
+                           DEFAULT_ROLES[1];
 
         // Privilege escalation verification
         const escalationErr = await validatePrivilegeEscalation(db, admin, null, targetRole.key, status);
@@ -5501,7 +5523,7 @@ async function handleRoute(request, { params }) {
           if (!target) return err('Admin not found', 404);
 
           const roleDoc = await db.collection('roles').findOne({ key: target.roleKey }) ||
-            DEFAULT_ROLES.find(r => r.key === target.roleKey);
+                          DEFAULT_ROLES.find(r => r.key === target.roleKey);
           const permissions = await resolveUserPermissions(db, target);
 
           return ok({
@@ -5534,8 +5556,8 @@ async function handleRoute(request, { params }) {
           let newRoleId = target.roleId;
           if (role) {
             const roleDoc = await db.collection('roles').findOne({ key: role }) ||
-              await db.collection('roles').findOne({ id: role }) ||
-              DEFAULT_ROLES.find(r => r.key === role);
+                            await db.collection('roles').findOne({ id: role }) ||
+                            DEFAULT_ROLES.find(r => r.key === role);
             if (roleDoc) {
               newRoleKey = roleDoc.key;
               newRoleId = roleDoc.id;
@@ -5912,7 +5934,7 @@ async function handleRoute(request, { params }) {
           if (!body.name || !body.name.trim()) return err('Group name is required');
           const rawKey = body.key || body.name;
           const key = rawKey.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-');
-
+          
           const existing = await db.collection('product_filters').findOne({ key });
           if (existing) return err(`A filter group with key "${key}" already exists.`, 409);
 
@@ -6188,10 +6210,10 @@ async function handleRoute(request, { params }) {
             _cache.delete('header_config');
             _cache.delete('homepage_data');
             invalidateSiteDataCache();
-            try { revalidatePath('/', 'layout'); } catch (e) { }
+            try { revalidatePath('/', 'layout'); } catch (e) {}
           }
 
-          _cache.delete('footer');
+          cacheBust('footer');
           const updated = await db.collection('footer').findOne({ id: 'default' });
           return ok(clean(updated));
         }
@@ -6272,7 +6294,7 @@ async function handleRoute(request, { params }) {
         if (method === 'PUT') {
           const body = await request.json();
           const { _id, id, ...updates } = body;
-
+          
           if (updates.shipping) {
             const threshold = Number(updates.shipping.freeShippingThreshold);
             const standard = Number(updates.shipping.standardShippingCharge);
@@ -6476,7 +6498,7 @@ async function handleRoute(request, { params }) {
 
                   try {
                     fs.writeFileSync(pathModule.join(process.cwd(), 'app', 'icon.png'), favBuf);
-                  } catch (e) { }
+                  } catch (e) {}
                 }
                 fs.writeFileSync(pathModule.join(process.cwd(), 'public', 'favicon.ico'), icoData);
               }
@@ -6485,12 +6507,7 @@ async function handleRoute(request, { params }) {
             }
           }
 
-          _cache.delete('site_settings');
-          try {
-            revalidatePath('/', 'layout');
-          } catch (revalErr) {
-            console.warn('revalidatePath warning:', revalErr.message);
-          }
+          cacheBust('site_settings');
           const updated = await db.collection('site_settings').findOne({ id: 'default' });
           const updatedRawPay = updated?.paymentSettings || DEFAULT_SITE_SETTINGS.paymentSettings;
           return ok(clean({
@@ -6544,7 +6561,7 @@ async function handleRoute(request, { params }) {
         if (method === 'PUT') {
           const body = await request.json();
           const { homepagePromotions, assuranceSection, assuranceCards } = body;
-
+          
           const updates = {};
           if (Array.isArray(homepagePromotions)) updates.homepagePromotions = homepagePromotions;
           if (assuranceSection && typeof assuranceSection === 'object') updates.assuranceSection = assuranceSection;
@@ -6555,13 +6572,7 @@ async function handleRoute(request, { params }) {
             { $set: { ...updates, updatedAt: new Date() } },
             { upsert: true }
           );
-          _cache.delete('site_settings');
-          _cache.delete('homepage_content');
-          try {
-            revalidatePath('/', 'layout');
-          } catch (revalErr) {
-            console.warn('revalidatePath warning:', revalErr.message);
-          }
+          cacheBust('homepage_content');
           const updated = await db.collection('site_settings').findOne({ id: 'default' });
           return ok(clean({
             homepagePromotions: updated.homepagePromotions ?? DEFAULT_SITE_SETTINGS.homepagePromotions,
@@ -6637,7 +6648,7 @@ async function handleRoute(request, { params }) {
           _cache.delete('homepage_data');
           cacheBust('social_media');
           invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) { }
+          try { revalidatePath('/', 'layout'); } catch (e) {}
 
           await logAdminActivity(db, {
             admin,
@@ -6676,7 +6687,7 @@ async function handleRoute(request, { params }) {
           _cache.delete('homepage_data');
           cacheBust('social_media');
           invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) { }
+          try { revalidatePath('/', 'layout'); } catch (e) {}
 
           const updated = await db.collection('social_media_settings').findOne({ id: 'default' });
           return ok({ success: true, settings: clean({ ...DEFAULT_SOCIAL_MEDIA_SETTINGS, ...updated }) });
@@ -6708,7 +6719,7 @@ async function handleRoute(request, { params }) {
           _cache.delete('homepage_data');
           cacheBust('social_media');
           invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) { }
+          try { revalidatePath('/', 'layout'); } catch (e) {}
 
           const updatedList = await db.collection('social_media').find({}).sort({ displayOrder: 1 }).toArray();
           return ok({ success: true, items: updatedList.map(clean) });
@@ -6729,7 +6740,7 @@ async function handleRoute(request, { params }) {
           _cache.delete('homepage_data');
           cacheBust('social_media');
           invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) { }
+          try { revalidatePath('/', 'layout'); } catch (e) {}
 
           return ok({ success: true, id, isActive: newStatus });
         }
@@ -6766,7 +6777,7 @@ async function handleRoute(request, { params }) {
           _cache.delete('homepage_data');
           cacheBust('social_media');
           invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) { }
+          try { revalidatePath('/', 'layout'); } catch (e) {}
 
           const updated = await db.collection('social_media').findOne({ id });
           return ok({ success: true, item: clean(updated) });
@@ -6784,7 +6795,7 @@ async function handleRoute(request, { params }) {
           _cache.delete('homepage_data');
           cacheBust('social_media');
           invalidateSiteDataCache();
-          try { revalidatePath('/', 'layout'); } catch (e) { }
+          try { revalidatePath('/', 'layout'); } catch (e) {}
 
           await logAdminActivity(db, {
             admin,
@@ -6959,7 +6970,7 @@ async function handleRoute(request, { params }) {
           createdAt: new Date()
         };
         await db.collection('products').insertOne(p);
-        cacheBust('products:');
+        cacheBust('products:', { slug: p.slug, productId: p.id });
         _cache.delete('admin_products');
         _cache.delete('admin_dashboard');
         return ok({ product: clean(p) });
@@ -7015,10 +7026,10 @@ async function handleRoute(request, { params }) {
 
         await db.collection('products').updateOne({ id }, { $set: updateData });
         await recalculateProductRating(db, id);
-        cacheBust('products:');
+        const up = await db.collection('products').findOne({ id });
+        cacheBust('products:', { slug: up?.slug || updateData.slug, productId: id });
         _cache.delete('admin_products');
         _cache.delete('admin_dashboard');
-        const up = await db.collection('products').findOne({ id });
         return ok({ product: clean(up) });
       }
       if (sub.startsWith('products/') && method === 'DELETE') {
@@ -7166,7 +7177,7 @@ async function handleRoute(request, { params }) {
             const uploadsDir = pathModule.join(process.cwd(), 'public', 'uploads');
             if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
             fs.writeFileSync(pathModule.join(uploadsDir, filename), buffer);
-          } catch (e) { }
+          } catch (e) {}
 
           const url = `/api/uploads/${filename}`;
           return ok({
@@ -7480,7 +7491,7 @@ async function handleRoute(request, { params }) {
                 },
                 request
               });
-            } catch (logErr) { }
+            } catch (logErr) {}
           }
 
           const availableImages = await scanAvailableImages(db);
@@ -7616,7 +7627,7 @@ async function handleRoute(request, { params }) {
           _cache.delete('homepage_data');
           cacheBust('cats');
           invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) { }
+          try { revalidatePath('/', 'layout'); } catch (e) {}
 
           const updated = await db.collection('category_showcase_settings').findOne({ id: 'default' });
           const settings = {
@@ -7660,7 +7671,7 @@ async function handleRoute(request, { params }) {
           cacheBust('cats');
           cacheBust('product_filters');
           invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) { }
+          try { revalidatePath('/', 'layout'); } catch (e) {}
 
           return ok({ success: true, message: 'Categories reordered successfully' });
         }
@@ -7690,7 +7701,7 @@ async function handleRoute(request, { params }) {
           cacheBust('cats');
           cacheBust('product_filters');
           invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) { }
+          try { revalidatePath('/', 'layout'); } catch (e) {}
 
           const up = await db.collection('categories').findOne({ id });
           return ok({ success: true, item: clean(up) });
@@ -7790,7 +7801,7 @@ async function handleRoute(request, { params }) {
           cacheBust('cats');
           cacheBust('product_filters');
           invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) { }
+          try { revalidatePath('/', 'layout'); } catch (e) {}
 
           await logAdminActivity(db, {
             admin,
@@ -7856,7 +7867,7 @@ async function handleRoute(request, { params }) {
           cacheBust('cats');
           cacheBust('product_filters');
           invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) { }
+          try { revalidatePath('/', 'layout'); } catch (e) {}
 
           const up = await db.collection('categories').findOne({ id });
           return ok({ success: true, item: clean(up), category: clean(up) });
@@ -7912,7 +7923,7 @@ async function handleRoute(request, { params }) {
           cacheBust('cats');
           cacheBust('product_filters');
           invalidateSiteDataCache('homepage_data');
-          try { revalidatePath('/', 'layout'); } catch (e) { }
+          try { revalidatePath('/', 'layout'); } catch (e) {}
 
           await logAdminActivity(db, {
             admin,
@@ -7987,8 +7998,11 @@ async function handleRoute(request, { params }) {
           if (col === 'collections') {
             await syncCategoryAndCollectionFilterOptions(db);
             _cache.delete('product_filters');
-            cacheBust('product_filters');
-            _cache.delete('cols');
+            cacheBust('cols');
+          } else if (col === 'banners') {
+            cacheBust('bans');
+          } else if (col === 'coupons') {
+            cacheBust('coupon');
           }
           return ok({ item: clean(doc) });
         }
@@ -8034,8 +8048,11 @@ async function handleRoute(request, { params }) {
           if (col === 'collections') {
             await syncCategoryAndCollectionFilterOptions(db);
             _cache.delete('product_filters');
-            cacheBust('product_filters');
-            _cache.delete('cols');
+            cacheBust('cols');
+          } else if (col === 'banners') {
+            cacheBust('bans');
+          } else if (col === 'coupons') {
+            cacheBust('coupon');
           }
           const up = await db.collection(col).findOne({ id });
           return ok({ item: clean(up) });
@@ -8052,6 +8069,13 @@ async function handleRoute(request, { params }) {
           }
           const id = sub.split('/')[1];
           _cache.delete('admin_' + col);
+          if (col === 'banners') {
+            cacheBust('bans');
+          } else if (col === 'collections') {
+            cacheBust('cols');
+          } else if (col === 'coupons') {
+            cacheBust('coupon');
+          }
 
           if (col === 'banners') {
             try {
@@ -8095,11 +8119,11 @@ async function handleRoute(request, { params }) {
         if (!hasPermission(admin, 'orders.view')) return err('Permission denied: orders.view required', 403);
         const search = q.get('search')?.trim();
         let query = {};
-
+        
         if (search) {
           const escaped = search.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
           const reg = { $regex: escaped, $options: 'i' };
-
+          
           // Find matching users by email or name to include matching userIds in query
           const matchingUsers = await db.collection('users').find({
             $or: [
@@ -8108,7 +8132,7 @@ async function handleRoute(request, { params }) {
             ]
           }).toArray();
           const matchingUserIds = matchingUsers.map(u => u.id);
-
+          
           query = {
             $or: [
               { id: reg },
@@ -8142,11 +8166,11 @@ async function handleRoute(request, { params }) {
         if (!hasPermission(admin, 'orders.view')) return err('Permission denied: orders.view required', 403);
         const search = q.get('search')?.trim();
         let query = { status: 'delivered' };
-
+        
         if (search) {
           const escaped = search.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
           const reg = { $regex: escaped, $options: 'i' };
-
+          
           const matchingUsers = await db.collection('users').find({
             $or: [
               { email: reg },
@@ -8154,7 +8178,7 @@ async function handleRoute(request, { params }) {
             ]
           }).toArray();
           const matchingUserIds = matchingUsers.map(u => u.id);
-
+          
           query = {
             status: 'delivered',
             $and: [
@@ -8796,7 +8820,7 @@ async function handleRoute(request, { params }) {
               }
             );
             _cache.delete('footer');
-            try { invalidateSiteDataCache('footer'); } catch (e) { }
+            try { invalidateSiteDataCache('footer'); } catch (e) {}
           }
 
           try {
@@ -9000,7 +9024,7 @@ async function handleRoute(request, { params }) {
         if (!hasPermission(admin, 'customers.view')) return err('Permission denied: customers.view required', 403);
         const search = q.get('search')?.trim();
         let query = {};
-
+        
         if (search) {
           const escaped = search.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
           const reg = { $regex: escaped, $options: 'i' };
@@ -9013,7 +9037,7 @@ async function handleRoute(request, { params }) {
             ]
           };
         }
-
+        
         const list = await db.collection('users').find(query).sort({ createdAt: -1 }).toArray();
         return ok({ customers: list.map(clean) })
       }
@@ -9240,6 +9264,7 @@ async function handleRoute(request, { params }) {
         await db.collection('reviews').updateOne({ id }, updateOp);
         const updated = await db.collection('reviews').findOne({ id });
         await recalculateProductRating(db, r.productId);
+        cacheBust('review', { productId: r.productId });
 
         return ok({ review: clean(updated) });
       }
@@ -9250,6 +9275,7 @@ async function handleRoute(request, { params }) {
         if (r) {
           await db.collection('reviews').deleteOne({ id });
           await recalculateProductRating(db, r.productId);
+          cacheBust('review', { productId: r.productId });
         }
         return ok({ ok: true });
       }
@@ -9673,7 +9699,7 @@ async function handleRoute(request, { params }) {
     const msg = String(e?.message || e);
     if (msg.includes('SSL') || msg.includes('topology') || msg.includes('pool') || msg.includes('connection') || msg.includes('timed out') || msg.includes('Primary')) {
       connectPromise = null;
-      try { if (client) client.close(); } catch (_) { }
+      try { if (client) client.close(); } catch (_) {}
     }
     return err('Internal server error: ' + msg, 500);
   }

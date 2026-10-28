@@ -55,7 +55,7 @@ export default function Footer({ initialData }) {
     }
     async function fetchFooter() {
       try {
-        const r = await fetch('/api/footer');
+        const r = await fetch('/api/footer', { cache: 'no-store' });
         if (r.ok) {
           const d = await r.json();
           setData(d);

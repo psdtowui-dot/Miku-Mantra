@@ -112,7 +112,7 @@ export default function Navbar({ initialData }) {
     return () => clearTimeout(delayDebounceFn);
   }, [q]);
 
-  // Fetch header config once if not provided in initialData
+  // Fetch header config or synchronize when initialData updates
   useEffect(() => {
     if (initialData) {
       setHeaderData(initialData);
@@ -121,7 +121,7 @@ export default function Navbar({ initialData }) {
     let active = true;
     const fetchHeader = async () => {
       try {
-        const response = await fetch('/api/header');
+        const response = await fetch('/api/header', { cache: 'no-store' });
         if (response.ok) {
           const data = await response.json();
           if (active) setHeaderData(data);

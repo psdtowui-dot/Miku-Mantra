@@ -545,6 +545,19 @@ export default function HomePage({ initialData }) {
   });
   const [loading, setLoading] = useState(!initialData?.products);
 
+  // Synchronize state when initialData updates (e.g. on navigation or revalidation)
+  useEffect(() => {
+    if (initialData) {
+      if (initialData.products) setProducts(initialData.products);
+      if (initialData.categories) setCategories(initialData.categories);
+      if (initialData.collections) setCollections(initialData.collections);
+      if (initialData.banners?.length) setBanners(initialData.banners);
+      if (initialData.transition) setTransition(initialData.transition);
+      if (initialData.homepageCMS) setHomepageCMS(initialData.homepageCMS);
+      setLoading(false);
+    }
+  }, [initialData]);
+
   useEffect(() => {
     // If initialData was already passed, we already have server-fresh data. Only fetch if missing.
     if (initialData) return;

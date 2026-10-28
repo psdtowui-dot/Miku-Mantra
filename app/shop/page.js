@@ -1,7 +1,8 @@
 import ShopClient from './shop-client';
 import { getSiteSettings, getCanonicalBaseUrl, toAbsoluteUrl, applyTitleTemplate, getShopProductsDB, getShopFilterGroupsDB } from '@/lib/db-site-settings';
 
-export const revalidate = 60;
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export async function generateMetadata({ searchParams }) {
   const params = await searchParams;
