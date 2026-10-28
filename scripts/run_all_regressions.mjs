@@ -1,3 +1,7 @@
+delete process.env.HTTP_PROXY;
+delete process.env.HTTPS_PROXY;
+process.env.NO_PROXY = '127.0.0.1,localhost';
+
 import next from 'next';
 import http from 'http';
 import { spawn } from 'child_process';

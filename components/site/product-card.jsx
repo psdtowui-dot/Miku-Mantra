@@ -6,6 +6,7 @@ import { useCompare } from '@/lib/browsing';
 import { formatINR, formatRating } from '@/lib/products';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
+import { optimizeImageUrl } from '@/lib/image-utils';
 
 export default function ProductCard({ p, index=0 }){
   const { add } = useCart();
@@ -60,8 +61,8 @@ export default function ProductCard({ p, index=0 }){
     <motion.div initial={{opacity:0,y:20}} whileInView={{opacity:1,y:0}} viewport={{once:true}} transition={{duration:.5,delay:Math.min(index*.05,.4)}} className="group">
       <div className="relative overflow-hidden rounded-xl bg-[#FAF6EF] aspect-[4/5]">
         <Link href={`/product/${p.slug}`}>
-          <img width="400" height="500" loading={index < 2 ? "eager" : "lazy"} fetchPriority={index === 0 ? "high" : "auto"} decoding="async" src={primaryImg} alt={p.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"/>
-          {secondaryImg && <img width="400" height="500" loading="lazy" decoding="async" src={secondaryImg} alt="" className="absolute inset-0 w-full h-full object-cover opacity-0 group-hover:opacity-100 transition-opacity duration-500"/>}
+          <img width="400" height="500" loading={index < 2 ? "eager" : "lazy"} fetchPriority={index === 0 ? "high" : "auto"} decoding="async" src={optimizeImageUrl(primaryImg, { width: 500, quality: 80 })} alt={p.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"/>
+          {secondaryImg && <img width="400" height="500" loading="lazy" decoding="async" src={optimizeImageUrl(secondaryImg, { width: 500, quality: 80 })} alt="" className="absolute inset-0 w-full h-full object-cover opacity-0 group-hover:opacity-100 transition-opacity duration-500"/>}
         </Link>
         {isOutOfStock ? (
           <span className="absolute top-2 left-2 sm:top-3 sm:left-3 bg-[#1A1A1A] text-white text-[9px] sm:text-[10px] tracking-normal xs:tracking-wider sm:tracking-[0.2em] uppercase px-1.5 py-0.5 sm:px-2.5 sm:py-1 rounded-sm z-10 font-semibold shadow-xs">OUT OF STOCK</span>

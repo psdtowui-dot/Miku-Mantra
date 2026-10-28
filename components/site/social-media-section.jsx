@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { Instagram, Facebook, Youtube, Share2, ExternalLink } from 'lucide-react';
 import { DEFAULT_SOCIAL_MEDIA_ITEMS, DEFAULT_SOCIAL_MEDIA_SETTINGS } from '@/lib/site-defaults';
+import { optimizeImageUrl } from '@/lib/image-utils';
 
 const PLATFORM_ICONS = {
   instagram: Instagram,
@@ -34,8 +35,9 @@ export default function SocialMediaSection({ initialItems, initialSettings }) {
     }
   }, [initialSettings]);
 
-  // Fetch latest public social media data from API in background to ensure freshness
+  // Fetch latest public social media data only when initialItems is absent
   useEffect(() => {
+    if (initialItems && initialItems.length > 0) return;
     let isMounted = true;
     fetch('/api/social-media', { cache: 'no-store' })
       .then(res => res.json())
@@ -119,7 +121,7 @@ export default function SocialMediaSection({ initialItems, initialSettings }) {
                     : 'scale(1)',
                   opacity: isOtherHovered ? 0.82 : 1,
                   zIndex: isHovered ? 25 : 10,
-                  transition: 'transform 350ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 350ms ease, box-shadow 350ms ease'
+                  transition: 'transform 350ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 350ms ease', willChange: isHovered ? 'transform, opacity' : 'auto'
                 }}
                 className={`group relative flex-1 min-w-0 aspect-square rounded-xl overflow-hidden cursor-pointer select-none bg-neutral-100 ${
                   isHovered
@@ -129,9 +131,12 @@ export default function SocialMediaSection({ initialItems, initialSettings }) {
               >
                 {/* Thumbnail Image */}
                 <img
-                  src={item.thumbnailUrl || item.image || 'https://images.unsplash.com/photo-1651160670627-2896ddf7822f?crop=entropy&cs=srgb&fm=jpg&q=85'}
+                  src={optimizeImageUrl(item.thumbnailUrl || item.image || 'https://images.unsplash.com/photo-1651160670627-2896ddf7822f?crop=entropy&cs=srgb&fm=jpg&q=85', { width: 400, quality: 80 })}
                   alt={item.title || `${item.platform || 'Social'} post`}
+                  width="300"
+                  height="300"
                   loading="lazy"
+                  decoding="async"
                   onError={(e) => {
                     e.currentTarget.onerror = null;
                     e.currentTarget.src = 'https://images.unsplash.com/photo-1651160670627-2896ddf7822f?crop=entropy&cs=srgb&fm=jpg&q=85';

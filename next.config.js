@@ -16,10 +16,8 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: [
       'lucide-react',
-      'date-fns',
-      'lodash',
-      'recharts',
       'framer-motion',
+      'sonner',
       '@radix-ui/react-accordion',
       '@radix-ui/react-alert-dialog',
       '@radix-ui/react-avatar',

@@ -7,6 +7,7 @@ import {
   Check, Globe, Lock, Gift, Tag, Star, Clock, Gem, Mail, CheckCircle2
 } from 'lucide-react';
 import ProductCard from '@/components/site/product-card';
+import { optimizeImageUrl } from '@/lib/image-utils';
 import { toast } from 'sonner';
 
 
@@ -35,15 +36,28 @@ function Hero({ slides, transitionStyle = 'fade' }) {
   const [i, setI] = useState(0);
   const shouldReduceMotion = useReducedMotion();
 
-  // Preload slide background images to prevent layout flash/flickering
+  // Preload the next slide on idle after initial render to avoid competing with critical LCP
   useEffect(() => {
-    slides.forEach((s) => {
-      if (s.img) {
+    if (!slides || slides.length <= 1) return;
+    const nextIdx = (i + 1) % slides.length;
+    const nextImgSrc = slides[nextIdx]?.img;
+    if (!nextImgSrc) return;
+
+    const optUrl = optimizeImageUrl(nextImgSrc, { width: 1920, quality: 80 });
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      const handle = window.requestIdleCallback(() => {
         const img = new Image();
-        img.src = s.img;
-      }
-    });
-  }, [slides]);
+        img.src = optUrl;
+      });
+      return () => window.cancelIdleCallback(handle);
+    } else {
+      const timer = setTimeout(() => {
+        const img = new Image();
+        img.src = optUrl;
+      }, 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [i, slides]);
 
   // Autoplay intervals: synchronized with manual triggers to prevent overlapping / rapid transitions.
   useEffect(() => {
@@ -132,10 +146,13 @@ function Hero({ slides, transitionStyle = 'fade' }) {
           className="absolute inset-0 w-full h-full"
         >
           <motion.img
-            src={s.img}
+            src={optimizeImageUrl(s.img, { width: 1920, quality: 80 })}
             alt={s.title}
+            width="1920"
+            height="1080"
             fetchPriority={i === 0 ? "high" : "auto"}
             loading={i === 0 ? "eager" : "lazy"}
+            decoding={i === 0 ? "sync" : "async"}
             className="w-full h-full object-cover object-[center_35%] md:object-center"
             {...imageTransition}
           />
@@ -286,7 +303,7 @@ function OfferBanner({ promotions = [] }) {
         {activeBanners.map((b, i) => (
           <motion.div key={b.id || i} initial={{ opacity: 0, scale: .98 }} whileInView={{ opacity: 1, scale: 1 }} viewport={{ once: true }} className="relative h-64 sm:h-80 rounded-2xl overflow-hidden group cursor-pointer luxe-shadow">
             <Link href={b.ctaUrl || '/shop'}>
-              <img src={b.img} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-1000" alt={b.title} />
+              <img src={optimizeImageUrl(b.img, { width: 800, quality: 80 })} width="800" height="320" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-1000" alt={b.title} />
               <div className="absolute inset-0 bg-gradient-to-tr from-black/60 via-black/20 to-transparent" />
               <div className="absolute inset-0 p-4 xs:p-6 sm:p-8 md:p-12 flex flex-col justify-end text-white">
                 <div className="text-[10px] sm:text-[11px] tracking-[0.35em] uppercase text-[#D4AF37] mb-1.5 sm:mb-2">{b.eyebrow || 'Limited Time'}</div>
@@ -530,7 +547,7 @@ function Newsletter({ initialSettings }) {
   );
 }
 
-const FALLBACK_HERO = [{ title: 'The Bridal Edit', kicker: 'Wedding Collection', copy: 'Heirloom polki chokers, uncut diamond haars & maang tikkas — handcrafted over 120+ hours.', cta: 'Discover the Edit', href: '/shop?category=wedding', img: '/api/uploads/36bd7ee8-7bb1-4584-9900-7336e2396647-0e0f1045-51aa-4451-847b-b610eab258c4-wmremove-transformed.png' }];
+const FALLBACK_HERO = [{ title: 'The Bridal Edit', kicker: 'Wedding Collection', copy: 'Heirloom polki chokers, uncut diamond haars & maang tikkas — handcrafted over 120+ hours.', cta: 'Discover the Edit', href: '/shop?category=wedding', img: '/api/uploads/36bd7ee8-7bb1-4584-9900-7336e2396647-0e0f1045-51aa-4451-847b-b610eab258c4-wmremove-transformed.webp' }];
 
 export default function HomePage({ initialData }) {
   const [products, setProducts] = useState(initialData?.products || []);

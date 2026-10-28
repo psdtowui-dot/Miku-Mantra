@@ -78,15 +78,24 @@ svg {
   display: flex;
   gap: 3rem;
   animation: marquee 30s linear infinite;
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 @keyframes marquee {
   0% {
-    transform: translateX(0)
+    transform: translate3d(0, 0, 0);
   }
 
   100% {
-    transform: translateX(-50%)
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee {
+    animation: none;
   }
 }
 

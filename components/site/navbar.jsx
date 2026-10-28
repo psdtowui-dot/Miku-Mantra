@@ -183,6 +183,9 @@ export default function Navbar({ initialData }) {
                 <img
                   src={logoSettings?.image || "/logo.png"}
                   alt={logoSettings?.alt || "Logo"}
+                  width="176"
+                  height="40"
+                  decoding="async"
                   className="h-7 sm:h-10 object-contain max-w-full"
                   onError={(e) => {
                     if (typeof window !== 'undefined' && e.target.src !== window.location.origin + '/logo.png') {
@@ -323,7 +326,7 @@ export default function Navbar({ initialData }) {
           >
             <div className="overflow-hidden py-3">
               <div className="marquee whitespace-nowrap">
-                {[...Array(20)].map((_, i) => (
+                {[...Array(4)].map((_, i) => (
                   <div key={i} className="flex gap-12 shrink-0">
                     <span>{announcement.announcementText}</span>
                     <span className="opacity-60">•</span>
@@ -457,6 +460,9 @@ export default function Navbar({ initialData }) {
                   <Link href={logoSettings?.url || "/"} onClick={() => setMobile(false)} className="inline-block">
                     <img
                       className="w-32 h-auto max-h-12 object-contain"
+                      width="128"
+                      height="48"
+                      decoding="async"
                       src={logoSettings?.image || "/logo.png"}
                       alt={logoSettings?.alt || "MikuMantra Logo"}
                       onError={(e) => {

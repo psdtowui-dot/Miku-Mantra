@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { DEFAULT_CATEGORY_SHOWCASE_SETTINGS } from '@/lib/site-defaults';
+import { optimizeImageUrl } from '@/lib/image-utils';
 
 export default function CategoryShowcaseSection({ initialCategories, initialSettings }) {
   const [categories, setCategories] = useState(initialCategories || []);
@@ -24,8 +25,9 @@ export default function CategoryShowcaseSection({ initialCategories, initialSett
     }
   }, [initialSettings]);
 
-  // Client-side fetch with no-store to ensure categories and settings are always fresh
+  // Client-side fetch with no-store only when server-rendered initialCategories is absent
   useEffect(() => {
+    if (initialCategories && initialCategories.length > 0) return;
     let isMounted = true;
     fetch('/api/categories', { cache: 'no-store' })
       .then(res => res.json())
@@ -129,7 +131,7 @@ export default function CategoryShowcaseSection({ initialCategories, initialSett
                         ? `scale(${otherItemsScale})`
                         : 'scale(1)',
                       opacity: isOtherHovered ? hoverOpacity : 1,
-                      transition: `transform ${transitionDuration}ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity ${transitionDuration}ms ease, box-shadow ${transitionDuration}ms ease`,
+                      transition: `transform ${transitionDuration}ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity ${transitionDuration}ms ease`, willChange: isHovered ? 'transform, opacity' : 'auto',
                       zIndex: isHovered ? 20 : 1
                     }}
                     className={`relative aspect-square rounded-full overflow-hidden bg-[#FAF6EF] transition-all duration-300 ${
@@ -146,9 +148,12 @@ export default function CategoryShowcaseSection({ initialCategories, initialSett
                   >
                     {/* Category Image */}
                     <img
-                      src={c.img || c.imageUrl || '/logo.png'}
+                      src={optimizeImageUrl(c.img || c.imageUrl || '/logo.png', { width: 360, quality: 80 })}
                       alt={c.name}
+                      width="170"
+                      height="170"
                       loading="lazy"
+                      decoding="async"
                       className={`w-full h-full object-cover select-none pointer-events-none transition-all duration-500 ease-out ${
                         imageHoverEffect === 'zoom'
                           ? isHovered ? 'scale-110' : 'scale-100'
