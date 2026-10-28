@@ -56,7 +56,7 @@ import {
   cancelCampaign, executeCampaignSend, getCampaignLogs, processUnsubscribeToken,
   getAnalytics, validateEmail
 } from '@/lib/newsletter-service'
-import { calculateCartPricing, validateCouponRules } from '@/lib/cart-pricing'
+import { calculateCartPricing, validateCouponRules, invalidatePricingCouponCache } from '@/lib/cart-pricing'
 import { parseProductFileContent, normalizeAndValidateProducts } from '@/lib/product-import/parser'
 import { scanAvailableImages, matchImagesForProduct, batchMatchProductImages } from '@/lib/product-import/matcher'
 
@@ -84,11 +84,15 @@ async function getCachedSiteSettings(db, forceFresh = false) {
 }
 
 function cacheBust(prefix, { revalidateLayout = true, slug = null, productId = null } = {}) {
+  if (!prefix || prefix.startsWith('coupon')) { try { invalidatePricingCouponCache(); } catch (_) {} }
   if (!prefix) {
     _cache.clear();
   } else {
+    const isProductBust = prefix.startsWith('product');
     for (const k of _cache.keys()) {
-      if (k.startsWith(prefix)) _cache.delete(k);
+      if (k.startsWith(prefix) || (isProductBust && (k.startsWith('product:') || k.startsWith('products')))) {
+        _cache.delete(k);
+      }
     }
   }
   _cache.delete('cached_site_settings');
@@ -1973,7 +1977,7 @@ async function handleRoute(request, { params }) {
           sameSite: 'lax',
           path: '/',
           maxAge: SESSION_DAYS * 86400,
-          secure: process.env.NODE_ENV === 'production' || request.url.startsWith('https')
+          secure: request.url.startsWith('https')
         });
       } catch (e) {}
       return ok({
@@ -2155,7 +2159,7 @@ async function handleRoute(request, { params }) {
           sameSite: 'lax',
           path: '/',
           maxAge: SESSION_DAYS * 86400,
-          secure: process.env.NODE_ENV === 'production' || request.url.startsWith('https')
+          secure: request.url.startsWith('https')
         });
       } catch (e) {}
 
@@ -2346,7 +2350,7 @@ async function handleRoute(request, { params }) {
           sameSite: 'lax',
           path: '/',
           maxAge: SESSION_DAYS * 86400,
-          secure: process.env.NODE_ENV === 'production' || request.url.startsWith('https')
+          secure: request.url.startsWith('https')
         })
       } catch (e) {}
 
@@ -2866,7 +2870,7 @@ async function handleRoute(request, { params }) {
       const items = Array.isArray(b.items) ? b.items : [];
       const incomingCoupon = b.coupon !== undefined ? b.coupon : (b.couponCode !== undefined ? b.couponCode : null);
 
-      let siteSettings = await db.collection('site_settings').findOne({ id: 'default' });
+      let siteSettings = await getCachedSiteSettings(db);
       const shippingConfig = {
         ...DEFAULT_SITE_SETTINGS.shipping,
         ...((siteSettings && siteSettings.shipping) || {})
@@ -2942,7 +2946,7 @@ async function handleRoute(request, { params }) {
         const cached = cacheGet('coupon_settings');
         if (cached) return ok(cached);
       }
-      let settings = await db.collection('site_settings').findOne({ id: 'default' });
+      let settings = await getCachedSiteSettings(db);
       const helperText = settings?.couponHelperText !== undefined
         ? settings.couponHelperText
         : (DEFAULT_SITE_SETTINGS.couponHelperText || 'Try MIKUMANTRA10 or WELCOME2000');
@@ -2967,8 +2971,13 @@ async function handleRoute(request, { params }) {
 
       if (!code) return err('Coupon code is required', 400);
 
-      // Direct indexed lookup on code
-      const c = await db.collection('coupons').findOne({ code });
+      // Fast in-memory cached lookup first
+      const couponCacheKey = 'coupon:' + code;
+      let c = cacheGet(couponCacheKey);
+      if (!c) {
+        c = await db.collection('coupons').findOne({ code });
+        if (c) cacheSet(couponCacheKey, c, 60000);
+      }
       if (!c || (c.active === false && c.isActive === false)) return err('Invalid coupon', 404);
 
       const valResult = validateCouponRules(c, subtotal, { items, user, db });
