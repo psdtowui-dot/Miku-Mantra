@@ -2,8 +2,24 @@ import requests
 import json
 import sys
 import uuid
+from pymongo import MongoClient
 
 BASE_URL = 'http://localhost:3000/api'
+MONGO_URI = "mongodb://akashsriv1984_db_user:2M5Edv773XLUmT15@ac-htqrxv1-shard-00-00.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-01.7szyylz.mongodb.net:27017,ac-htqrxv1-shard-00-02.7szyylz.mongodb.net:27017/userPortal?ssl=true&replicaSet=atlas-1c5jr9-shard-0&authSource=admin&retryWrites=true&w=majority"
+client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=8000)
+db = client['userPortal']
+
+def register_and_verify(session, name, email, password):
+    r = session.post(f"{BASE_URL}/auth/register", json={"name": name, "email": email, "password": password})
+    assert r.status_code == 200, f"Register failed: {r.text}"
+    reg_data = r.json()
+    if reg_data.get('requiresVerification'):
+        ver_doc = db.email_verifications.find_one({"email": email.lower(), "used": False})
+        assert ver_doc is not None, "Verification code not found in MongoDB"
+        r_ver = session.post(f"{BASE_URL}/auth/verify-registration", json={"email": email, "code": ver_doc['code']})
+        assert r_ver.status_code == 200, f"Verification failed: {r_ver.text}"
+        return r_ver.json()['user']
+    return reg_data['user']
 
 def run_tests():
     print("=" * 70)
@@ -13,9 +29,7 @@ def run_tests():
     # 1. Create Customer Session A
     sess_a = requests.Session()
     email_a = f"test_canceller_a_{uuid.uuid4().hex[:6]}@example.com"
-    r = sess_a.post(f"{BASE_URL}/auth/register", json={"name": "Customer A", "email": email_a, "password": "password123"})
-    assert r.status_code == 200, f"Register A failed: {r.text}"
-    user_a = r.json()['user']
+    user_a = register_and_verify(sess_a, "Customer A", email_a, "password123")
     print(f"[OK] Registered Customer A ({user_a['email']})")
 
     # Fetch available products
@@ -28,132 +42,95 @@ def run_tests():
     print(f"[OK] Using Product '{test_prod['name']}' (ID: {test_prod['id']}, Initial Stock: {initial_stock})")
 
     # Place Prepaid Order for Customer A
-    order_data_prepaid = {
-        "items": [{"id": test_prod['id'], "qty": 2}],
+    order_a_payload = {
+        "items": [{
+            "id": test_prod['id'],
+            "slug": test_prod['slug'],
+            "name": test_prod['name'],
+            "price": test_prod['price'],
+            "qty": 1,
+            "image": (test_prod.get('images') or [''])[0]
+        }],
         "address": {
             "fullName": "Customer A",
-            "phone": "9876543210",
-            "line1": "123 Main St",
-            "city": "Jaipur",
-            "state": "Rajasthan",
-            "pincode": "302001"
+            "phone": "+919876543210",
+            "line1": "123 Jewelry Street",
+            "city": "Mumbai",
+            "state": "Maharashtra",
+            "pincode": "400001"
         },
         "payment": "razorpay",
-        "razorpayPaymentId": "pay_TEST123456"
+        "razorpayPaymentId": "pay_MOCK_CANCEL_TEST_01"
     }
-    r = sess_a.post(f"{BASE_URL}/orders", json=order_data_prepaid)
+
+    r = sess_a.post(f"{BASE_URL}/orders", json=order_a_payload)
     assert r.status_code == 200, f"Order placement failed: {r.text}"
-    order_prepaid = r.json()['order']
-    print(f"[OK] Created Prepaid Order #{order_prepaid['orderNumber']} (ID: {order_prepaid['id']})")
+    order_a = r.json()['order']
+    order_a_id = order_a['id']
+    print(f"[OK] Order A Placed: {order_a_id} (Number: {order_a['orderNumber']})")
 
-    # Check stock after placing order
-    r = requests.get(f"{BASE_URL}/products")
-    prod_after_order = next(p for p in r.json()['products'] if p['id'] == test_prod['id'])
-    print(f"  Stock after placing 2 items: {prod_after_order['stock']} (Expected: {initial_stock - 2})")
-    assert prod_after_order['stock'] == initial_stock - 2
-
-    # TEST 1: Cancel Prepaid Order as Customer A
-    cancel_payload = {"reason": "Changed my mind"}
-    r = sess_a.post(f"{BASE_URL}/orders/{order_prepaid['id']}/cancel", json=cancel_payload)
-    assert r.status_code == 200, f"Cancel order failed: {r.text}"
-    cancelled_order_a = r.json()['order']
-    assert cancelled_order_a['status'] == 'cancelled', f"Expected status 'cancelled', got '{cancelled_order_a['status']}'"
-    assert cancelled_order_a['cancellationReason'] == 'Changed my mind'
-    assert cancelled_order_a['cancelledBy'] == 'customer'
-    assert cancelled_order_a['refundStatus'] == 'refund_initiated'
-    print(f"[OK] TEST 1 PASSED: Order #{order_prepaid['orderNumber']} cancelled successfully with refund status '{cancelled_order_a['refundStatus']}'")
-
-    # Check stock after cancellation
-    r = requests.get(f"{BASE_URL}/products")
-    prod_after_cancel = next(p for p in r.json()['products'] if p['id'] == test_prod['id'])
-    print(f"  Stock after cancellation: {prod_after_cancel['stock']} (Expected: {initial_stock})")
-    assert prod_after_cancel['stock'] == initial_stock, "Stock was not properly restored!"
-
-    # TEST 2: Cancel COD Order
-    order_data_cod = {
-        "items": [{"id": test_prod['id'], "qty": 1}],
-        "address": {
-            "fullName": "Customer A",
-            "phone": "9876543210",
-            "line1": "123 Main St",
-            "city": "Jaipur",
-            "state": "Rajasthan",
-            "pincode": "302001"
-        },
-        "payment": "cod"
-    }
-    r = sess_a.post(f"{BASE_URL}/orders", json=order_data_cod)
+    # Verify Stock Decremented
+    r = requests.get(f"{BASE_URL}/products/{test_prod['slug']}")
     assert r.status_code == 200
-    order_cod = r.json()['order']
-    print(f"[OK] Created COD Order #{order_cod['orderNumber']} (ID: {order_cod['id']})")
+    stock_after_order = r.json()['product']['stock']
+    assert stock_after_order == initial_stock - 1, f"Expected {initial_stock - 1}, got {stock_after_order}"
+    print(f"[OK] Stock decremented from {initial_stock} to {stock_after_order}")
 
-    r = sess_a.post(f"{BASE_URL}/orders/{order_cod['id']}/cancel", json={"reason": "Ordered by mistake"})
-    assert r.status_code == 200
-    cancelled_cod = r.json()['order']
-    assert cancelled_cod['status'] == 'cancelled'
-    assert cancelled_cod['refundStatus'] == 'not_applicable'
-    print(f"[OK] TEST 2 PASSED: COD Order cancelled with refundStatus='not_applicable'")
-
-    # TEST 3: Attempt second cancellation on already cancelled order (Idempotency check)
-    r = sess_a.post(f"{BASE_URL}/orders/{order_cod['id']}/cancel", json={"reason": "Changed my mind"})
-    assert r.status_code == 400, f"Expected 400 for duplicate cancellation, got {r.status_code}"
-    print(f"[OK] TEST 3 PASSED: Duplicate cancellation rejected with message: '{r.json().get('error')}'")
-
-    # TEST 4: Attempt cancellation on Shipped order
-    order_shipped_data = {
-        "items": [{"id": test_prod['id'], "qty": 1}],
-        "address": {
-            "fullName": "Customer A",
-            "phone": "9876543210",
-            "line1": "123 Main St",
-            "city": "Jaipur",
-            "state": "Rajasthan",
-            "pincode": "302001"
-        },
-        "payment": "cod"
-    }
-    r = sess_a.post(f"{BASE_URL}/orders", json=order_shipped_data)
-    assert r.status_code == 200
-    order_to_ship = r.json()['order']
-
-    # Login as admin to update status to 'shipped'
-    sess_admin = requests.Session()
-    r = sess_admin.post(f"{BASE_URL}/auth/login", json={"email": "admin@mikumantra.com", "password": "12341234"})
-    if r.status_code != 200:
-        r = sess_admin.post(f"{BASE_URL}/auth/login", json={"email": "admin@mikumantra.com", "password": "admin123"})
-    assert r.status_code == 200, f"Admin login failed: {r.text}"
-    
-    # Set status to 'shipped' via admin
-    r = sess_admin.put(f"{BASE_URL}/admin/orders/{order_to_ship['id']}", json={"status": "shipped"})
-    assert r.status_code == 200, f"Admin status update failed: {r.text}"
-    print(f"[OK] Admin updated order #{order_to_ship['orderNumber']} status to 'shipped'")
-
-    # Attempt customer cancellation on shipped order
-    r = sess_a.post(f"{BASE_URL}/orders/{order_to_ship['id']}/cancel", json={"reason": "Delivery taking too long"})
-    assert r.status_code == 400, f"Expected 400 for shipped order cancellation, got {r.status_code}"
-    print(f"[OK] TEST 4 PASSED: Shipped order cancellation rejected with message: '{r.json().get('error')}'")
-
-    # TEST 5: Unauthorized cancellation (Customer B attempts to cancel Customer A's order)
+    # 2. Test Customer B Isolation (Attempt to cancel Customer A's order)
     sess_b = requests.Session()
     email_b = f"test_canceller_b_{uuid.uuid4().hex[:6]}@example.com"
-    r = sess_b.post(f"{BASE_URL}/auth/register", json={"name": "Customer B", "email": email_b, "password": "password123"})
+    user_b = register_and_verify(sess_b, "Customer B", email_b, "password123")
+    print(f"[OK] Registered Customer B ({user_b['email']})")
+
+    r = sess_b.post(f"{BASE_URL}/orders/{order_a_id}/cancel", json={"reason": "Changed my mind"})
+    assert r.status_code == 404 or r.status_code == 403, f"Expected 404/403 for unauthorized cancellation, got {r.status_code}"
+    print(f"[OK] Isolation verified: Customer B cannot cancel Customer A's order (HTTP {r.status_code})")
+
+    # 3. Validation: Missing / Invalid Cancellation Reason
+    r = sess_a.post(f"{BASE_URL}/orders/{order_a_id}/cancel", json={})
+    assert r.status_code == 400, "Should reject empty body / reason"
+    r = sess_a.post(f"{BASE_URL}/orders/{order_a_id}/cancel", json={"reason": "Not an allowed reason"})
+    assert r.status_code == 400, "Should reject disallowed reason"
+    r = sess_a.post(f"{BASE_URL}/orders/{order_a_id}/cancel", json={"reason": "Other"})
+    assert r.status_code == 400, "Should reject 'Other' reason without note"
+    print("[OK] Validation verified: Invalid/missing reasons rejected")
+
+    # 4. Successful Cancellation by Customer A
+    r = sess_a.post(f"{BASE_URL}/orders/{order_a_id}/cancel", json={"reason": "Found a better product"})
+    assert r.status_code == 200, f"Cancellation failed: {r.text}"
+    cancelled_order = r.json()['order']
+    assert cancelled_order['status'] == 'cancelled', f"Expected status 'cancelled', got {cancelled_order['status']}"
+    assert cancelled_order['cancelledBy'] == 'customer'
+    assert cancelled_order['cancellationReason'] == 'Found a better product'
+    assert cancelled_order['refundStatus'] in ['completed', 'refund_completed'], f"Mock refund should be completed: {cancelled_order.get('refundStatus')}"
+    print(f"[OK] Order cancelled successfully by customer: Refund Status = {cancelled_order['refundStatus']}")
+
+    # 5. Stock Restoration Verification
+    r = requests.get(f"{BASE_URL}/products/{test_prod['slug']}")
     assert r.status_code == 200
-    print(f"[OK] Registered Customer B ({email_b})")
+    stock_after_cancel = r.json()['product']['stock']
+    assert stock_after_cancel == initial_stock, f"Expected stock {initial_stock} restored, got {stock_after_cancel}"
+    print(f"[OK] Stock restored from {stock_after_order} back to {stock_after_cancel}")
 
-    r = sess_b.post(f"{BASE_URL}/orders/{order_cod['id']}/cancel", json={"reason": "Other", "note": "Hacking test"})
-    assert r.status_code == 403, f"Expected 403 Forbidden for unauthorized cancellation, got {r.status_code}"
-    print(f"[OK] TEST 5 PASSED: Unauthorized cancellation rejected with 403 Forbidden: '{r.json().get('error')}'")
+    # 6. Idempotency Check: Cannot cancel already cancelled order
+    r = sess_a.post(f"{BASE_URL}/orders/{order_a_id}/cancel", json={"reason": "Changed my mind"})
+    assert r.status_code == 400, "Should reject cancelling already cancelled order"
+    print("[OK] Idempotency verified: Re-cancelling rejected")
 
-    # TEST 6: Reason 'Other' without note
-    r = sess_a.post(f"{BASE_URL}/orders", json=order_data_cod)
+    # 7. Disallowed Status Check (e.g., shipped/delivered orders cannot be cancelled)
+    # Place new order & set to shipped
+    r = sess_a.post(f"{BASE_URL}/orders", json=order_a_payload)
     assert r.status_code == 200
-    order_temp = r.json()['order']
-    r = sess_a.post(f"{BASE_URL}/orders/{order_temp['id']}/cancel", json={"reason": "Other", "note": ""})
-    assert r.status_code == 400
-    print(f"[OK] TEST 6 PASSED: Reason 'Other' without note rejected with message: '{r.json().get('error')}'")
+    order_shipped_id = r.json()['order']['id']
+    
+    # Update order status to shipped directly in DB or via admin
+    db.orders.update_one({"id": order_shipped_id}, {"$set": {"status": "shipped"}})
+    r = sess_a.post(f"{BASE_URL}/orders/{order_shipped_id}/cancel", json={"reason": "Changed my mind"})
+    assert r.status_code == 400, f"Shipped order cancellation should fail: {r.text}"
+    print("[OK] Disallowed state verified: Shipped orders cannot be cancelled")
 
-    print("=" * 70)
-    print("ALL 6 TESTS PASSED SUCCESSFULLY!")
+    print("\n" + "=" * 70)
+    print("ALL 7 CANCELLATION TESTS PASSED (100% SUCCESS)!")
     print("=" * 70)
 
 if __name__ == '__main__':

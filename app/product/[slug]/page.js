@@ -3,8 +3,7 @@ import { notFound } from 'next/navigation';
 import { getSiteSettings, getProductBySlugDB, getCanonicalBaseUrl, toAbsoluteUrl, applyTitleTemplate } from '@/lib/db-site-settings';
 import ReactDOM from 'react-dom';
 
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
+export const revalidate = 60;
 
 export async function generateMetadata({ params }){
   const { slug } = await params;
