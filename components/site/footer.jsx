@@ -2,8 +2,33 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import * as Lucide from 'lucide-react';
+import {
+  Instagram,
+  Facebook,
+  Twitter,
+  Youtube,
+  Linkedin,
+  Mail,
+  Phone,
+  MapPin,
+  Globe,
+  Loader2
+} from 'lucide-react';
 import { toast } from 'sonner';
+
+const SOCIAL_ICONS_MAP = {
+  Instagram,
+  Facebook,
+  Twitter,
+  Youtube,
+  Linkedin,
+  LinkedinIcon: Linkedin,
+  TwitterIcon: Twitter,
+  Mail,
+  Phone,
+  MapPin,
+  Globe
+};
 
 export default function Footer({ initialData }) {
   const pathname = usePathname();
@@ -77,19 +102,7 @@ export default function Footer({ initialData }) {
   }
 
   const getSocialIcon = (iconName) => {
-    const map = {
-      Instagram: Lucide.Instagram,
-      Facebook: Lucide.Facebook,
-      Twitter: Lucide.Twitter,
-      Youtube: Lucide.Youtube,
-      Linkedin: Lucide.Linkedin || Lucide.LinkedinIcon,
-      LinkedinIcon: Lucide.LinkedinIcon || Lucide.Linkedin,
-      TwitterIcon: Lucide.TwitterIcon || Lucide.Twitter,
-      Mail: Lucide.Mail,
-      Phone: Lucide.Phone,
-      MapPin: Lucide.MapPin,
-    };
-    return map[iconName] || Lucide[iconName] || Lucide.Globe;
+    return SOCIAL_ICONS_MAP[iconName] || Globe;
   };
 
   // Derive data strictly from backend database/API
@@ -141,7 +154,7 @@ export default function Footer({ initialData }) {
           <div className="md:col-span-2">
             <div className="flex items-center gap-3">
               {company.logo && (
-                <img src={company.logo} alt={`${company.name} Logo`} className="w-40 sm:w-36 md:w-44 lg:w-44 h-auto sm:h-14 object-contain" />
+                <img src={company.logo} alt={`${company.name} Logo`} width="176" height="56" decoding="async" loading="lazy" className="w-40 sm:w-36 md:w-44 lg:w-44 h-auto sm:h-14 object-contain" />
               )}
             </div>
             {company.description && (
@@ -193,7 +206,7 @@ export default function Footer({ initialData }) {
                     disabled={footerSubmitting}
                     className="bg-[#D4AF37] text-[#4a2536] hover:bg-white hover:text-[#4a2536] px-4 py-2.5 rounded text-xs uppercase tracking-widest font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center min-w-[90px]"
                   >
-                    {footerSubmitting ? <Lucide.Loader2 size={14} className="animate-spin" /> : 'Subscribe'}
+                    {footerSubmitting ? <Loader2 size={14} className="animate-spin" /> : 'Subscribe'}
                   </button>
                 </form>
               </div>
@@ -221,19 +234,19 @@ export default function Footer({ initialData }) {
         <div className="mt-12 pt-8 border-t border-white/10 grid md:grid-cols-3 gap-6 text-sm text-white/60">
           {company.address && (
             <div className="flex items-center gap-2">
-              <Lucide.MapPin size={14} className="text-[#D4AF37] shrink-0" />
+              <MapPin size={14} className="text-[#D4AF37] shrink-0" />
               <span>{company.address}</span>
             </div>
           )}
           {company.phone && (
             <div className="flex items-center gap-2">
-              <Lucide.Phone size={14} className="text-[#D4AF37] shrink-0" />
+              <Phone size={14} className="text-[#D4AF37] shrink-0" />
               <span>{company.phone}</span>
             </div>
           )}
           {company.email && (
             <div className="flex items-center gap-2">
-              <Lucide.Mail size={14} className="text-[#D4AF37] shrink-0" />
+              <Mail size={14} className="text-[#D4AF37] shrink-0" />
               <span>{company.email}</span>
             </div>
           )}

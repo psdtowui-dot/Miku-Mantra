@@ -471,6 +471,9 @@ export default function ProductImageZoom({
           <img
             src={currentImage}
             alt={productName}
+            width="800"
+            height="800"
+            decoding="async"
             className="w-full h-full object-cover select-none pointer-events-none"
             style={getImageStyle()}
           />
@@ -655,7 +658,7 @@ export default function ProductImageZoom({
                   : 'border-transparent hover:border-[#E8E8E8] opacity-80 hover:opacity-100'
               }`}
             >
-              <img loading="lazy" src={im} alt={`${productName} thumbnail ${i + 1}`} className="w-full h-full object-cover" />
+              <img width="80" height="80" loading="lazy" decoding="async" src={im} alt={`${productName} thumbnail ${i + 1}`} className="w-full h-full object-cover" />
             </button>
           ))}
         </div>
@@ -798,7 +801,7 @@ export default function ProductImageZoom({
                     activeImg === i ? 'border-[#9C6B30] scale-105' : 'border-white/20 opacity-60 hover:opacity-100'
                   }`}
                 >
-                  <img src={im} alt="" className="w-full h-full object-cover" />
+                  <img width="60" height="60" loading="lazy" decoding="async" src={im} alt="" className="w-full h-full object-cover" />
                 </button>
               ))}
             </div>
