@@ -1,0 +1,33 @@
+{
+  "name": "@maneet/icons",
+  "version": "1.0.0",
+  "description": "High-performance, tree-shakable, framework-agnostic global icon library with 145+ icons, smart registry, and interactive gallery for MikuMantra and future projects.",
+  "type": "module",
+  "main": "./index.js",
+  "module": "./index.js",
+  "types": "./types.d.ts",
+  "exports": {
+    ".": "./index.js",
+    "./styles": "./styles/icon.css",
+    "./registry": "./registry/iconRegistry.js",
+    "./components/Icon": "./components/Icon.jsx",
+    "./components/IconBase": "./components/IconBase.jsx"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0",
+    "lucide-react": "^0.460.0 || >=0.300.0"
+  },
+  "keywords": [
+    "icons",
+    "icon-library",
+    "react",
+    "nextjs",
+    "ecommerce",
+    "svg",
+    "lucide",
+    "maneet"
+  ],
+  "author": "MikuMantra Team",
+  "license": "UNLICENSED"
+}

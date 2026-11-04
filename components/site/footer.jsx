@@ -13,7 +13,7 @@ import {
   MapPin,
   Globe,
   Loader2
-} from 'lucide-react';
+} from '@/packages/global-icon-library';
 import { toast } from 'sonner';
 
 const SOCIAL_ICONS_MAP = {

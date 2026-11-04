@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Search, Heart, ShoppingBag, User, Menu, X, ChevronDown, ChevronRight, ChevronUp, Loader2 } from 'lucide-react';
+import { Search, Heart, ShoppingBag, User, Menu, X, ChevronDown, ChevronRight, ChevronUp, Loader2 } from '@/packages/global-icon-library';
 import { useAuth } from '@/lib/use-auth';
 import { useCart, useWishlist } from '@/lib/cart-store';
 import { motion, AnimatePresence } from 'framer-motion';

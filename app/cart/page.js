@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 import { useCart } from '@/lib/cart-store';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { formatINR } from '@/lib/products';
-import { Minus, Plus, X, ShoppingBag, Truck, ShieldCheck, Gift, ArrowRight, Tag } from 'lucide-react';
+import { Minus, Plus, X, ShoppingBag, Truck, ShieldCheck, Gift, ArrowRight, Tag } from '@/packages/global-icon-library';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 

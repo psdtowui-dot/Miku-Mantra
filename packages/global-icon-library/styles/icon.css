@@ -1,0 +1,46 @@
+/* Global Icon Library Styles */
+.global-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  vertical-align: middle;
+  line-height: 1;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), 
+              color 0.2s ease, 
+              opacity 0.2s ease,
+              filter 0.2s ease;
+}
+
+/* Hover effects */
+.global-icon[data-hover="scale"]:hover {
+  transform: scale(1.15);
+}
+
+.global-icon[data-hover="lift"]:hover {
+  transform: translateY(-2px);
+}
+
+.global-icon[data-hover="glow"]:hover {
+  filter: drop-shadow(0 0 6px rgba(212, 175, 55, 0.6));
+}
+
+.global-icon[data-hover="spin"]:hover {
+  transform: rotate(180deg);
+}
+
+/* Active & disabled states */
+.global-icon:active {
+  transform: scale(0.92);
+}
+
+.global-icon[data-disabled="true"] {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Theme adaptation */
+.dark .global-icon[data-theme-auto="true"] {
+  color: #FAF6EF;
+}

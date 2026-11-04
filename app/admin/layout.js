@@ -53,6 +53,7 @@ const UI_NAV = [
   { href: '/admin/product-filter', label: 'Product Filter', icon: SlidersHorizontal, permission: 'settings.view' },
   { href: '/admin/social-media', label: 'Social Media', icon: Share2, permission: 'settings.view' },
   { href: '/admin/categories', label: 'Category Showcase', icon: FolderTree, permission: 'settings.view' },
+  { href: '/admin/icons', label: 'Icon Library & Gallery', icon: Sparkles, permission: 'settings.view' },
 ];
 
 function canAccess(user, permissionKey) {
