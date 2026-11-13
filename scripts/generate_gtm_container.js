@@ -1,5 +1,5 @@
 /**
- * Generates an official GTM Container Export JSON for GTM-5KLNQX63
+ * Generates an official, schema-compliant GTM Container Export JSON for GTM-5KLNQX63
  */
 
 import fs from 'fs';
@@ -11,6 +11,11 @@ const GA4_MEASUREMENT_ID = 'G-ELMXNPCR2G';
 let varIdCounter = 1;
 let triggerIdCounter = 1;
 let tagIdCounter = 1;
+let fingerprintCounter = 1710000000000;
+
+function nextFingerprint() {
+  return String(fingerprintCounter++);
+}
 
 const variables = [];
 const triggers = [];
@@ -20,12 +25,13 @@ const tags = [];
 function addConstant(name, value) {
   const id = String(varIdCounter++);
   variables.push({
-    accountId: '1000',
-    containerId: '1001',
+    accountId: '0',
+    containerId: '0',
     variableId: id,
     name,
     type: 'c',
     parameter: [{ type: 'TEMPLATE', key: 'value', value: String(value) }],
+    fingerprint: nextFingerprint(),
   });
   return id;
 }
@@ -43,20 +49,21 @@ function addDLV(name, dlvPath, defaultValue) {
     params.push({ type: 'BOOLEAN', key: 'setDefaultValue', value: 'false' });
   }
   variables.push({
-    accountId: '1000',
-    containerId: '1001',
+    accountId: '0',
+    containerId: '0',
     variableId: id,
     name,
     type: 'v',
     parameter: params,
+    fingerprint: nextFingerprint(),
   });
   return id;
 }
 
-// 1. Create Variables
-const constGa4Id = addConstant('Const - GA4 Measurement ID', GA4_MEASUREMENT_ID);
-const constCurrency = addConstant('Const - Currency', 'INR');
-const constBrand = addConstant('Const - Brand Name', 'MikuMantra Fine Jewellery');
+// 1. Variables
+addConstant('Const - GA4 Measurement ID', GA4_MEASUREMENT_ID);
+addConstant('Const - Currency', 'INR');
+addConstant('Const - Brand Name', 'MikuMantra Fine Jewellery');
 
 addDLV('DLV - ecommerce', 'ecommerce');
 addDLV('DLV - ecommerce.value', 'ecommerce.value', '0');
@@ -80,8 +87,8 @@ addDLV('DLV - outbound', 'outbound');
 function addCustomEventTrigger(name, eventName) {
   const id = String(triggerIdCounter++);
   triggers.push({
-    accountId: '1000',
-    containerId: '1001',
+    accountId: '0',
+    containerId: '0',
     triggerId: id,
     name,
     type: 'CUSTOM_EVENT',
@@ -94,19 +101,21 @@ function addCustomEventTrigger(name, eventName) {
         ],
       },
     ],
+    fingerprint: nextFingerprint(),
   });
   return id;
 }
 
-// 2. Create Triggers
-// Initialization - All Pages Trigger
-const triggerInitAllPagesId = String(triggerIdCounter++);
+// 2. Triggers
+// All Pages standard trigger (Trigger ID 1)
+const triggerAllPagesId = String(triggerIdCounter++);
 triggers.push({
-  accountId: '1000',
-  containerId: '1001',
-  triggerId: triggerInitAllPagesId,
-  name: 'Init - All Pages',
-  type: 'INIT',
+  accountId: '0',
+  containerId: '0',
+  triggerId: triggerAllPagesId,
+  name: 'All Pages',
+  type: 'PAGEVIEW',
+  fingerprint: nextFingerprint(),
 });
 
 const triggerPageView = addCustomEventTrigger('CE - page_view', 'page_view');
@@ -128,37 +137,39 @@ const triggerGenerateLead = addCustomEventTrigger('CE - generate_lead', 'generat
 const triggerScroll = addCustomEventTrigger('CE - scroll', 'scroll');
 const triggerClick = addCustomEventTrigger('CE - click', 'click');
 
-// 3. Create Tags
-
+// 3. Tags
 // Tag 1: Conversion Linker
 tags.push({
-  accountId: '1000',
-  containerId: '1001',
+  accountId: '0',
+  containerId: '0',
   tagId: String(tagIdCounter++),
   name: 'GAds - Conversion Linker',
   type: 'gclidw',
-  firingTriggerId: [triggerInitAllPagesId],
-  priority: { type: 'TEMPLATE', value: '110' },
+  firingTriggerId: [triggerAllPagesId],
+  tagFiringOption: 'ONCE_PER_EVENT',
+  consentSettings: { consentStatus: 'NOT_SET' },
   parameter: [
     { type: 'BOOLEAN', key: 'enableCrossDomain', value: 'false' },
     { type: 'BOOLEAN', key: 'enableUrlPassthrough', value: 'false' },
   ],
+  fingerprint: nextFingerprint(),
 });
 
 // Tag 2: Google Tag (GA4 Config)
 tags.push({
-  accountId: '1000',
-  containerId: '1001',
+  accountId: '0',
+  containerId: '0',
   tagId: String(tagIdCounter++),
   name: 'GA4 - Google Tag (Config)',
   type: 'googtag',
-  firingTriggerId: [triggerInitAllPagesId],
-  priority: { type: 'TEMPLATE', value: '100' },
+  firingTriggerId: [triggerAllPagesId],
+  tagFiringOption: 'ONCE_PER_EVENT',
+  consentSettings: { consentStatus: 'NOT_SET' },
   parameter: [
     { type: 'TEMPLATE', key: 'tagId', value: '{{Const - GA4 Measurement ID}}' },
     {
       type: 'LIST',
-      key: 'configSettings',
+      key: 'configSettingsTable',
       list: [
         {
           type: 'MAP',
@@ -170,12 +181,12 @@ tags.push({
       ],
     },
   ],
+  fingerprint: nextFingerprint(),
 });
 
-// Helper for GA4 Event tags
-function addGa4EventTag(name, eventName, triggerId, priority = 50, extraParams = [], isEcommerce = false) {
+function addGa4EventTag(name, eventName, triggerId, extraParams = [], isEcommerce = false) {
   const params = [
-    { type: 'TEMPLATE', key: 'measurementId', value: '{{Const - GA4 Measurement ID}}' },
+    { type: 'TEMPLATE', key: 'measurementIdOverride', value: '{{Const - GA4 Measurement ID}}' },
     { type: 'TEMPLATE', key: 'eventName', value: eventName },
   ];
 
@@ -199,87 +210,98 @@ function addGa4EventTag(name, eventName, triggerId, priority = 50, extraParams =
   }
 
   tags.push({
-    accountId: '1000',
-    containerId: '1001',
+    accountId: '0',
+    containerId: '0',
     tagId: String(tagIdCounter++),
     name,
     type: 'gaawe',
     firingTriggerId: [triggerId],
-    priority: { type: 'TEMPLATE', value: String(priority) },
+    tagFiringOption: 'ONCE_PER_EVENT',
+    consentSettings: { consentStatus: 'NOT_SET' },
     parameter: params,
+    fingerprint: nextFingerprint(),
   });
 }
 
 // GA4 Events
-addGa4EventTag('GA4 - Event - Page View', 'page_view', triggerPageView, 90, [
+addGa4EventTag('GA4 - Event - Page View', 'page_view', triggerPageView, [
   ['page_location', '{{DLV - page_location}}'],
   ['page_path', '{{DLV - page_path}}'],
   ['page_title', '{{DLV - page_title}}'],
 ]);
 
-addGa4EventTag('GA4 - Event - View Item List', 'view_item_list', triggerViewItemList, 50, [], true);
-addGa4EventTag('GA4 - Event - Select Item', 'select_item', triggerSelectItem, 50, [], true);
-addGa4EventTag('GA4 - Event - View Item', 'view_item', triggerViewItem, 50, [], true);
-addGa4EventTag('GA4 - Event - Add To Cart', 'add_to_cart', triggerAddToCart, 50, [], true);
-addGa4EventTag('GA4 - Event - Remove From Cart', 'remove_from_cart', triggerRemoveFromCart, 50, [], true);
-addGa4EventTag('GA4 - Event - View Cart', 'view_cart', triggerViewCart, 50, [], true);
-addGa4EventTag('GA4 - Event - Begin Checkout', 'begin_checkout', triggerBeginCheckout, 50, [], true);
-addGa4EventTag('GA4 - Event - Add Shipping Info', 'add_shipping_info', triggerAddShippingInfo, 50, [], true);
-addGa4EventTag('GA4 - Event - Add Payment Info', 'add_payment_info', triggerAddPaymentInfo, 50, [], true);
-addGa4EventTag('GA4 - Event - Purchase', 'purchase', triggerPurchase, 50, [], true);
-addGa4EventTag('GA4 - Event - Refund', 'refund', triggerRefund, 50, [], true);
+addGa4EventTag('GA4 - Event - View Item List', 'view_item_list', triggerViewItemList, [], true);
+addGa4EventTag('GA4 - Event - Select Item', 'select_item', triggerSelectItem, [], true);
+addGa4EventTag('GA4 - Event - View Item', 'view_item', triggerViewItem, [], true);
+addGa4EventTag('GA4 - Event - Add To Cart', 'add_to_cart', triggerAddToCart, [], true);
+addGa4EventTag('GA4 - Event - Remove From Cart', 'remove_from_cart', triggerRemoveFromCart, [], true);
+addGa4EventTag('GA4 - Event - View Cart', 'view_cart', triggerViewCart, [], true);
+addGa4EventTag('GA4 - Event - Begin Checkout', 'begin_checkout', triggerBeginCheckout, [], true);
+addGa4EventTag('GA4 - Event - Add Shipping Info', 'add_shipping_info', triggerAddShippingInfo, [], true);
+addGa4EventTag('GA4 - Event - Add Payment Info', 'add_payment_info', triggerAddPaymentInfo, [], true);
+addGa4EventTag('GA4 - Event - Purchase', 'purchase', triggerPurchase, [], true);
+addGa4EventTag('GA4 - Event - Refund', 'refund', triggerRefund, [], true);
 
-addGa4EventTag('GA4 - Event - Search', 'search', triggerSearch, 50, [
+addGa4EventTag('GA4 - Event - Search', 'search', triggerSearch, [
   ['search_term', '{{DLV - search_term}}'],
 ]);
 
-addGa4EventTag('GA4 - Event - Login', 'login', triggerLogin, 50, [
+addGa4EventTag('GA4 - Event - Login', 'login', triggerLogin, [
   ['method', '{{DLV - method}}'],
 ]);
 
-addGa4EventTag('GA4 - Event - Sign Up', 'sign_up', triggerSignUp, 50, [
+addGa4EventTag('GA4 - Event - Sign Up', 'sign_up', triggerSignUp, [
   ['method', '{{DLV - method}}'],
 ]);
 
-addGa4EventTag('GA4 - Event - Generate Lead', 'generate_lead', triggerGenerateLead, 50, [
+addGa4EventTag('GA4 - Event - Generate Lead', 'generate_lead', triggerGenerateLead, [
   ['lead_type', '{{DLV - lead_type}}'],
 ]);
 
-addGa4EventTag('GA4 - Event - Scroll', 'scroll', triggerScroll, 50, [
+addGa4EventTag('GA4 - Event - Scroll', 'scroll', triggerScroll, [
   ['percent_scrolled', '{{DLV - percent_scrolled}}'],
 ]);
 
-addGa4EventTag('GA4 - Event - Click', 'click', triggerClick, 50, [
+addGa4EventTag('GA4 - Event - Click', 'click', triggerClick, [
   ['link_url', '{{DLV - link_url}}'],
 ]);
 
 const containerExport = {
   exportFormatVersion: 2,
-  exportTime: new Date().toISOString(),
+  exportTime: '2026-11-13 13:50:00',
   containerVersion: {
-    path: 'accounts/1000/containers/1001/versions/0',
-    accountId: '1000',
-    containerId: '1001',
+    path: 'accounts/0/containers/0/versions/0',
+    accountId: '0',
+    containerId: '0',
     containerVersionId: '0',
     container: {
-      path: 'accounts/1000/containers/1001',
-      accountId: '1000',
-      containerId: '1001',
+      path: 'accounts/0/containers/0',
+      accountId: '0',
+      containerId: '0',
       name: 'MikuMantra Production Container',
       publicId: GTM_CONTAINER_ID,
       usageContext: ['WEB'],
+      fingerprint: nextFingerprint(),
+      features: {
+        supportUserPermissions: true,
+        supportEnvironments: true,
+        supportWorkspaces: true,
+        supportGtagConfigs: true,
+        supportBuiltInVariables: true,
+        supportClients: false,
+        supportFolders: true,
+        supportTags: true,
+        supportTemplates: true,
+        supportTriggers: true,
+        supportVariables: true,
+        supportVersions: true,
+        supportZones: true,
+      },
+      tagIds: [GTM_CONTAINER_ID],
     },
     tag: tags,
     trigger: triggers,
     variable: variables,
-    builtInVariable: [
-      {
-        accountId: '1000',
-        containerId: '1001',
-        type: 'EVENT_NAME',
-        name: '_event',
-      },
-    ],
   },
 };
 
@@ -291,7 +313,7 @@ if (!fs.existsSync(outputDir)) {
 const outputPath = path.join(outputDir, `${GTM_CONTAINER_ID}_container_import.json`);
 fs.writeFileSync(outputPath, JSON.stringify(containerExport, null, 2), 'utf-8');
 
-console.log(`Generated GTM container export with:`);
+console.log(`Generated official compliant GTM container export:`);
 console.log(`- ${variables.length} Variables`);
 console.log(`- ${triggers.length} Triggers`);
 console.log(`- ${tags.length} Tags`);

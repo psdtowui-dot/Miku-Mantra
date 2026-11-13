@@ -1,34 +1,53 @@
 {
   "exportFormatVersion": 2,
-  "exportTime": "2026-11-13T07:47:01.503Z",
+  "exportTime": "2026-11-13 13:50:00",
   "containerVersion": {
-    "path": "accounts/1000/containers/1001/versions/0",
-    "accountId": "1000",
-    "containerId": "1001",
+    "path": "accounts/0/containers/0/versions/0",
+    "accountId": "0",
+    "containerId": "0",
     "containerVersionId": "0",
     "container": {
-      "path": "accounts/1000/containers/1001",
-      "accountId": "1000",
-      "containerId": "1001",
+      "path": "accounts/0/containers/0",
+      "accountId": "0",
+      "containerId": "0",
       "name": "MikuMantra Production Container",
       "publicId": "GTM-5KLNQX63",
       "usageContext": [
         "WEB"
+      ],
+      "fingerprint": "1710000000059",
+      "features": {
+        "supportUserPermissions": true,
+        "supportEnvironments": true,
+        "supportWorkspaces": true,
+        "supportGtagConfigs": true,
+        "supportBuiltInVariables": true,
+        "supportClients": false,
+        "supportFolders": true,
+        "supportTags": true,
+        "supportTemplates": true,
+        "supportTriggers": true,
+        "supportVariables": true,
+        "supportVersions": true,
+        "supportZones": true
+      },
+      "tagIds": [
+        "GTM-5KLNQX63"
       ]
     },
     "tag": [
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "1",
         "name": "GAds - Conversion Linker",
         "type": "gclidw",
         "firingTriggerId": [
           "1"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "110"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
@@ -41,20 +60,21 @@
             "key": "enableUrlPassthrough",
             "value": "false"
           }
-        ]
+        ],
+        "fingerprint": "1710000000039"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "2",
         "name": "GA4 - Google Tag (Config)",
         "type": "googtag",
         "firingTriggerId": [
           "1"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "100"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
@@ -64,7 +84,7 @@
           },
           {
             "type": "LIST",
-            "key": "configSettings",
+            "key": "configSettingsTable",
             "list": [
               {
                 "type": "MAP",
@@ -83,25 +103,26 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000040"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "3",
         "name": "GA4 - Event - Page View",
         "type": "gaawe",
         "firingTriggerId": [
           "2"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "90"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -160,25 +181,26 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000041"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "4",
         "name": "GA4 - Event - View Item List",
         "type": "gaawe",
         "firingTriggerId": [
           "3"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -196,25 +218,26 @@
             "key": "getEcommerceDataFrom",
             "value": "dataLayer"
           }
-        ]
+        ],
+        "fingerprint": "1710000000042"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "5",
         "name": "GA4 - Event - Select Item",
         "type": "gaawe",
         "firingTriggerId": [
           "4"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -232,25 +255,26 @@
             "key": "getEcommerceDataFrom",
             "value": "dataLayer"
           }
-        ]
+        ],
+        "fingerprint": "1710000000043"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "6",
         "name": "GA4 - Event - View Item",
         "type": "gaawe",
         "firingTriggerId": [
           "5"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -268,25 +292,26 @@
             "key": "getEcommerceDataFrom",
             "value": "dataLayer"
           }
-        ]
+        ],
+        "fingerprint": "1710000000044"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "7",
         "name": "GA4 - Event - Add To Cart",
         "type": "gaawe",
         "firingTriggerId": [
           "6"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -304,25 +329,26 @@
             "key": "getEcommerceDataFrom",
             "value": "dataLayer"
           }
-        ]
+        ],
+        "fingerprint": "1710000000045"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "8",
         "name": "GA4 - Event - Remove From Cart",
         "type": "gaawe",
         "firingTriggerId": [
           "7"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -340,25 +366,26 @@
             "key": "getEcommerceDataFrom",
             "value": "dataLayer"
           }
-        ]
+        ],
+        "fingerprint": "1710000000046"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "9",
         "name": "GA4 - Event - View Cart",
         "type": "gaawe",
         "firingTriggerId": [
           "8"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -376,25 +403,26 @@
             "key": "getEcommerceDataFrom",
             "value": "dataLayer"
           }
-        ]
+        ],
+        "fingerprint": "1710000000047"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "10",
         "name": "GA4 - Event - Begin Checkout",
         "type": "gaawe",
         "firingTriggerId": [
           "9"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -412,25 +440,26 @@
             "key": "getEcommerceDataFrom",
             "value": "dataLayer"
           }
-        ]
+        ],
+        "fingerprint": "1710000000048"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "11",
         "name": "GA4 - Event - Add Shipping Info",
         "type": "gaawe",
         "firingTriggerId": [
           "10"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -448,25 +477,26 @@
             "key": "getEcommerceDataFrom",
             "value": "dataLayer"
           }
-        ]
+        ],
+        "fingerprint": "1710000000049"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "12",
         "name": "GA4 - Event - Add Payment Info",
         "type": "gaawe",
         "firingTriggerId": [
           "11"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -484,25 +514,26 @@
             "key": "getEcommerceDataFrom",
             "value": "dataLayer"
           }
-        ]
+        ],
+        "fingerprint": "1710000000050"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "13",
         "name": "GA4 - Event - Purchase",
         "type": "gaawe",
         "firingTriggerId": [
           "12"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -520,25 +551,26 @@
             "key": "getEcommerceDataFrom",
             "value": "dataLayer"
           }
-        ]
+        ],
+        "fingerprint": "1710000000051"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "14",
         "name": "GA4 - Event - Refund",
         "type": "gaawe",
         "firingTriggerId": [
           "13"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -556,25 +588,26 @@
             "key": "getEcommerceDataFrom",
             "value": "dataLayer"
           }
-        ]
+        ],
+        "fingerprint": "1710000000052"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "15",
         "name": "GA4 - Event - Search",
         "type": "gaawe",
         "firingTriggerId": [
           "14"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -603,25 +636,26 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000053"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "16",
         "name": "GA4 - Event - Login",
         "type": "gaawe",
         "firingTriggerId": [
           "16"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -650,25 +684,26 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000054"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "17",
         "name": "GA4 - Event - Sign Up",
         "type": "gaawe",
         "firingTriggerId": [
           "15"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -697,25 +732,26 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000055"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "18",
         "name": "GA4 - Event - Generate Lead",
         "type": "gaawe",
         "firingTriggerId": [
           "17"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -744,25 +780,26 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000056"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "19",
         "name": "GA4 - Event - Scroll",
         "type": "gaawe",
         "firingTriggerId": [
           "18"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -791,25 +828,26 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000057"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "tagId": "20",
         "name": "GA4 - Event - Click",
         "type": "gaawe",
         "firingTriggerId": [
           "19"
         ],
-        "priority": {
-          "type": "TEMPLATE",
-          "value": "50"
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NOT_SET"
         },
         "parameter": [
           {
             "type": "TEMPLATE",
-            "key": "measurementId",
+            "key": "measurementIdOverride",
             "value": "{{Const - GA4 Measurement ID}}"
           },
           {
@@ -838,20 +876,22 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000058"
       }
     ],
     "trigger": [
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "1",
-        "name": "Init - All Pages",
-        "type": "INIT"
+        "name": "All Pages",
+        "type": "PAGEVIEW",
+        "fingerprint": "1710000000020"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "2",
         "name": "CE - page_view",
         "type": "CUSTOM_EVENT",
@@ -871,11 +911,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000021"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "3",
         "name": "CE - view_item_list",
         "type": "CUSTOM_EVENT",
@@ -895,11 +936,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000022"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "4",
         "name": "CE - select_item",
         "type": "CUSTOM_EVENT",
@@ -919,11 +961,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000023"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "5",
         "name": "CE - view_item",
         "type": "CUSTOM_EVENT",
@@ -943,11 +986,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000024"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "6",
         "name": "CE - add_to_cart",
         "type": "CUSTOM_EVENT",
@@ -967,11 +1011,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000025"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "7",
         "name": "CE - remove_from_cart",
         "type": "CUSTOM_EVENT",
@@ -991,11 +1036,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000026"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "8",
         "name": "CE - view_cart",
         "type": "CUSTOM_EVENT",
@@ -1015,11 +1061,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000027"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "9",
         "name": "CE - begin_checkout",
         "type": "CUSTOM_EVENT",
@@ -1039,11 +1086,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000028"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "10",
         "name": "CE - add_shipping_info",
         "type": "CUSTOM_EVENT",
@@ -1063,11 +1111,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000029"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "11",
         "name": "CE - add_payment_info",
         "type": "CUSTOM_EVENT",
@@ -1087,11 +1136,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000030"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "12",
         "name": "CE - purchase",
         "type": "CUSTOM_EVENT",
@@ -1111,11 +1161,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000031"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "13",
         "name": "CE - refund",
         "type": "CUSTOM_EVENT",
@@ -1135,11 +1186,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000032"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "14",
         "name": "CE - search",
         "type": "CUSTOM_EVENT",
@@ -1159,11 +1211,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000033"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "15",
         "name": "CE - sign_up",
         "type": "CUSTOM_EVENT",
@@ -1183,11 +1236,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000034"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "16",
         "name": "CE - login",
         "type": "CUSTOM_EVENT",
@@ -1207,11 +1261,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000035"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "17",
         "name": "CE - generate_lead",
         "type": "CUSTOM_EVENT",
@@ -1231,11 +1286,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000036"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "18",
         "name": "CE - scroll",
         "type": "CUSTOM_EVENT",
@@ -1255,11 +1311,12 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000037"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "triggerId": "19",
         "name": "CE - click",
         "type": "CUSTOM_EVENT",
@@ -1279,13 +1336,14 @@
               }
             ]
           }
-        ]
+        ],
+        "fingerprint": "1710000000038"
       }
     ],
     "variable": [
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "1",
         "name": "Const - GA4 Measurement ID",
         "type": "c",
@@ -1295,11 +1353,12 @@
             "key": "value",
             "value": "G-ELMXNPCR2G"
           }
-        ]
+        ],
+        "fingerprint": "1710000000000"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "2",
         "name": "Const - Currency",
         "type": "c",
@@ -1309,11 +1368,12 @@
             "key": "value",
             "value": "INR"
           }
-        ]
+        ],
+        "fingerprint": "1710000000001"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "3",
         "name": "Const - Brand Name",
         "type": "c",
@@ -1323,11 +1383,12 @@
             "key": "value",
             "value": "MikuMantra Fine Jewellery"
           }
-        ]
+        ],
+        "fingerprint": "1710000000002"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "4",
         "name": "DLV - ecommerce",
         "type": "v",
@@ -1347,11 +1408,12 @@
             "key": "setDefaultValue",
             "value": "false"
           }
-        ]
+        ],
+        "fingerprint": "1710000000003"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "5",
         "name": "DLV - ecommerce.value",
         "type": "v",
@@ -1376,11 +1438,12 @@
             "key": "defaultValue",
             "value": "0"
           }
-        ]
+        ],
+        "fingerprint": "1710000000004"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "6",
         "name": "DLV - ecommerce.currency",
         "type": "v",
@@ -1405,11 +1468,12 @@
             "key": "defaultValue",
             "value": "INR"
           }
-        ]
+        ],
+        "fingerprint": "1710000000005"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "7",
         "name": "DLV - ecommerce.transaction_id",
         "type": "v",
@@ -1429,11 +1493,12 @@
             "key": "setDefaultValue",
             "value": "false"
           }
-        ]
+        ],
+        "fingerprint": "1710000000006"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "8",
         "name": "DLV - ecommerce.tax",
         "type": "v",
@@ -1458,11 +1523,12 @@
             "key": "defaultValue",
             "value": "0"
           }
-        ]
+        ],
+        "fingerprint": "1710000000007"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "9",
         "name": "DLV - ecommerce.shipping",
         "type": "v",
@@ -1487,11 +1553,12 @@
             "key": "defaultValue",
             "value": "0"
           }
-        ]
+        ],
+        "fingerprint": "1710000000008"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "10",
         "name": "DLV - ecommerce.coupon",
         "type": "v",
@@ -1511,11 +1578,12 @@
             "key": "setDefaultValue",
             "value": "false"
           }
-        ]
+        ],
+        "fingerprint": "1710000000009"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "11",
         "name": "DLV - page_location",
         "type": "v",
@@ -1535,11 +1603,12 @@
             "key": "setDefaultValue",
             "value": "false"
           }
-        ]
+        ],
+        "fingerprint": "1710000000010"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "12",
         "name": "DLV - page_path",
         "type": "v",
@@ -1559,11 +1628,12 @@
             "key": "setDefaultValue",
             "value": "false"
           }
-        ]
+        ],
+        "fingerprint": "1710000000011"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "13",
         "name": "DLV - page_title",
         "type": "v",
@@ -1583,11 +1653,12 @@
             "key": "setDefaultValue",
             "value": "false"
           }
-        ]
+        ],
+        "fingerprint": "1710000000012"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "14",
         "name": "DLV - search_term",
         "type": "v",
@@ -1607,11 +1678,12 @@
             "key": "setDefaultValue",
             "value": "false"
           }
-        ]
+        ],
+        "fingerprint": "1710000000013"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "15",
         "name": "DLV - method",
         "type": "v",
@@ -1631,11 +1703,12 @@
             "key": "setDefaultValue",
             "value": "false"
           }
-        ]
+        ],
+        "fingerprint": "1710000000014"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "16",
         "name": "DLV - lead_type",
         "type": "v",
@@ -1660,11 +1733,12 @@
             "key": "defaultValue",
             "value": "Newsletter"
           }
-        ]
+        ],
+        "fingerprint": "1710000000015"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "17",
         "name": "DLV - percent_scrolled",
         "type": "v",
@@ -1689,11 +1763,12 @@
             "key": "defaultValue",
             "value": "90"
           }
-        ]
+        ],
+        "fingerprint": "1710000000016"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "18",
         "name": "DLV - link_url",
         "type": "v",
@@ -1713,11 +1788,12 @@
             "key": "setDefaultValue",
             "value": "false"
           }
-        ]
+        ],
+        "fingerprint": "1710000000017"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "19",
         "name": "DLV - link_text",
         "type": "v",
@@ -1737,11 +1813,12 @@
             "key": "setDefaultValue",
             "value": "false"
           }
-        ]
+        ],
+        "fingerprint": "1710000000018"
       },
       {
-        "accountId": "1000",
-        "containerId": "1001",
+        "accountId": "0",
+        "containerId": "0",
         "variableId": "20",
         "name": "DLV - outbound",
         "type": "v",
@@ -1761,15 +1838,8 @@
             "key": "setDefaultValue",
             "value": "false"
           }
-        ]
-      }
-    ],
-    "builtInVariable": [
-      {
-        "accountId": "1000",
-        "containerId": "1001",
-        "type": "EVENT_NAME",
-        "name": "_event"
+        ],
+        "fingerprint": "1710000000019"
       }
     ]
   }
