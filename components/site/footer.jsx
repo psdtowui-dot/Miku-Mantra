@@ -15,6 +15,7 @@ import {
   Loader2
 } from '@/packages/global-icon-library';
 import { toast } from 'sonner';
+import { openPrivacySettings } from '@/lib/analytics/consent';
 
 const SOCIAL_ICONS_MAP = {
   Instagram,
@@ -255,15 +256,20 @@ export default function Footer({ initialData }) {
         {/* Policies & Copyright */}
         <div className="mt-8 pt-6 border-t border-white/10 flex flex-col md:flex-row justify-between items-center gap-3 text-xs text-white/50">
           {copyright ? <div>© {new Date().getFullYear()} {copyright}</div> : <div />}
-          {activePolicies.length > 0 && (
-            <div className="flex gap-5">
-              {activePolicies.map((policy, pIdx) => (
-                <Link key={pIdx} href={policy.url} className="hover:text-white transition-colors">
-                  {policy.label}
-                </Link>
-              ))}
-            </div>
-          )}
+          <div className="flex flex-wrap items-center gap-5">
+            {activePolicies.map((policy, pIdx) => (
+              <Link key={pIdx} href={policy.url} className="hover:text-white transition-colors">
+                {policy.label}
+              </Link>
+            ))}
+            <button
+              type="button"
+              onClick={openPrivacySettings}
+              className="hover:text-white transition-colors cursor-pointer text-left"
+            >
+              Cookie Preferences
+            </button>
+          </div>
         </div>
       </div>
     </footer>

@@ -7,6 +7,7 @@ import { useAuth, authFetch } from '@/lib/use-auth';
 import { formatINR } from '@/lib/products';
 import { toast } from 'sonner';
 import { Loader2, ShieldCheck, Truck, Lock, MapPin, Wallet, ChevronRight, CreditCard, BookmarkCheck, Plus, Check, X, Smartphone, Building2, AlertTriangle, Sparkles } from 'lucide-react';
+import { trackBeginCheckout, trackAddShippingInfo, trackAddPaymentInfo, trackPurchase } from '@/lib/analytics/events';
 
 export default function CheckoutPage() {
   const { items, subtotal, clear, coupon: storeCoupon, discount: storeDiscount, removeCoupon, hydrated, removeOrderedItems } = useCart();
@@ -49,6 +50,14 @@ export default function CheckoutPage() {
     razorpay: { enabled: true, isMock: true },
     cod: { enabled: true }
   });
+
+  const trackedBeginCheckoutRef = useRef(false);
+  useEffect(() => {
+    if (hydrated && items.length > 0 && !trackedBeginCheckoutRef.current) {
+      trackedBeginCheckoutRef.current = true;
+      trackBeginCheckout(items, subtotal, coupon?.code || storeCoupon?.code || null);
+    }
+  }, [hydrated, items, subtotal, coupon, storeCoupon]);
 
   useEffect(() => {
     authFetch('/api/site-settings')
@@ -232,7 +241,10 @@ export default function CheckoutPage() {
           toast.success('Address updated successfully');
           const updatedAddr = data.address || { ...payload, id: selectedAddrId };
           setSavedAddresses(prev => prev.map(a => a.id === selectedAddrId ? { ...a, ...updatedAddr } : a));
-          if (advanceToPayment) setStep('payment');
+          if (advanceToPayment) {
+            trackAddShippingInfo(items, subtotal, shipping === 0 ? 'Complimentary Insured Delivery' : 'Standard Insured Delivery', coupon?.code || storeCoupon?.code || null);
+            setStep('payment');
+          }
           return true;
         } else {
           toast.error(data.error || 'Failed to update address');
@@ -250,7 +262,10 @@ export default function CheckoutPage() {
           const created = data.address || { ...payload, id: 'addr_' + Date.now() };
           if (created.id) setSelectedAddrId(created.id);
           setSavedAddresses(prev => [created, ...prev]);
-          if (advanceToPayment) setStep('payment');
+          if (advanceToPayment) {
+            trackAddShippingInfo(items, subtotal, shipping === 0 ? 'Complimentary Insured Delivery' : 'Standard Insured Delivery', coupon?.code || storeCoupon?.code || null);
+            setStep('payment');
+          }
           return true;
         } else {
           toast.error(data.error || 'Failed to save address');
@@ -281,6 +296,7 @@ export default function CheckoutPage() {
     if (user && saveForFuture && !selectedAddrId) {
       await handleSaveAddress(true);
     } else {
+      trackAddShippingInfo(items, subtotal, shipping === 0 ? 'Complimentary Insured Delivery' : 'Standard Insured Delivery', coupon?.code || storeCoupon?.code || null);
       setStep('payment');
     }
   };
@@ -504,6 +520,7 @@ export default function CheckoutPage() {
     setPlacing(true);
     setPlacingStatus(payment === 'razorpay' ? 'Preparing payment…' : 'Processing order…');
     try {
+      trackAddPaymentInfo(items, total, payment === 'razorpay' ? 'Razorpay Secure' : 'Cash on Delivery', coupon?.code || storeCoupon?.code || null);
       if (!Array.isArray(items) || items.length === 0) {
         toast.error('Cart is empty');
         setPlacing(false);
@@ -558,6 +575,9 @@ export default function CheckoutPage() {
 
       // Mark order as successfully placed to prevent any cart-redirect race condition
       orderSuccessRef.current = true;
+      if (d.order) {
+        trackPurchase(d.order);
+      }
       setPlacingStatus('Redirecting…');
       toast.success('Order placed successfully!');
 

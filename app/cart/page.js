@@ -1,13 +1,14 @@
 'use client';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useCart } from '@/lib/cart-store';
 import { useAuth, authFetch } from '@/lib/use-auth';
 import { formatINR } from '@/lib/products';
 import { Minus, Plus, X, ShoppingBag, Truck, ShieldCheck, Gift, ArrowRight, Tag } from '@/packages/global-icon-library';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
+import { trackViewCart, trackRemoveFromCart } from '@/lib/analytics/events';
 
 function renderFormattedHelperText(text) {
   if (!text) return null;
@@ -45,6 +46,14 @@ export default function CartPage() {
     freeShippingThreshold: 2000,
     standardShippingCharge: 500
   });
+
+  const trackedViewCartRef = useRef(false);
+  useEffect(() => {
+    if (items && items.length > 0 && !trackedViewCartRef.current) {
+      trackedViewCartRef.current = true;
+      trackViewCart(items, subtotal);
+    }
+  }, [items, subtotal]);
 
   useEffect(() => {
     authFetch('/api/site-settings')
@@ -229,7 +238,7 @@ export default function CartPage() {
                             <div className="text-[11px] sm:text-xs text-neutral-500 mt-0.5 sm:mt-1">In Stock · Ships in 2-3 days</div>
                           )}
                         </div>
-                        <button onClick={() => remove(item.id)} className="text-neutral-400 hover:text-[#9C6B30] shrink-0 p-0.5"><X size={18} /></button>
+                        <button onClick={() => { trackRemoveFromCart(item, item.qty); remove(item.id); }} className="text-neutral-400 hover:text-[#9C6B30] shrink-0 p-0.5"><X size={18} /></button>
                       </div>
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sm:gap-3 mt-3 sm:mt-4">
                         <div className="flex items-center border border-[#E8E8E8] rounded-full w-fit">

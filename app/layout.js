@@ -6,6 +6,7 @@ import AIChatMount from '@/components/site/ai-chat-mount'
 
 import Navbar from '@/components/site/navbar';
 import Footer from '@/components/site/footer';
+import AnalyticsProvider from '@/components/analytics/AnalyticsProvider';
 
 import { getSiteSettings, getHeaderData, getFooterData, getCanonicalBaseUrl, toAbsoluteUrl } from '@/lib/db-site-settings';
 
@@ -78,6 +79,7 @@ export default async function RootLayout({ children }) {
   const siteName = siteSettingsData.siteName || footerData?.company?.name || 'MikuMantra Fine Jewellery';
   const effectiveLogo = siteSettingsData?.logo || headerData?.logo?.image || footerData?.company?.logo || '/logo.png';
   const fullLogoUrl = effectiveLogo.startsWith('http') ? effectiveLogo : `${siteUrl}${effectiveLogo.startsWith('/') ? '' : '/'}${effectiveLogo}`;
+  const effectiveGtmId = process.env.NEXT_PUBLIC_GTM_ID || 'GTM-5KLNQX63';
 
   const orgJsonLd = {
     '@context': 'https://schema.org',
@@ -93,6 +95,47 @@ export default async function RootLayout({ children }) {
   return (
     <html lang="en">
       <head>
+        {/* Google Consent Mode v2 & Google Tag Manager (GTM-5KLNQX63) */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              window.dataLayer = window.dataLayer || [];
+              function gtag(){dataLayer.push(arguments);}
+              window.gtag = gtag;
+
+              var defaultState = {
+                analytics_storage: 'denied',
+                ad_storage: 'denied',
+                ad_user_data: 'denied',
+                ad_personalization: 'denied',
+                functionality_storage: 'granted',
+                personalization_storage: 'denied',
+                security_storage: 'granted',
+                wait_for_update: 500
+              };
+
+              try {
+                var raw = localStorage.getItem('mikumantra_consent_preferences_v2');
+                if (raw) {
+                  var parsed = JSON.parse(raw);
+                  if (parsed && typeof parsed === 'object') {
+                    defaultState.analytics_storage = parsed.analytics ? 'granted' : 'denied';
+                    defaultState.ad_storage = parsed.marketing ? 'granted' : 'denied';
+                    defaultState.ad_user_data = parsed.marketing ? 'granted' : 'denied';
+                    defaultState.ad_personalization = parsed.marketing ? 'granted' : 'denied';
+                    defaultState.personalization_storage = parsed.analytics ? 'granted' : 'denied';
+                  }
+                }
+              } catch (e) {}
+
+              gtag('consent', 'default', defaultState);
+              dataLayer.push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' });
+              gtag('js', new Date());
+              dataLayer.push({ event: 'default_consent_initialized', consent_mode: defaultState });
+            `,
+          }}
+        />
+        <script async src={`https://www.googletagmanager.com/gtm.js?id=${effectiveGtmId}`} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
@@ -104,14 +147,30 @@ export default async function RootLayout({ children }) {
         </noscript>
         <link rel="preconnect" href="https://checkout.razorpay.com" />
         <link rel="dns-prefetch" href="https://checkout.razorpay.com" />
+        <link rel="preconnect" href="https://www.googletagmanager.com" />
+        <link rel="dns-prefetch" href="https://www.googletagmanager.com" />
+        <link rel="preconnect" href="https://www.google-analytics.com" />
+        <link rel="dns-prefetch" href="https://www.google-analytics.com" />
       </head>
       <body>
+        {effectiveGtmId ? (
+          <noscript>
+            <iframe
+              src={`https://www.googletagmanager.com/ns.html?id=${effectiveGtmId}`}
+              height="0"
+              width="0"
+              style={{ display: 'none', visibility: 'hidden' }}
+            />
+          </noscript>
+        ) : null}
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(orgJsonLd) }} />
-        <Providers>
-          <Navbar initialData={headerData} />
-          {children}
-          <Footer initialData={footerData} />
-        </Providers>
+        <AnalyticsProvider>
+          <Providers>
+            <Navbar initialData={headerData} />
+            {children}
+            <Footer initialData={footerData} />
+          </Providers>
+        </AnalyticsProvider>
         <AIChatMount />
         <Toaster position="top-center" richColors />
         <Script src="https://accounts.google.com/gsi/client" strategy="lazyOnload" />

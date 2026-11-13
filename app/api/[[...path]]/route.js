@@ -33,6 +33,7 @@ import {
   sendOrderShippedNotification
 } from '@/lib/notifications'
 import { generateTrackingUrl } from '@/lib/courier'
+import { trackServerPurchase, trackServerRefund } from '@/lib/analytics/measurement-protocol'
 import {
   sendPasswordResetEmail,
   sendAccountVerificationEmail,
@@ -3328,6 +3329,14 @@ async function handleRoute(request, { params }) {
         sendOrderPlacedNotification({ order, user: u, db }).catch(notifErr => {
           console.error('Non-blocking order notification failed:', notifErr?.message || notifErr);
         });
+        trackServerPurchase({
+          db,
+          order,
+          clientId: body.analyticsClientId,
+          sessionId: body.analyticsSessionId,
+        }).catch(analyticsErr => {
+          console.warn('[Analytics Server] Non-blocking server purchase tracking notice:', analyticsErr?.message || analyticsErr);
+        });
       });
 
       return ok({ order: clean(order) });
@@ -4092,6 +4101,12 @@ async function handleRoute(request, { params }) {
                   }
                 }
               );
+              setImmediate(() => {
+                trackServerPurchase({
+                  db,
+                  order: { ...orderDoc, paymentStatus: 'paid' },
+                }).catch(analyticsErr => console.warn('[Analytics Server] Webhook purchase tracking notice:', analyticsErr.message));
+              });
             }
           }
         } else if (event.event === 'payment.failed') {
@@ -4148,6 +4163,14 @@ async function handleRoute(request, { params }) {
                 metadata: { gatewayRefundId }
               });
               await sendRefundCompletedNotification({ returnReq: returnDoc, order: orderDoc, user: userDoc, db });
+              setImmediate(() => {
+                trackServerRefund({
+                  db,
+                  transactionId: orderDoc?.orderNumber || returnDoc.orderId,
+                  refundAmount: payload.amount ? payload.amount / 100 : returnDoc.refundAmount,
+                  items: returnDoc.items,
+                }).catch(analyticsErr => console.warn('[Analytics Server] Webhook refund tracking notice:', analyticsErr.message));
+              });
             } else if (event.event === 'refund.failed') {
               await db.collection('returns').updateOne(
                 { id: returnDoc.id },

@@ -13,6 +13,7 @@ import BenefitIcon from '@/components/ui/benefit-icon';
 import ProductImageZoom from '@/components/site/product-image-zoom';
 import { toast } from 'sonner';
 import { WAREHOUSE_PINCODE } from '@/lib/constants';
+import { trackProductView, trackAddToCart, trackAddToWishlist } from '@/lib/analytics/events';
 
 export default function ProductClient({ initialProduct, initialRelated, slug, siteSettings }) {
   const router = useRouter();
@@ -63,7 +64,16 @@ export default function ProductClient({ initialProduct, initialRelated, slug, si
         .catch(() => {});
     }
   }, [zoomConfig]);
-  useEffect(() => { if (p?.id) pushRecent(p.id); }, [p?.id]);
+  const trackedProductViewRef = useRef('');
+  useEffect(() => {
+    if (p?.id) {
+      pushRecent(p.id);
+      if (trackedProductViewRef.current !== p.id) {
+        trackedProductViewRef.current = p.id;
+        trackProductView(p);
+      }
+    }
+  }, [p?.id]);
 
   useEffect(() => {
     if (!p?.id && !slug) return;
@@ -234,7 +244,7 @@ export default function ProductClient({ initialProduct, initialRelated, slug, si
                 <span className="w-8 sm:w-10 text-center text-sm font-medium">{isOutOfStock ? 0 : qty}</span>
                 <button disabled={isOutOfStock || (p.stock !== undefined && qty >= p.stock)} onClick={() => setQty(Math.min(p.stock || 999, qty + 1))} className="w-9 h-9 sm:w-11 sm:h-11 flex items-center justify-center hover:text-[#9C6B30] disabled:opacity-40 disabled:hover:text-current"><Plus size={14} /></button>
               </div>
-              <button onClick={() => toggle(p.id)} className={`w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-[#E8E8E8] flex items-center justify-center hover:border-[#9C6B30] ${has(p.id) ? 'text-[#9C6B30]' : ''}`}><Heart size={16} fill={has(p.id) ? '#9C6B30' : 'none'} /></button>
+              <button onClick={() => { if (!has(p.id)) trackAddToWishlist(p); toggle(p.id); }} className={`w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-[#E8E8E8] flex items-center justify-center hover:border-[#9C6B30] ${has(p.id) ? 'text-[#9C6B30]' : ''}`}><Heart size={16} fill={has(p.id) ? '#9C6B30' : 'none'} /></button>
               <button onClick={() => { const r = toggleCmp(p.id); if (r.full) toast.error('Compare up to 4 items'); else toast.success(r.added ? 'Added to compare' : 'Removed from compare'); }} className={`w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-[#E8E8E8] flex items-center justify-center hover:border-[#9C6B30] ${hasCmp(p.id) ? 'text-[#9C6B30]' : ''}`}><GitCompare size={16} /></button>
               <button type="button" aria-label="Share product" title="Share product" onClick={handleShare} className="w-9 h-9 sm:w-11 sm:h-11 rounded-full border border-[#E8E8E8] flex items-center justify-center hover:border-[#9C6B30] hover:text-[#9C6B30] transition-colors"><Share2 size={16} /></button>
             </div>
@@ -247,7 +257,7 @@ export default function ProductClient({ initialProduct, initialRelated, slug, si
                     return;
                   }
                   add(p, qty);
-                  toast.success('Added to bag');
+                  trackAddToCart(p, qty); toast.success('Added to bag');
                 }}
                 className={`py-3 sm:py-4 border-2 uppercase transition px-1 text-[9px] xs:text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] ${isOutOfStock ? 'bg-neutral-100 border-neutral-300 text-neutral-400 cursor-not-allowed opacity-60' : 'bg-white border-[#1A1A1A] text-[#1A1A1A] hover:bg-[#1A1A1A] hover:text-white'}`}
               >
@@ -261,7 +271,7 @@ export default function ProductClient({ initialProduct, initialRelated, slug, si
                     return;
                   }
                   add(p, qty);
-                  router.push('/cart');
+                  trackAddToCart(p, qty); router.push('/cart');
                 }}
                 className={`py-3 sm:py-4 uppercase transition px-1 text-[9px] xs:text-[10px] sm:text-[11px] tracking-wider sm:tracking-[0.3em] ${isOutOfStock ? 'bg-neutral-300 text-neutral-500 cursor-not-allowed opacity-60' : 'bg-[#1A1A1A] text-white hover:bg-[#9C6B30]'}`}
               >
