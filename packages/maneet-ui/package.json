@@ -1,0 +1,37 @@
+{
+  "name": "@maneet/ui",
+  "version": "1.0.0",
+  "description": "MikuMantra Luxury Design System, Icons & Animation Primitives",
+  "author": "Maneet Architecture Team",
+  "license": "UNLICENSED",
+  "main": "./index.js",
+  "module": "./index.js",
+  "types": "./types.d.ts",
+  "exports": {
+    ".": {
+      "import": "./index.js",
+      "types": "./types.d.ts"
+    },
+    "./design-system": {
+      "import": "./src/design-system/index.js"
+    },
+    "./icons": {
+      "import": "./src/icons/index.js"
+    },
+    "./animations": {
+      "import": "./src/animations/index.js"
+    },
+    "./feedback": {
+      "import": "./src/feedback/index.js"
+    }
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0",
+    "framer-motion": ">=11.0.0",
+    "lucide-react": ">=0.400.0",
+    "clsx": ">=2.0.0",
+    "tailwind-merge": ">=2.0.0"
+  },
+  "type": "module"
+}

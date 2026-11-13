@@ -1,0 +1,25 @@
+'use client';
+import { forwardRef } from 'react';
+import { Instagram as LucideInstagram, Facebook as LucideFacebook, Twitter as LucideTwitter, Linkedin as LucideLinkedin, Youtube as LucideYoutube, Share2 as LucideShare2, Globe as LucideGlobe, MessageSquare as LucideMessageSquare, MessageCircle as LucideMessageCircle, Megaphone as LucideMegaphone } from 'lucide-react';
+import { IconBase } from '../../components/IconBase.jsx';
+
+export const InstagramIcon = forwardRef((props, ref) => <IconBase ref={ref} as={LucideInstagram} {...props} />);
+export const Instagram = InstagramIcon;
+export const FacebookIcon = forwardRef((props, ref) => <IconBase ref={ref} as={LucideFacebook} {...props} />);
+export const Facebook = FacebookIcon;
+export const TwitterIcon = forwardRef((props, ref) => <IconBase ref={ref} as={LucideTwitter} {...props} />);
+export const Twitter = TwitterIcon;
+export const LinkedinIcon = forwardRef((props, ref) => <IconBase ref={ref} as={LucideLinkedin} {...props} />);
+export const Linkedin = LinkedinIcon;
+export const YoutubeIcon = forwardRef((props, ref) => <IconBase ref={ref} as={LucideYoutube} {...props} />);
+export const Youtube = YoutubeIcon;
+export const Share2Icon = forwardRef((props, ref) => <IconBase ref={ref} as={LucideShare2} {...props} />);
+export const Share2 = Share2Icon;
+export const GlobeIcon = forwardRef((props, ref) => <IconBase ref={ref} as={LucideGlobe} {...props} />);
+export const Globe = GlobeIcon;
+export const MessageSquareIcon = forwardRef((props, ref) => <IconBase ref={ref} as={LucideMessageSquare} {...props} />);
+export const MessageSquare = MessageSquareIcon;
+export const MessageCircleIcon = forwardRef((props, ref) => <IconBase ref={ref} as={LucideMessageCircle} {...props} />);
+export const MessageCircle = MessageCircleIcon;
+export const MegaphoneIcon = forwardRef((props, ref) => <IconBase ref={ref} as={LucideMegaphone} {...props} />);
+export const Megaphone = MegaphoneIcon;

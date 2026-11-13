@@ -1,11 +1,12 @@
 'use client';
-import { Suspense, useMemo, useState, useEffect } from 'react';
+import { Suspense, useMemo, useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import ProductCard from '@/components/site/product-card';
 import CompareBar from '@/components/site/compare-bar';
 import { getNormalizedSpecs } from '@/lib/products';
 import { SlidersHorizontal, X, Loader2, ChevronDown } from 'lucide-react';
+import { trackProductListView, trackSearch } from '@/lib/analytics/events';
 
 function normalizeAlphaNum(str) {
   if (!str) return '';
@@ -851,6 +852,27 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
 
     return 'All Jewellery';
   }, [activeFilterGroups, activeParams]);
+
+  // Track product listing impressions and search query execution
+  const trackedListRef = useRef('');
+  useEffect(() => {
+    if (list && list.length > 0) {
+      const listKey = `${title}:${list.length}:${list[0]?.id || ''}`;
+      if (trackedListRef.current !== listKey) {
+        trackedListRef.current = listKey;
+        trackProductListView(list, title);
+      }
+    }
+  }, [list, title]);
+
+  const trackedSearchRef = useRef('');
+  useEffect(() => {
+    const sQuery = (activeParams.search || activeParams.q || '').trim();
+    if (sQuery && trackedSearchRef.current !== sQuery) {
+      trackedSearchRef.current = sQuery;
+      trackSearch(sQuery);
+    }
+  }, [activeParams.search, activeParams.q]);
 
   // Active Filter Pills computation
   const activePills = useMemo(() => {

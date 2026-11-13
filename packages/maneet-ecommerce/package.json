@@ -1,0 +1,46 @@
+{
+  "name": "@maneet/ecommerce",
+  "version": "1.0.0",
+  "description": "MikuMantra E-Commerce Domain Logic, Orders, Cart, Products & Admin Modules",
+  "author": "Maneet Architecture Team",
+  "license": "UNLICENSED",
+  "main": "./index.js",
+  "module": "./index.js",
+  "types": "./types.d.ts",
+  "exports": {
+    ".": {
+      "import": "./index.js",
+      "types": "./types.d.ts"
+    },
+    "./orders": {
+      "import": "./src/orders/index.js"
+    },
+    "./products": {
+      "import": "./src/products/index.js"
+    },
+    "./auth": {
+      "import": "./src/auth/index.js"
+    },
+    "./cart": {
+      "import": "./src/cart/index.js"
+    },
+    "./wishlist": {
+      "import": "./src/wishlist/index.js"
+    },
+    "./checkout": {
+      "import": "./src/checkout/index.js"
+    },
+    "./admin": {
+      "import": "./src/admin/index.js"
+    }
+  },
+  "peerDependencies": {
+    "@maneet/ui": ">=1.0.0",
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0",
+    "lucide-react": ">=0.400.0",
+    "framer-motion": ">=11.0.0",
+    "sonner": ">=2.0.0"
+  },
+  "type": "module"
+}

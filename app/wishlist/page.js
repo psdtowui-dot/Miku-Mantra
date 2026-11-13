@@ -5,7 +5,7 @@ import Link from 'next/link';
 import ProductCard from '@/components/site/product-card';
 import { useWishlist } from '@/lib/cart-store';
 import { useAuth, authFetch } from '@/lib/use-auth';
-import { Heart, Loader2 } from 'lucide-react';
+import { Heart, Loader2 } from '@/packages/global-icon-library';
 
 export default function WishlistPage() {
   const { user, loading: authLoading } = useAuth();
