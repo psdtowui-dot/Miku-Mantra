@@ -16,6 +16,7 @@ import {
 } from '@/packages/global-icon-library';
 import { toast } from 'sonner';
 import { openPrivacySettings } from '@/lib/analytics/consent';
+import { trackGenerateLead } from '@/lib/analytics/events';
 
 const SOCIAL_ICONS_MAP = {
   Instagram,
@@ -62,6 +63,7 @@ export default function Footer({ initialData }) {
       const resData = await res.json();
       if (res.ok && resData.success) {
         toast.success(resData.message || 'You have successfully joined the MikuMantra Circle.');
+        trackGenerateLead({ leadType: 'Newsletter VIP Circle' });
         setFooterEmail('');
       } else {
         toast.error(resData.message || resData.error || 'Failed to subscribe. Please try again.');

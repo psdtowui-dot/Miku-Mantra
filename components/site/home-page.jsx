@@ -9,6 +9,7 @@ import {
 import ProductCard from '@/components/site/product-card';
 import { optimizeImageUrl } from '@/lib/image-utils';
 import { toast } from 'sonner';
+import { trackGenerateLead } from '@/lib/analytics/events';
 
 
 const LUCIDE_ICONS_MAP = {
@@ -415,6 +416,7 @@ function Newsletter({ initialSettings }) {
       const data = await res.json();
       if (res.ok && data.success) {
         toast.success(data.message || settings.successMessage);
+        trackGenerateLead({ leadType: 'Homepage Newsletter' });
         setSubmittedSuccess(true);
         setEmail('');
       } else {

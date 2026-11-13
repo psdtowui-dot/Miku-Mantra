@@ -369,6 +369,18 @@ function matchesFilterValue(product, key, selectedVal, group) {
   return matchesSingleFilter(product, key, selectedVal, group);
 }
 
+function areParamsEqual(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const k of aKeys) {
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
+}
+
 function ShopInner({ initialProducts, initialFilterGroups = [] }) {
   const sp = useSearchParams();
 
@@ -549,19 +561,22 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
 
   // Sync state if navigation occurs from outside (e.g. navbar links)
   useEffect(() => {
-    setActiveParams(getParamsMap(sp));
+    const fromSp = getParamsMap(sp);
+    setActiveParams(prev => (areParamsEqual(prev, fromSp) ? prev : fromSp));
   }, [sp]);
 
   // Sync state on browser back/forward buttons
   useEffect(() => {
     const handlePopState = () => {
-      setActiveParams(getParamsMap(new URLSearchParams(window.location.search)));
+      const fromUrl = getParamsMap(new URLSearchParams(window.location.search));
+      setActiveParams(prev => (areParamsEqual(prev, fromUrl) ? prev : fromUrl));
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
   const updateUrl = (paramsObj) => {
+    if (typeof window === 'undefined') return;
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(paramsObj)) {
       if (v !== undefined && v !== null && v !== '') {
@@ -570,10 +585,16 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
     }
     const queryString = q.toString();
     const newUrl = queryString ? `/shop?${queryString}` : '/shop';
-    if (typeof window !== 'undefined') {
+    const currentUrl = window.location.pathname + window.location.search;
+    if (currentUrl !== newUrl) {
       window.history.replaceState(null, '', newUrl);
     }
   };
+
+  // Synchronize browser URL cleanly after state updates (runs outside render phase)
+  useEffect(() => {
+    updateUrl(activeParams);
+  }, [activeParams]);
 
   const [userChangedPrice, setUserChangedPrice] = useState(false);
 
@@ -634,7 +655,6 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
           delete next.max;
         }
       }
-      updateUrl(next);
       return next;
     });
   };
@@ -660,13 +680,15 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
           next[key] = [...parts, val].join(',');
         }
       }
-      updateUrl(next);
       return next;
     });
   };
 
   // Remove specific active filter pill
   const removeFilterParam = (key, valToRemove) => {
+    if (key === 'price' || key === 'min' || key === 'max') {
+      setUserChangedPrice(false);
+    }
     setActiveParams(prev => {
       const next = { ...prev };
       if (!valToRemove || key === 'min' || key === 'max' || key === 'price' || key === 'search' || key === 'q') {
@@ -675,11 +697,6 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
           delete next.min;
           delete next.max;
           delete next.price;
-          setUserChangedPrice(false);
-          const pg = (activeFilterGroups || []).find(g => (g.type === 'price' || g.type === 'range' || g.key === 'price') && g.enabled !== false);
-          const minB = pg?.priceConfig?.min != null ? Number(pg.priceConfig.min) : 0;
-          const maxB = pg?.priceConfig?.max != null ? Number(pg.priceConfig.max) : (all.length ? Math.max(...all.map(p => p.price || 0)) : 1000000);
-          setRange([minB, maxB]);
         }
       } else {
         const current = next[key];
@@ -693,7 +710,6 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
           }
         }
       }
-      updateUrl(next);
       return next;
     });
   };
@@ -702,13 +718,6 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
   const clearAll = () => {
     setActiveParams({});
     setUserChangedPrice(false);
-    if (typeof window !== 'undefined') {
-      window.history.replaceState(null, '', '/shop');
-    }
-    const pg = (activeFilterGroups || []).find(g => (g.type === 'price' || g.type === 'range' || g.key === 'price') && g.enabled !== false);
-    const minB = pg?.priceConfig?.min != null ? Number(pg.priceConfig.min) : 0;
-    const maxB = pg?.priceConfig?.max != null ? Number(pg.priceConfig.max) : (all.length ? Math.max(...all.map(p => p.price || 0)) : 1000000);
-    setRange([minB, maxB]);
     setSort('newest');
   };
 
@@ -725,7 +734,6 @@ function ShopInner({ initialProducts, initialFilterGroups = [] }) {
           if (prev.min === String(range[0]) && prev.max === String(range[1])) return prev;
           const next = { ...prev, min: String(range[0]), max: String(range[1]) };
           delete next.price;
-          updateUrl(next);
           return next;
         });
       }

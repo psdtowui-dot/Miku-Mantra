@@ -129,13 +129,16 @@ export default async function RootLayout({ children }) {
               } catch (e) {}
 
               gtag('consent', 'default', defaultState);
-              dataLayer.push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' });
-              gtag('js', new Date());
               dataLayer.push({ event: 'default_consent_initialized', consent_mode: defaultState });
+
+              (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+              new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+              j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+              'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+              })(window,document,'script','dataLayer','${effectiveGtmId}');
             `,
           }}
         />
-        <script async src={`https://www.googletagmanager.com/gtm.js?id=${effectiveGtmId}`} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link rel="dns-prefetch" href="https://fonts.googleapis.com" />

@@ -30,6 +30,7 @@ import {
   trackSearch,
   trackLogin,
   trackSignUp,
+  trackGenerateLead,
   isPurchaseAlreadyTracked,
   markPurchaseAsTracked,
 } from '../lib/analytics/events.js';
@@ -336,6 +337,13 @@ console.log('\n4. Testing Data Layer & All 17 Events...');
   const loginEvent = window.dataLayer.find((e) => e.event === 'login');
   assert(Boolean(loginEvent), '17. login event pushed');
   assert(loginEvent.method === 'Google', 'login method is Google');
+
+  // 18. generate_lead
+  window.dataLayer = [];
+  trackGenerateLead({ leadType: 'Newsletter VIP Circle' });
+  const leadEvent = window.dataLayer.find((e) => e.event === 'generate_lead');
+  assert(Boolean(leadEvent), '18. generate_lead event pushed');
+  assert(leadEvent.lead_type === 'Newsletter VIP Circle', 'generate_lead lead_type matches');
 }
 
 // 5. Server-Side Measurement Protocol & Idempotency Tests
