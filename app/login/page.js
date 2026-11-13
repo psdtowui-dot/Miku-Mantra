@@ -5,6 +5,7 @@ import Link from 'next/link';
 import Script from 'next/script';
 import { useAuth } from '@/lib/use-auth';
 import { toast } from 'sonner';
+import { trackLogin, trackSignUp } from '@/lib/analytics/events';
 import { GoogleIcon } from '@/modules/ui/icons';
 import { Loader2, Mail, Lock, User as UserIcon, ShieldCheck, KeyRound, Eye, EyeOff, X, ArrowLeft, CheckCircle2 } from 'lucide-react';
 
@@ -83,6 +84,7 @@ function LoginInner(){
     setErr('');
     try {
       const u = await loginWithGoogle(response.credential);
+      trackLogin('Google');
       toast.success(`Welcome, ${u.name || 'valued member'}!`);
       if (u?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
         router.push('/admin');
@@ -198,6 +200,7 @@ function LoginInner(){
             if (resp?.access_token) {
               try {
                 const u = await loginWithGoogle({ accessToken: resp.access_token });
+                trackLogin('Google');
                 toast.success(`Welcome, ${u.name || 'valued member'}!`);
                 if (u?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
                   router.push('/admin');
@@ -316,6 +319,7 @@ function LoginInner(){
           toast.info(u.message || 'Please verify your email address to continue.');
           return;
         }
+        trackLogin('Email');
         toast.success(`Welcome back${u?.name ? `, ${u.name}` : ''}!`);
         if (u?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
           router.push('/admin');
@@ -335,6 +339,7 @@ function LoginInner(){
           toast.success(res.message || 'Verification code sent to your email.');
           return;
         }
+        trackSignUp('Email');
         toast.success('Account created successfully');
         if (res?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
           router.push('/admin');
@@ -362,6 +367,7 @@ function LoginInner(){
     try {
       const u = await verifyRegistration(verifyEmail, cleanCode);
       setShowVerifyModal(false);
+      trackSignUp('Email');
       toast.success('Email verified successfully! Welcome to MikuMantra.');
       if (u?.role === 'admin' && (!sp.get('redirect') || sp.get('redirect') === '/account')) {
         router.push('/admin');

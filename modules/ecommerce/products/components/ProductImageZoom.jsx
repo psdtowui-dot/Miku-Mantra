@@ -646,19 +646,35 @@ export default function ProductImageZoom({
 
       {/* Thumbnail Selector Grid */}
       {images && images.length > 1 && (
-        <div className="mt-4 grid grid-cols-5 gap-2 sm:gap-3">
+        <div
+          className="mt-4 grid grid-cols-5 gap-2 sm:gap-3"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(5, minmax(0, 1fr))'
+          }}
+        >
           {images.map((im, i) => (
             <button
-              key={im + i}
+              key={`${im}-${i}`}
               type="button"
               onClick={() => handleSelectImg(i)}
-              className={`aspect-square rounded-xl overflow-hidden border-2 transition-all cursor-pointer bg-[#FAF6EF] ${
+              className={`relative aspect-square rounded-xl overflow-hidden border-2 transition-all cursor-pointer bg-[#FAF6EF] ${
                 activeImg === i
-                  ? 'border-[#9C6B30] ring-2 ring-[#9C6B30]/20 shadow-xs scale-102'
-                  : 'border-transparent hover:border-[#E8E8E8] opacity-80 hover:opacity-100'
+                  ? 'border-[#9C6B30] ring-2 ring-[#9C6B30]/30 shadow-xs scale-[1.02]'
+                  : 'border-[#E8E8E8] hover:border-[#9C6B30]/60 opacity-80 hover:opacity-100'
               }`}
+              title={`View ${productName} image ${i + 1}`}
+              aria-label={`Select product image ${i + 1}`}
             >
-              <img width="80" height="80" loading="lazy" decoding="async" src={im} alt={`${productName} thumbnail ${i + 1}`} className="w-full h-full object-cover" />
+              <img
+                width="120"
+                height="120"
+                loading="lazy"
+                decoding="async"
+                src={im}
+                alt={`${productName} thumbnail ${i + 1}`}
+                className="w-full h-full object-cover"
+              />
             </button>
           ))}
         </div>

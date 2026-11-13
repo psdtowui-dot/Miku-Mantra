@@ -3,6 +3,7 @@ import { useEffect, useState, Suspense, useRef } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth, authFetch } from '@/lib/use-auth';
+import { trackPurchase } from '@/lib/analytics/events';
 import { formatINR, formatRating } from '@/lib/products';
 import { CheckCircle2, Package, Truck, Home, Loader2, Download, Clock, X, AlertTriangle, RotateCcw, AlertCircle, Check, ArrowLeft, Star, Edit3, Trash2, Upload, Camera, Image as ImageIcon, Building2, Smartphone, ShieldCheck, FileText } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -730,6 +731,9 @@ function OrderInner() {
           setOrderReviews(d.reviews || []);
           setCustomerReviewsEnabled(d.customerReviewsEnabled ?? true);
           if (d.returnWindow) setReturnWindowConfig(d.returnWindow);
+          if (success && d.order) {
+            trackPurchase(d.order);
+          }
         } else {
           if (r.status === 401) {
             router.push(`/login?redirect=/orders/${id}`);

@@ -4,6 +4,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Script from 'next/script';
 import { useAuth } from '@/lib/use-auth';
 import { toast } from 'sonner';
+import { trackLogin, trackSignUp } from '@/lib/analytics/events';
 import { Loader2, Mail, Lock, User as UserIcon, X, ShieldCheck, ArrowLeft, GoogleIcon } from '@/packages/global-icon-library';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -54,6 +55,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onSu
     setErr('');
     try {
       const u = await loginWithGoogle(response.credential);
+      trackLogin('Google');
       toast.success(`Welcome, ${u.name || 'valued customer'}!`);
       if (onSuccess) onSuccess(u);
       if (onClose) onClose();
@@ -162,6 +164,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onSu
             if (resp?.access_token) {
               try {
                 const u = await loginWithGoogle({ accessToken: resp.access_token });
+                trackLogin('Google');
                 toast.success(`Welcome, ${u.name || 'valued customer'}!`);
                 if (onSuccess) onSuccess(u);
                 if (onClose) onClose();
@@ -260,6 +263,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onSu
           toast.info(u.message || 'Please enter the 6-digit code sent to your email.');
           return;
         }
+        trackLogin('Email');
         toast.success(`Welcome back${u?.name ? `, ${u.name}` : ''}!`);
         if (onSuccess) onSuccess(u);
         if (onClose) onClose();
@@ -275,6 +279,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onSu
           toast.success(res.message || 'Verification code sent to your email.');
           return;
         }
+        trackSignUp('Email');
         toast.success('Account created successfully');
         if (onSuccess) onSuccess(res);
         if (onClose) onClose();
@@ -298,6 +303,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onSu
     setVerifyBusy(true);
     try {
       const u = await verifyRegistration(verifyEmail, cleanCode);
+      trackSignUp('Email');
       toast.success('Email verified successfully! Welcome to MikuMantra.');
       if (onSuccess) onSuccess(u);
       if (onClose) onClose();
